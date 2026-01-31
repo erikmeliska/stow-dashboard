@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Stow Dashboard
 
-## Getting Started
+Moderné webové rozhranie na vizualizáciu a správu tvojich projektov naskenovaných pomocou `stow-agent`.
 
-First, run the development server:
+## 🚀 Čo to je?
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Dashboard je postavený na **Next.js 15** a slúži ako prehľadný katalóg všetkých projektov v adresári `~/Projekty`. Čerpá dáta zo súboru `projects_metadata.jsonl`, ktorý generuje skener.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## ✨ Funkcie
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+- **Interaktívna tabuľka projektov:** Poháňaná pomocou `@tanstack/react-table`.
+- **Git integrácia:** Automatická detekcia repozitárov (GitHub, GitLab, Bitbucket), zobrazenie počtu commitov a tvojho príspevku.
+- **Smart hľadanie:** Globálny filter cez názvy, cesty aj Git remotes.
+- **Detekcia technologického stacku:** Zobrazuje technológie použité v projekte (z package.json, requirements.txt, atď.).
+- **Metriky:** Sleduje veľkosť projektov na disku a dátum poslednej modifikácie.
+- **Dark Mode:** Plná podpora tmavého režimu cez Tailwind CSS.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🛠 Technológie
 
-## Learn More
+- **Framework:** [Next.js 15 (App Router)](https://nextjs.org/)
+- **UI:** [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS](https://tailwindcss.com/)
+- **Ikony:** [Lucide React](https://lucide.dev/)
+- **Správa stavu:** React Context API
 
-To learn more about Next.js, take a look at the following resources:
+## 🏃 Spustenie
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Nainštaluj závislosti:
+   ```bash
+   yarn install
+   ```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+2. Uisti sa, že máš vygenerované dáta (zabezpečuje `stow-agent`):
+   ```bash
+   # Dáta sa očakávajú v data/projects_metadata.jsonl
+   ```
 
-## Deploy on Vercel
+3. Spusti vývojový server:
+   ```bash
+   yarn dev
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Dashboard bude dostupný na [http://localhost:3000](http://localhost:3000).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📂 Štruktúra dát
+
+Aplikácia číta dáta zo súboru:
+`src/lib/projects.js` -> `data/projects_metadata.jsonl`
+
+Každý riadok JSONL obsahuje metadáta o jednom projekte vrátane Git informácií, veľkosti a technologického stacku.
+
+---
+*Vytvorené Ferkom pre Erička. 👍*
