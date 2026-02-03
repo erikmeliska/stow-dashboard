@@ -712,71 +712,36 @@ export function ProjectTable({ projects, ownRepos }) {
 
                     {/* Quick Filters - click cycles: any -> yes -> no -> any */}
                     <div className="flex items-center gap-1 flex-wrap">
-                        <Button
-                            variant={filters.running !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('running')}
-                            className={filters.running === true ? "bg-green-600 hover:bg-green-700" : filters.running === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            <Circle className={`mr-1.5 h-2.5 w-2.5 ${filters.running === true ? "fill-current" : ""}`} />
-                            {filters.running === false ? "!Running" : "Running"}
-                        </Button>
-                        <Button
-                            variant={filters.uncommitted !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('uncommitted')}
-                            className={filters.uncommitted === true ? "bg-yellow-600 hover:bg-yellow-700" : filters.uncommitted === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.uncommitted === false ? "!Uncommitted" : "Uncommitted"}
-                        </Button>
-                        <Button
-                            variant={filters.behind !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('behind')}
-                            className={filters.behind === true ? "bg-red-600 hover:bg-red-700" : filters.behind === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.behind === false ? "!Behind" : "Behind"}
-                        </Button>
-                        <Button
-                            variant={filters.ahead !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('ahead')}
-                            className={filters.ahead === true ? "bg-blue-600 hover:bg-blue-700" : filters.ahead === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.ahead === false ? "!Ahead" : "Ahead"}
-                        </Button>
-                        <Button
-                            variant={filters.hasGit !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('hasGit')}
-                            className={filters.hasGit === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.hasGit === false ? "!Git" : "Git"}
-                        </Button>
-                        <Button
-                            variant={filters.hasRemote !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('hasRemote')}
-                            className={filters.hasRemote === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.hasRemote === false ? "!Remote" : "Remote"}
-                        </Button>
-                        <Button
-                            variant={filters.hasOwnCommits !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('hasOwnCommits')}
-                            className={filters.hasOwnCommits === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.hasOwnCommits === false ? "!My Commits" : "My Commits"}
-                        </Button>
-                        <Button
-                            variant={filters.hasReadme !== null ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => cycleFilter('hasReadme')}
-                            className={filters.hasReadme === false ? "bg-muted text-muted-foreground" : ""}
-                        >
-                            {filters.hasReadme === false ? "!README" : "README"}
-                        </Button>
+                        {[
+                            { key: 'running', label: 'Running', icon: Circle },
+                            { key: 'uncommitted', label: 'Uncommitted' },
+                            { key: 'behind', label: 'Behind' },
+                            { key: 'ahead', label: 'Ahead' },
+                            { key: 'hasGit', label: 'Git' },
+                            { key: 'hasRemote', label: 'Remote' },
+                            { key: 'hasOwnCommits', label: 'My Commits' },
+                            { key: 'hasReadme', label: 'README' },
+                        ].map(({ key, label, icon: Icon }) => {
+                            const value = filters[key]
+                            return (
+                                <Button
+                                    key={key}
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => cycleFilter(key)}
+                                    className={cn(
+                                        "gap-1.5",
+                                        value === true && "border-green-500 bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-500/20",
+                                        value === false && "border-red-500 bg-red-500/10 text-red-700 dark:text-red-400 hover:bg-red-500/20"
+                                    )}
+                                >
+                                    {value === true && <Check className="h-3 w-3" />}
+                                    {value === false && <X className="h-3 w-3" />}
+                                    {Icon && value === null && <Icon className="h-2.5 w-2.5" />}
+                                    {label}
+                                </Button>
+                            )
+                        })}
                         {activeFiltersCount > 0 && (
                             <Button
                                 variant="ghost"
