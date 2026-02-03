@@ -28,12 +28,21 @@ npm run scan:force  # Force rescan all projects
 
 Or use the CLI directly:
 ```bash
-node scripts/scan.mjs -r ~/Projekty -s data/projects_metadata.jsonl
-node scripts/scan.mjs -r ~/Projekty -f   # Force update
-node scripts/scan.mjs --cleanup          # Delete all .project_meta.json files
+node scripts/scan.mjs -s data/projects_metadata.jsonl
+node scripts/scan.mjs -r ~/Projekty ~/Work -s   # Override roots
+node scripts/scan.mjs -f -s                      # Force update
+node scripts/scan.mjs --cleanup                  # Delete all .project_meta.json files
 ```
 
 API endpoint: `POST /api/scan` with optional `{ force: true }` or `{ cleanup: true }`
+
+### Environment Variables
+
+Configure in `.env.local`:
+```bash
+SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
+BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
+```
 
 ## Architecture
 

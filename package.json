@@ -1,14 +1,27 @@
 {
   "name": "stow-dashboard",
   "version": "0.1.0",
-  "private": true,
+  "description": "A modern web dashboard for visualizing and managing your local development projects",
+  "license": "MIT",
+  "author": "TriSoft",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trisoft/stow-dashboard.git"
+  },
+  "keywords": [
+    "dashboard",
+    "project-management",
+    "nextjs",
+    "react",
+    "developer-tools"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "scan": "node scripts/scan.mjs -r /Users/ericsko/Projekty -s data/projects_metadata.jsonl",
-    "scan:force": "node scripts/scan.mjs -r /Users/ericsko/Projekty -s data/projects_metadata.jsonl -f"
+    "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
+    "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.3",

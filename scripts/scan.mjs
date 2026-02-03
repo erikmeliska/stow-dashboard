@@ -2,12 +2,19 @@
 
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { config } from 'dotenv'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// Load .env.local (silent)
+config({ path: path.join(__dirname, '..', '.env.local'), debug: false })
+
 // Dynamic import of the scanner
 const { ProjectScanner } = await import('../src/scanner/index.mjs')
+
+// Get scan roots from env
+const ENV_SCAN_ROOTS = (process.env.SCAN_ROOTS || '').split(',').map(s => s.trim()).filter(Boolean)
 
 // Parse command line arguments
 function parseArgs() {
@@ -54,17 +61,21 @@ Stow Dashboard Project Scanner
 Usage: node scripts/scan.mjs [options]
 
 Options:
-  -r, --root <path...>   Root directories to scan (required)
+  -r, --root <path...>   Root directories to scan (defaults to SCAN_ROOTS env)
   -i, --ignore <pattern...>  Additional patterns to ignore
   -s, --sync [path]      Sync all metadata to JSONL file
   -f, --force            Force update all metadata
   --cleanup              Delete all .project_meta.json files
   -h, --help             Show this help message
 
+Environment:
+  SCAN_ROOTS    Comma-separated list of directories to scan (in .env.local)
+
 Examples:
-  node scripts/scan.mjs -r ~/Projekty -s data/projects_metadata.jsonl
-  node scripts/scan.mjs -r ~/Projekty -f -s
-  node scripts/scan.mjs -r ~/Projekty --cleanup
+  node scripts/scan.mjs -s data/projects_metadata.jsonl
+  node scripts/scan.mjs -r ~/Projekty ~/Work -s
+  node scripts/scan.mjs -f -s
+  node scripts/scan.mjs --cleanup
 `)
 }
 
@@ -77,8 +88,8 @@ async function main() {
     }
 
     if (options.roots.length === 0) {
-        // Default root
-        options.roots = ['/Users/ericsko/Projekty']
+        // Use env roots or default
+        options.roots = ENV_SCAN_ROOTS.length > 0 ? ENV_SCAN_ROOTS : ['/Users/ericsko/Projekty']
     }
 
     // Default sync file if --sync is used without path

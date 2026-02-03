@@ -6,7 +6,7 @@ import { ScanControls } from '@/components/ScanControls'
 
 export const dynamic = 'force-dynamic'
 
-const BASE_DIR = '/Users/ericsko/Projekty'
+const BASE_DIR = process.env.BASE_DIR || '/Users/ericsko/Projekty'
 const OWN_REPOS = ['boys-from-heaven', 'boysfromheaven', 'erikmeliska', 'intelimail']
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README', 'readme']
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')

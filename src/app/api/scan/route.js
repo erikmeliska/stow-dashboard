@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import path from 'path'
 import { ProjectScanner } from '@/scanner/index.mjs'
 
-// Configuration - can be moved to environment variables
-const SCAN_ROOTS = ['/Users/ericsko/Projekty']
+const SCAN_ROOTS = (process.env.SCAN_ROOTS || '/Users/ericsko/Projekty').split(',').map(s => s.trim())
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
 export async function POST(request) {
