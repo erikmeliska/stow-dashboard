@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, MoreHorizontal, GitBranch, Github, Gitlab, Check, X } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, MoreHorizontal, GitBranch, Github, Gitlab, Check, X, FileText } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -32,6 +32,29 @@ import {
 } from "@/components/ui/table"
 import { formatTimeAgo, getGitProvider } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { ReadmeDialog } from "@/components/ReadmeDialog"
+
+const STORAGE_KEY = 'stow-dashboard-table-settings'
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+
+function loadSettings() {
+    if (typeof window === 'undefined') return null
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY)
+        return saved ? JSON.parse(saved) : null
+    } catch {
+        return null
+    }
+}
+
+function saveSettings(settings) {
+    if (typeof window === 'undefined') return
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    } catch {
+        // Ignore storage errors
+    }
+}
 
 const extractRepoName = (remoteUrl = '') => {
     if (!remoteUrl) return ''
@@ -64,10 +87,30 @@ function TimeAgo({ date }) {
 }
 
 export function ProjectTable({ projects, ownRepos }) {
+    const [isHydrated, setIsHydrated] = React.useState(false)
     const [sorting, setSorting] = React.useState([])
     const [columnFilters, setColumnFilters] = React.useState([])
     const [columnVisibility, setColumnVisibility] = React.useState({})
     const [globalFilter, setGlobalFilter] = React.useState("")
+    const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
+    const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
+
+    // Load settings from localStorage on mount
+    React.useEffect(() => {
+        const settings = loadSettings()
+        if (settings) {
+            if (settings.sorting) setSorting(settings.sorting)
+            if (settings.columnVisibility) setColumnVisibility(settings.columnVisibility)
+            if (settings.pageSize) setPagination(prev => ({ ...prev, pageSize: settings.pageSize }))
+        }
+        setIsHydrated(true)
+    }, [])
+
+    // Save settings to localStorage on change
+    React.useEffect(() => {
+        if (!isHydrated) return
+        saveSettings({ sorting, columnVisibility, pageSize: pagination.pageSize })
+    }, [sorting, columnVisibility, pagination.pageSize, isHydrated])
     
     const columns = [
         {
@@ -180,7 +223,26 @@ export function ProjectTable({ projects, ownRepos }) {
             },
         },
         {
-            accessorKey: "total_directory_size_bytes",
+            accessorKey: "content_size_bytes",
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Code Size
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const bytes = row.getValue("content_size_bytes")
+                if (!bytes) return <div className="text-muted-foreground">-</div>
+                return <div>{(bytes / 1024 / 1024).toFixed(2)} MB</div>
+            },
+        },
+        {
+            accessorKey: "total_size_bytes",
             header: ({ column }) => {
                 return (
                     <Button
@@ -192,7 +254,11 @@ export function ProjectTable({ projects, ownRepos }) {
                     </Button>
                 )
             },
-            cell: ({ row }) => <div>{(row.getValue("total_directory_size_bytes") / 1024 / 1024).toFixed(2)} MB</div>,
+            cell: ({ row }) => {
+                const bytes = row.getValue("total_size_bytes")
+                if (!bytes) return <div className="text-muted-foreground">-</div>
+                return <div>{(bytes / 1024 / 1024).toFixed(2)} MB</div>
+            },
         },
         {
             accessorKey: "git_info.total_commits",
@@ -228,6 +294,25 @@ export function ProjectTable({ projects, ownRepos }) {
                             </span>
                         )}
                     </div>
+                )
+            },
+        },
+        {
+            id: "readme",
+            header: "README",
+            cell: ({ row }) => {
+                const project = row.original
+                if (!project.hasReadme) return null
+
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => setReadmeDialog({ open: true, project })}
+                    >
+                        <FileText className="h-4 w-4" />
+                    </Button>
                 )
             },
         },
@@ -277,7 +362,9 @@ export function ProjectTable({ projects, ownRepos }) {
             columnFilters,
             columnVisibility,
             globalFilter,
+            pagination,
         },
+        onPaginationChange: setPagination,
         onGlobalFilterChange: setGlobalFilter,
         globalFilterFn: (row, columnId, filterValue) => {
             const searchValue = filterValue.toLowerCase()
@@ -301,6 +388,13 @@ export function ProjectTable({ projects, ownRepos }) {
     })
 
     return (
+        <>
+        <ReadmeDialog
+            open={readmeDialog.open}
+            onOpenChange={(open) => setReadmeDialog({ open, project: open ? readmeDialog.project : null })}
+            projectName={readmeDialog.project?.project_name}
+            directory={readmeDialog.project?.directory}
+        />
         <div className="w-full">
             <div className="flex items-center py-4">
                 <Input
@@ -380,10 +474,23 @@ export function ProjectTable({ projects, ownRepos }) {
             </div>
             <div className="flex items-center justify-between space-x-2 py-4">
                 <div className="flex-1 text-sm text-muted-foreground">
-                    {table.getFilteredSelectedRowModel().rows.length} of{" "}
-                    {table.getFilteredRowModel().rows.length} row(s) selected.
+                    {table.getFilteredRowModel().rows.length} project(s) total
                 </div>
                 <div className="flex items-center space-x-6 lg:space-x-8">
+                    <div className="flex items-center space-x-2">
+                        <p className="text-sm text-muted-foreground">Rows per page</p>
+                        <select
+                            className="h-8 w-16 rounded-md border border-input bg-background px-2 text-sm"
+                            value={pagination.pageSize}
+                            onChange={(e) => setPagination(prev => ({ ...prev, pageIndex: 0, pageSize: Number(e.target.value) }))}
+                        >
+                            {PAGE_SIZE_OPTIONS.map((size) => (
+                                <option key={size} value={size}>
+                                    {size}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                     <div className="flex items-center space-x-2">
                         <p className="text-sm font-medium">
                             Page {table.getState().pagination.pageIndex + 1} of{" "}
@@ -411,5 +518,6 @@ export function ProjectTable({ projects, ownRepos }) {
                 </div>
             </div>
         </div>
+        </>
     )
 }
