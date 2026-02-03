@@ -102,8 +102,25 @@ export function ProjectTable({ projects, ownRepos }) {
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
+    // Quick filters
+    const [filters, setFilters] = React.useState({
+        running: false,
+        // Future filters:
+        // hasGit: null,        // true/false/null(any)
+        // hasRemote: null,
+        // uncommitted: null,
+        // behind: null,
+        // hasOwnCommits: null,
+        // hasReadme: null,
+    })
+
+    const toggleFilter = (key) => {
+        setFilters(prev => ({ ...prev, [key]: !prev[key] }))
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
     // Process monitoring
-    const { getPortsForProject, isProjectRunning } = useProcesses(30000)
+    const { processes, getPortsForProject, isProjectRunning } = useProcesses(30000)
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -139,13 +156,27 @@ export function ProjectTable({ projects, ownRepos }) {
             .map(([name, count]) => ({ name, count }))
     }, [searchFilteredProjects])
 
-    // Final filtered projects (search + groups)
+    // Final filtered projects (search + groups + quick filters)
     const filteredProjects = React.useMemo(() => {
-        if (selectedGroups.length === 0) return searchFilteredProjects
-        return searchFilteredProjects.filter(project =>
-            selectedGroups.some(group => (project.groupParts || []).includes(group))
-        )
-    }, [searchFilteredProjects, selectedGroups])
+        let result = searchFilteredProjects
+
+        // Group filter
+        if (selectedGroups.length > 0) {
+            result = result.filter(project =>
+                selectedGroups.some(group => (project.groupParts || []).includes(group))
+            )
+        }
+
+        // Running filter
+        if (filters.running) {
+            result = result.filter(project => {
+                const ports = getPortsForProject(project.directory)
+                return ports.length > 0
+            })
+        }
+
+        return result
+    }, [searchFilteredProjects, selectedGroups, filters, getPortsForProject])
 
     const toggleGroup = (groupName) => {
         setSelectedGroups(prev =>
@@ -595,6 +626,15 @@ export function ProjectTable({ projects, ownRepos }) {
                             ))}
                         </DropdownMenuContent>
                     </DropdownMenu>
+                    <Button
+                        variant={filters.running ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => toggleFilter('running')}
+                        className={filters.running ? "bg-green-600 hover:bg-green-700" : ""}
+                    >
+                        <Circle className={`mr-2 h-3 w-3 ${filters.running ? "fill-current" : ""}`} />
+                        Running
+                    </Button>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="outline" className="ml-auto">
