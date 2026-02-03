@@ -9,16 +9,13 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, MoreHorizontal, GitBranch, Github, Gitlab, Check, X, FileText } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Copy } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -32,7 +29,14 @@ import {
 } from "@/components/ui/table"
 import { formatTimeAgo, getGitProvider } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { ReadmeDialog } from "@/components/ReadmeDialog"
+import { ProjectDetailsSheet } from "@/components/ProjectDetailsSheet"
 
 const STORAGE_KEY = 'stow-dashboard-table-settings'
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -93,6 +97,7 @@ export function ProjectTable({ projects, ownRepos }) {
     const [columnVisibility, setColumnVisibility] = React.useState({})
     const [globalFilter, setGlobalFilter] = React.useState("")
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
+    const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
     // Load settings from localStorage on mount
@@ -298,50 +303,64 @@ export function ProjectTable({ projects, ownRepos }) {
             },
         },
         {
-            id: "readme",
-            header: "README",
-            cell: ({ row }) => {
-                const project = row.original
-                if (!project.hasReadme) return null
-
-                return (
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setReadmeDialog({ open: true, project })}
-                    >
-                        <FileText className="h-4 w-4" />
-                    </Button>
-                )
-            },
-        },
-        {
             id: "actions",
+            header: "Actions",
             enableHiding: false,
             cell: ({ row }) => {
                 const project = row.original
 
                 return (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                                <span className="sr-only">Open menu</span>
-                                <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuItem
-                                onClick={() => navigator.clipboard.writeText(project.directory)}
-                            >
-                                Copy project path
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem>View details</DropdownMenuItem>
-                            <DropdownMenuItem>Delete project</DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <TooltipProvider delayDuration={300}>
+                        <div className="flex items-center gap-1">
+                            {project.hasReadme && (
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 p-0"
+                                            onClick={() => setReadmeDialog({ open: true, project })}
+                                        >
+                                            <FileText className="h-4 w-4" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>View README</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            )}
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0"
+                                        onClick={() => setDetailsSheet({ open: true, project })}
+                                    >
+                                        <Eye className="h-4 w-4" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>View details</p>
+                                </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0"
+                                        onClick={() => navigator.clipboard.writeText(project.directory)}
+                                    >
+                                        <Copy className="h-4 w-4" />
+                                    </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Copy path</p>
+                                </TooltipContent>
+                            </Tooltip>
+                        </div>
+                    </TooltipProvider>
                 )
             },
         },
@@ -387,6 +406,20 @@ export function ProjectTable({ projects, ownRepos }) {
         },
     })
 
+    if (!isHydrated) {
+        return (
+            <div className="w-full">
+                <div className="flex items-center py-4">
+                    <div className="h-10 w-80 max-w-sm animate-pulse rounded-md bg-muted" />
+                    <div className="ml-auto h-10 w-24 animate-pulse rounded-md bg-muted" />
+                </div>
+                <div className="rounded-md border">
+                    <div className="h-[400px] animate-pulse bg-muted/50" />
+                </div>
+            </div>
+        )
+    }
+
     return (
         <>
         <ReadmeDialog
@@ -394,6 +427,11 @@ export function ProjectTable({ projects, ownRepos }) {
             onOpenChange={(open) => setReadmeDialog({ open, project: open ? readmeDialog.project : null })}
             projectName={readmeDialog.project?.project_name}
             directory={readmeDialog.project?.directory}
+        />
+        <ProjectDetailsSheet
+            open={detailsSheet.open}
+            onOpenChange={(open) => setDetailsSheet({ open, project: open ? detailsSheet.project : null })}
+            project={detailsSheet.project}
         />
         <div className="w-full">
             <div className="flex items-center py-4">
