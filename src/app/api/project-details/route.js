@@ -33,6 +33,9 @@ export async function GET(request) {
             staged: status.staged.length,
             modified: status.modified.length,
             untracked: status.not_added.length,
+            ahead: status.ahead || 0,
+            behind: status.behind || 0,
+            tracking: status.tracking || null,
             lastCommitMessage: lastCommit?.message || null,
             lastCommitAuthor: lastCommit?.author_name || null,
             lastCommitDate: lastCommit?.date || null

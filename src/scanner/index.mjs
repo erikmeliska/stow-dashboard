@@ -99,11 +99,24 @@ export class ProjectScanner {
             const remotes = await git.getRemotes(true)
             const remoteUrls = remotes.map(r => r.refs?.fetch || r.refs?.push || '').filter(Boolean)
 
-            // Get current branch
+            // Get current branch, tracking info, and working tree status
             let currentBranch = 'unknown'
+            let ahead = 0
+            let behind = 0
+            let hasRemoteTracking = false
+            let uncommittedChanges = 0
+            let isClean = true
             try {
                 const branchResult = await git.branch()
                 currentBranch = branchResult.current || 'unknown'
+
+                // Get status (ahead/behind + working tree)
+                const status = await git.status()
+                ahead = status.ahead || 0
+                behind = status.behind || 0
+                hasRemoteTracking = status.tracking !== null
+                uncommittedChanges = status.files?.length || 0
+                isClean = status.isClean()
             } catch {
                 // Ignore branch errors
             }
@@ -118,6 +131,11 @@ export class ProjectScanner {
                 last_user_commit_date: lastUserCommit?.date || null,
                 remotes: remoteUrls,
                 current_branch: currentBranch,
+                ahead,
+                behind,
+                has_remote_tracking: hasRemoteTracking,
+                uncommitted_changes: uncommittedChanges,
+                is_clean: isClean,
                 git_detected: true
             }
         } catch (error) {

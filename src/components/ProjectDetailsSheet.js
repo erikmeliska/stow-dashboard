@@ -262,6 +262,29 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                         <StatItem label="Untracked" value={gitDetails.untracked} />
                                                     </>
                                                 )}
+                                                {gitDetails.tracking ? (
+                                                    <StatItem
+                                                        label="Remote Sync"
+                                                        value={
+                                                            gitDetails.ahead === 0 && gitDetails.behind === 0
+                                                                ? 'Up to date'
+                                                                : `${gitDetails.ahead > 0 ? `↑${gitDetails.ahead}` : ''}${gitDetails.ahead > 0 && gitDetails.behind > 0 ? ' ' : ''}${gitDetails.behind > 0 ? `↓${gitDetails.behind}` : ''}`
+                                                        }
+                                                        className={
+                                                            gitDetails.ahead === 0 && gitDetails.behind === 0
+                                                                ? 'text-green-600 dark:text-green-400'
+                                                                : gitDetails.behind > 0
+                                                                    ? 'text-red-600 dark:text-red-400'
+                                                                    : 'text-yellow-600 dark:text-yellow-400'
+                                                        }
+                                                    />
+                                                ) : (
+                                                    <StatItem
+                                                        label="Remote Sync"
+                                                        value="No tracking"
+                                                        className="text-muted-foreground"
+                                                    />
+                                                )}
                                             </div>
 
                                             {gitDetails.lastCommitMessage && (

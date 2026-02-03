@@ -229,17 +229,45 @@ export function ProjectTable({ projects, ownRepos }) {
                 const hasGit = gitInfo?.git_detected
                 const remotes = gitInfo?.remotes || []
                 const provider = remotes.length > 0 ? getGitProvider(remotes[0]) : null
+                const isClean = gitInfo?.is_clean !== false
+                const uncommitted = gitInfo?.uncommitted_changes || 0
+                const ahead = gitInfo?.ahead || 0
+                const behind = gitInfo?.behind || 0
 
                 return (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                         {hasGit ? (
                             <>
-                                <Check className="w-4 h-4 text-green-500" />
+                                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
                                 {provider && (
-                                    <span title={remotes[0]}>
+                                    <span title={remotes[0]} className="flex-shrink-0">
                                         {provider === 'github' && <Github className="w-4 h-4" />}
                                         {provider === 'gitlab' && <Gitlab className="w-4 h-4" />}
                                         {provider === 'bitbucket' && <GitBranch className="w-4 h-4" />}
+                                    </span>
+                                )}
+                                {!isClean && (
+                                    <span
+                                        className="text-xs px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-600 dark:text-yellow-400"
+                                        title={`${uncommitted} uncommitted changes`}
+                                    >
+                                        {uncommitted}✎
+                                    </span>
+                                )}
+                                {behind > 0 && (
+                                    <span
+                                        className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-600 dark:text-red-400"
+                                        title={`${behind} commits behind remote`}
+                                    >
+                                        ↓{behind}
+                                    </span>
+                                )}
+                                {ahead > 0 && (
+                                    <span
+                                        className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                                        title={`${ahead} commits ahead of remote`}
+                                    >
+                                        ↑{ahead}
                                     </span>
                                 )}
                             </>

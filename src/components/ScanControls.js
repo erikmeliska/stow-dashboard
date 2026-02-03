@@ -5,23 +5,57 @@ import { RefreshCw, Zap, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatTimeAgo } from '@/lib/utils'
 
+function formatDuration(seconds) {
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}m ${secs}s`
+}
+
 export function ScanControls({ lastSyncTime }) {
     const [isScanning, setIsScanning] = React.useState(false)
     const [scanType, setScanType] = React.useState(null)
     const [lastSync, setLastSync] = React.useState(lastSyncTime)
+    const [lastDuration, setLastDuration] = React.useState(null)
     const [isMounted, setIsMounted] = React.useState(false)
     const [progress, setProgress] = React.useState(null)
     const [logs, setLogs] = React.useState([])
+    const [scanStats, setScanStats] = React.useState({ current: 0, total: 0 })
+    const [elapsedTime, setElapsedTime] = React.useState(0)
+    const startTimeRef = React.useRef(null)
+    const timerRef = React.useRef(null)
 
     React.useEffect(() => {
         setIsMounted(true)
     }, [])
+
+    // Elapsed time timer
+    React.useEffect(() => {
+        if (isScanning) {
+            startTimeRef.current = Date.now()
+            setElapsedTime(0)
+            timerRef.current = setInterval(() => {
+                setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000))
+            }, 1000)
+        } else {
+            if (timerRef.current) {
+                clearInterval(timerRef.current)
+                timerRef.current = null
+            }
+        }
+        return () => {
+            if (timerRef.current) {
+                clearInterval(timerRef.current)
+            }
+        }
+    }, [isScanning])
 
     const handleScan = async (force = false) => {
         setIsScanning(true)
         setScanType(force ? 'force' : 'normal')
         setProgress({ message: 'Connecting...' })
         setLogs([])
+        setScanStats({ current: 0, total: 0 })
 
         try {
             const response = await fetch('/api/scan', {
@@ -63,9 +97,20 @@ export function ScanControls({ lastSyncTime }) {
     }
 
     const handleProgressEvent = (data) => {
+        // Update stats if present
+        if (data.total !== undefined) {
+            setScanStats(prev => ({
+                current: data.current || prev.current,
+                total: data.total || prev.total
+            }))
+        }
+
         switch (data.type) {
             case 'status':
                 setProgress({ message: data.message })
+                if (data.total) {
+                    setScanStats(prev => ({ ...prev, total: data.total }))
+                }
                 break
             case 'updated':
                 setProgress({ message: `Scanning: ${getShortPath(data.directory)}` })
@@ -76,10 +121,12 @@ export function ScanControls({ lastSyncTime }) {
                 break
             case 'complete':
                 if (data.success) {
-                    setProgress({ message: `Done! ${data.projectCount || 0} projects`, success: true })
+                    const durationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
+                    setProgress({ message: `Done! ${data.projectCount || 0} projects${durationMsg}`, success: true })
                     setLastSync(new Date().toISOString())
+                    setLastDuration(data.duration || null)
                     // Reload after a short delay to show success message
-                    setTimeout(() => window.location.reload(), 1500)
+                    setTimeout(() => window.location.reload(), 2000)
                 }
                 break
             case 'error':
@@ -137,7 +184,17 @@ export function ScanControls({ lastSyncTime }) {
                     ) : (
                         <Loader2 className="h-4 w-4 animate-spin" />
                     )}
-                    <span className="max-w-[300px] truncate">{progress.message}</span>
+                    {scanStats.total > 0 && !progress.success && (
+                        <span className="font-mono text-xs">
+                            {scanStats.current}/{scanStats.total}
+                        </span>
+                    )}
+                    <span className="max-w-[250px] truncate">{progress.message}</span>
+                    {!progress.success && !progress.error && (
+                        <span className="text-xs opacity-70">
+                            {formatDuration(elapsedTime)}
+                        </span>
+                    )}
                 </div>
             )}
 
@@ -158,6 +215,7 @@ export function ScanControls({ lastSyncTime }) {
                     {isMounted && lastSync ? (
                         <span title={new Date(lastSync).toLocaleString()}>
                             Last sync: {formatTimeAgo(lastSync)}
+                            {lastDuration && <span className="text-xs opacity-70"> ({formatDuration(lastDuration)})</span>}
                         </span>
                     ) : (
                         <span>Last sync: -</span>
