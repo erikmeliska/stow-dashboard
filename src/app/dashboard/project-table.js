@@ -102,37 +102,54 @@ export function ProjectTable({ projects, ownRepos }) {
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
-    // Quick filters
+    // Quick filters (null = any, true = yes, false = no)
     const [filters, setFilters] = React.useState({
-        running: false,
-        hasGit: false,
-        hasRemote: false,
-        uncommitted: false,
-        behind: false,
-        ahead: false,
-        hasOwnCommits: false,
-        hasReadme: false,
+        running: null,
+        hasGit: null,
+        hasRemote: null,
+        uncommitted: null,
+        behind: null,
+        ahead: null,
+        hasOwnCommits: null,
+        hasReadme: null,
     })
 
-    const toggleFilter = (key) => {
-        setFilters(prev => ({ ...prev, [key]: !prev[key] }))
+    // Cycle through: null -> true -> false -> null
+    const cycleFilter = (key) => {
+        setFilters(prev => {
+            const current = prev[key]
+            const next = current === null ? true : current === true ? false : null
+            return { ...prev, [key]: next }
+        })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
 
-    const activeFiltersCount = Object.values(filters).filter(Boolean).length
+    const activeFiltersCount = Object.values(filters).filter(v => v !== null).length
 
     const clearAllFilters = () => {
         setFilters({
-            running: false,
-            hasGit: false,
-            hasRemote: false,
-            uncommitted: false,
-            behind: false,
-            ahead: false,
-            hasOwnCommits: false,
-            hasReadme: false,
+            running: null,
+            hasGit: null,
+            hasRemote: null,
+            uncommitted: null,
+            behind: null,
+            ahead: null,
+            hasOwnCommits: null,
+            hasReadme: null,
         })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    // Helper to get filter button style
+    const getFilterStyle = (value, activeColor = "") => {
+        if (value === true) return activeColor || "bg-primary text-primary-foreground hover:bg-primary/90"
+        if (value === false) return "bg-muted text-muted-foreground line-through"
+        return ""
+    }
+
+    const getFilterLabel = (value, label) => {
+        if (value === false) return `!${label}`
+        return label
     }
 
     // Process monitoring
@@ -183,44 +200,62 @@ export function ProjectTable({ projects, ownRepos }) {
             )
         }
 
-        // Quick filters
-        if (filters.running) {
+        // Quick filters (null = any, true = must have, false = must not have)
+        if (filters.running !== null) {
             result = result.filter(project => {
                 const ports = getPortsForProject(project.directory)
-                return ports.length > 0
+                const isRunning = ports.length > 0
+                return filters.running ? isRunning : !isRunning
             })
         }
 
-        if (filters.hasGit) {
-            result = result.filter(project => project.git_info?.git_detected)
+        if (filters.hasGit !== null) {
+            result = result.filter(project => {
+                const hasGit = project.git_info?.git_detected
+                return filters.hasGit ? hasGit : !hasGit
+            })
         }
 
-        if (filters.hasRemote) {
-            result = result.filter(project =>
-                project.git_info?.remotes && project.git_info.remotes.length > 0
-            )
+        if (filters.hasRemote !== null) {
+            result = result.filter(project => {
+                const hasRemote = project.git_info?.remotes && project.git_info.remotes.length > 0
+                return filters.hasRemote ? hasRemote : !hasRemote
+            })
         }
 
-        if (filters.uncommitted) {
-            result = result.filter(project =>
-                project.git_info?.uncommitted_changes > 0 || project.git_info?.is_clean === false
-            )
+        if (filters.uncommitted !== null) {
+            result = result.filter(project => {
+                const hasUncommitted = project.git_info?.uncommitted_changes > 0 || project.git_info?.is_clean === false
+                return filters.uncommitted ? hasUncommitted : !hasUncommitted
+            })
         }
 
-        if (filters.behind) {
-            result = result.filter(project => project.git_info?.behind > 0)
+        if (filters.behind !== null) {
+            result = result.filter(project => {
+                const isBehind = project.git_info?.behind > 0
+                return filters.behind ? isBehind : !isBehind
+            })
         }
 
-        if (filters.ahead) {
-            result = result.filter(project => project.git_info?.ahead > 0)
+        if (filters.ahead !== null) {
+            result = result.filter(project => {
+                const isAhead = project.git_info?.ahead > 0
+                return filters.ahead ? isAhead : !isAhead
+            })
         }
 
-        if (filters.hasOwnCommits) {
-            result = result.filter(project => project.git_info?.user_commits > 0)
+        if (filters.hasOwnCommits !== null) {
+            result = result.filter(project => {
+                const hasOwn = project.git_info?.user_commits > 0
+                return filters.hasOwnCommits ? hasOwn : !hasOwn
+            })
         }
 
-        if (filters.hasReadme) {
-            result = result.filter(project => project.hasReadme)
+        if (filters.hasReadme !== null) {
+            result = result.filter(project => {
+                const hasReadme = project.hasReadme
+                return filters.hasReadme ? hasReadme : !hasReadme
+            })
         }
 
         return result
@@ -675,68 +710,72 @@ export function ProjectTable({ projects, ownRepos }) {
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* Quick Filters */}
+                    {/* Quick Filters - click cycles: any -> yes -> no -> any */}
                     <div className="flex items-center gap-1 flex-wrap">
                         <Button
-                            variant={filters.running ? "default" : "outline"}
+                            variant={filters.running !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('running')}
-                            className={filters.running ? "bg-green-600 hover:bg-green-700" : ""}
+                            onClick={() => cycleFilter('running')}
+                            className={filters.running === true ? "bg-green-600 hover:bg-green-700" : filters.running === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            <Circle className={`mr-1.5 h-2.5 w-2.5 ${filters.running ? "fill-current" : ""}`} />
-                            Running
+                            <Circle className={`mr-1.5 h-2.5 w-2.5 ${filters.running === true ? "fill-current" : ""}`} />
+                            {filters.running === false ? "!Running" : "Running"}
                         </Button>
                         <Button
-                            variant={filters.uncommitted ? "default" : "outline"}
+                            variant={filters.uncommitted !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('uncommitted')}
-                            className={filters.uncommitted ? "bg-yellow-600 hover:bg-yellow-700" : ""}
+                            onClick={() => cycleFilter('uncommitted')}
+                            className={filters.uncommitted === true ? "bg-yellow-600 hover:bg-yellow-700" : filters.uncommitted === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            Uncommitted
+                            {filters.uncommitted === false ? "!Uncommitted" : "Uncommitted"}
                         </Button>
                         <Button
-                            variant={filters.behind ? "default" : "outline"}
+                            variant={filters.behind !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('behind')}
-                            className={filters.behind ? "bg-red-600 hover:bg-red-700" : ""}
+                            onClick={() => cycleFilter('behind')}
+                            className={filters.behind === true ? "bg-red-600 hover:bg-red-700" : filters.behind === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            Behind
+                            {filters.behind === false ? "!Behind" : "Behind"}
                         </Button>
                         <Button
-                            variant={filters.ahead ? "default" : "outline"}
+                            variant={filters.ahead !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('ahead')}
-                            className={filters.ahead ? "bg-blue-600 hover:bg-blue-700" : ""}
+                            onClick={() => cycleFilter('ahead')}
+                            className={filters.ahead === true ? "bg-blue-600 hover:bg-blue-700" : filters.ahead === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            Ahead
+                            {filters.ahead === false ? "!Ahead" : "Ahead"}
                         </Button>
                         <Button
-                            variant={filters.hasGit ? "default" : "outline"}
+                            variant={filters.hasGit !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('hasGit')}
+                            onClick={() => cycleFilter('hasGit')}
+                            className={filters.hasGit === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            Git
+                            {filters.hasGit === false ? "!Git" : "Git"}
                         </Button>
                         <Button
-                            variant={filters.hasRemote ? "default" : "outline"}
+                            variant={filters.hasRemote !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('hasRemote')}
+                            onClick={() => cycleFilter('hasRemote')}
+                            className={filters.hasRemote === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            Remote
+                            {filters.hasRemote === false ? "!Remote" : "Remote"}
                         </Button>
                         <Button
-                            variant={filters.hasOwnCommits ? "default" : "outline"}
+                            variant={filters.hasOwnCommits !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('hasOwnCommits')}
+                            onClick={() => cycleFilter('hasOwnCommits')}
+                            className={filters.hasOwnCommits === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            My Commits
+                            {filters.hasOwnCommits === false ? "!My Commits" : "My Commits"}
                         </Button>
                         <Button
-                            variant={filters.hasReadme ? "default" : "outline"}
+                            variant={filters.hasReadme !== null ? "default" : "outline"}
                             size="sm"
-                            onClick={() => toggleFilter('hasReadme')}
+                            onClick={() => cycleFilter('hasReadme')}
+                            className={filters.hasReadme === false ? "bg-muted text-muted-foreground" : ""}
                         >
-                            README
+                            {filters.hasReadme === false ? "!README" : "README"}
                         </Button>
                         {activeFiltersCount > 0 && (
                             <Button
