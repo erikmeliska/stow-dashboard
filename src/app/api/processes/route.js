@@ -4,7 +4,6 @@ import fs from 'fs/promises'
 import path from 'path'
 
 const execAsync = promisify(exec)
-
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
 async function getProjectDirectories() {
@@ -20,101 +19,67 @@ async function getProjectDirectories() {
     }
 }
 
-async function getListeningPorts() {
-    try {
-        // Get all listening ports with their PIDs
-        const { stdout } = await execAsync('lsof -i -P -n | grep LISTEN', { maxBuffer: 10 * 1024 * 1024 })
-        const ports = {}
+async function getRunningProcesses() {
+    const processes = new Map() // pid -> { command, ports, cwd }
 
-        for (const line of stdout.split('\n').filter(Boolean)) {
+    try {
+        // Get all listening ports with PIDs - fast
+        const { stdout: lsofOut } = await execAsync('lsof -i -P -n 2>/dev/null | grep LISTEN || true')
+
+        for (const line of lsofOut.split('\n').filter(Boolean)) {
             const parts = line.split(/\s+/)
             const command = parts[0]
             const pid = parts[1]
             const portMatch = line.match(/:(\d+)\s+\(LISTEN\)/)
 
-            if (portMatch) {
+            if (portMatch && pid) {
+                if (!processes.has(pid)) {
+                    processes.set(pid, { pid, command, ports: [], cwd: null })
+                }
                 const port = portMatch[1]
-                if (!ports[pid]) {
-                    ports[pid] = { command, ports: [] }
-                }
-                if (!ports[pid].ports.includes(port)) {
-                    ports[pid].ports.push(port)
+                if (!processes.get(pid).ports.includes(port)) {
+                    processes.get(pid).ports.push(port)
                 }
             }
         }
 
-        return ports
-    } catch {
-        return {}
-    }
-}
+        // Get cwd for all PIDs at once - fast
+        if (processes.size > 0) {
+            const pids = Array.from(processes.keys()).join(',')
+            try {
+                const { stdout: cwdOut } = await execAsync(
+                    `lsof -a -p ${pids} -d cwd -F n 2>/dev/null || true`
+                )
 
-async function getProcessInfo(pid) {
-    try {
-        // Get process details: cwd, start time, full command
-        const { stdout } = await execAsync(`ps -p ${pid} -o lstart=,args=`)
-        const line = stdout.trim()
-
-        // Parse start time (first 24 chars typically)
-        const startMatch = line.match(/^(\w+\s+\w+\s+\d+\s+[\d:]+\s+\d+)/)
-        const startTime = startMatch ? new Date(startMatch[1]) : null
-        const args = startMatch ? line.slice(startMatch[0].length).trim() : line
-
-        // Try to get cwd
-        let cwd = null
-        try {
-            const { stdout: cwdOut } = await execAsync(`lsof -p ${pid} | grep cwd | awk '{print $NF}'`)
-            cwd = cwdOut.trim() || null
-        } catch {
-            // cwd not available
-        }
-
-        return { startTime, args, cwd }
-    } catch {
-        return { startTime: null, args: null, cwd: null }
-    }
-}
-
-async function findProcessesForDirectory(directory, listeningPorts) {
-    const processes = []
-
-    try {
-        // Find processes that have files open in this directory
-        const { stdout } = await execAsync(
-            `lsof +D "${directory}" 2>/dev/null | grep -v "^COMMAND" | awk '{print $1, $2}' | sort -u`,
-            { maxBuffer: 10 * 1024 * 1024, timeout: 5000 }
-        )
-
-        const seenPids = new Set()
-
-        for (const line of stdout.split('\n').filter(Boolean)) {
-            const [command, pid] = line.split(/\s+/)
-
-            if (seenPids.has(pid)) continue
-            seenPids.add(pid)
-
-            // Skip common system processes
-            if (['Finder', 'mds', 'mds_stores', 'mdworker', 'fseventsd', 'fseventsexchange'].includes(command)) {
-                continue
+                let currentPid = null
+                for (const line of cwdOut.split('\n')) {
+                    if (line.startsWith('p')) {
+                        currentPid = line.slice(1)
+                    } else if (line.startsWith('n') && currentPid && processes.has(currentPid)) {
+                        processes.get(currentPid).cwd = line.slice(1)
+                    }
+                }
+            } catch {
+                // Ignore cwd errors
             }
-
-            const portInfo = listeningPorts[pid]
-            const processInfo = await getProcessInfo(pid)
-
-            processes.push({
-                pid: parseInt(pid),
-                command,
-                ports: portInfo?.ports || [],
-                startTime: processInfo.startTime?.toISOString() || null,
-                args: processInfo.args,
-                cwd: processInfo.cwd
-            })
         }
     } catch {
-        // lsof failed for this directory, likely no processes
+        // lsof failed
     }
 
-    return processes
+    return Array.from(processes.values())
+}
+
+function matchProcessToProject(processCwd, projectDirs) {
+    if (!processCwd) return null
+
+    // Exact match or process cwd is inside project
+    for (const dir of projectDirs) {
+        if (processCwd === dir || processCwd.startsWith(dir + '/')) {
+            return dir
+        }
+    }
+    return null
 }
 
 export async function GET(request) {
@@ -122,38 +87,38 @@ export async function GET(request) {
     const directory = searchParams.get('directory')
 
     try {
-        const listeningPorts = await getListeningPorts()
+        const [runningProcesses, projectDirs] = await Promise.all([
+            getRunningProcesses(),
+            getProjectDirectories()
+        ])
 
-        if (directory) {
-            // Get processes for a specific directory
-            const processes = await findProcessesForDirectory(directory, listeningPorts)
-            return Response.json({ directory, processes })
-        }
+        // Group processes by project directory
+        const projectProcesses = {}
 
-        // Get processes for all project directories
-        const projectDirs = await getProjectDirectories()
-        const results = {}
+        for (const proc of runningProcesses) {
+            const matchedDir = matchProcessToProject(proc.cwd, projectDirs)
 
-        // Process in batches to avoid overwhelming the system
-        const batchSize = 10
-        for (let i = 0; i < projectDirs.length; i += batchSize) {
-            const batch = projectDirs.slice(i, i + batchSize)
-            const batchResults = await Promise.all(
-                batch.map(async (dir) => {
-                    const processes = await findProcessesForDirectory(dir, listeningPorts)
-                    return { dir, processes }
-                })
-            )
-
-            for (const { dir, processes } of batchResults) {
-                if (processes.length > 0) {
-                    results[dir] = processes
+            if (matchedDir) {
+                if (!projectProcesses[matchedDir]) {
+                    projectProcesses[matchedDir] = []
                 }
+                projectProcesses[matchedDir].push({
+                    pid: parseInt(proc.pid),
+                    command: proc.command,
+                    ports: proc.ports
+                })
             }
         }
 
+        if (directory) {
+            return Response.json({
+                directory,
+                processes: projectProcesses[directory] || []
+            })
+        }
+
         return Response.json({
-            projects: results,
+            projects: projectProcesses,
             timestamp: new Date().toISOString()
         })
     } catch (error) {
