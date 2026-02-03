@@ -3,6 +3,7 @@ import path from 'path'
 import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
 import { ScanControls } from '@/components/ScanControls'
+import { ThemeToggle } from '@/components/ThemeToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +58,10 @@ export default async function DashboardPage() {
         <div className="container mx-auto py-10">
             <div className="flex items-start justify-between mb-5">
                 <h1 className="text-3xl font-bold">Project Dashboard</h1>
-                <ScanControls lastSyncTime={lastSyncTime} />
+                <div className="flex items-start gap-4">
+                    <ScanControls lastSyncTime={lastSyncTime} />
+                    <ThemeToggle />
+                </div>
             </div>
             <ProjectTable
                 projects={processedProjects}
