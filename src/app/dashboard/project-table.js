@@ -401,31 +401,42 @@ export function ProjectTable({ projects, ownRepos }) {
             },
         },
         {
+            id: "running",
+            header: "Running",
+            cell: ({ row }) => {
+                const project = row.original
+                const ports = getPortsForProject(project.directory)
+
+                if (ports.length === 0) return null
+
+                return (
+                    <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400 cursor-default">
+                                    <Circle className="h-2 w-2 fill-current" />
+                                    {ports.slice(0, 2).join(', ')}
+                                    {ports.length > 2 && '...'}
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>Running on port{ports.length > 1 ? 's' : ''}: {ports.join(', ')}</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+                )
+            },
+        },
+        {
             id: "actions",
             header: "Actions",
             enableHiding: false,
             cell: ({ row }) => {
                 const project = row.original
-                const ports = getPortsForProject(project.directory)
-                const running = ports.length > 0
 
                 return (
                     <TooltipProvider delayDuration={300}>
                         <div className="flex items-center gap-1">
-                            {running && (
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400 cursor-default">
-                                            <Circle className="h-2 w-2 fill-current" />
-                                            {ports.slice(0, 2).join(', ')}
-                                            {ports.length > 2 && '...'}
-                                        </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Running on port{ports.length > 1 ? 's' : ''}: {ports.join(', ')}</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            )}
                             {project.hasReadme && (
                                 <Tooltip>
                                     <TooltipTrigger asChild>
