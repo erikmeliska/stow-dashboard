@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/tooltip"
 import { ReadmeDialog } from "@/components/ReadmeDialog"
 import { ProjectDetailsSheet } from "@/components/ProjectDetailsSheet"
+import { useProcesses } from "@/hooks/useProcesses"
 
 const STORAGE_KEY = 'stow-dashboard-table-settings'
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -100,6 +101,9 @@ export function ProjectTable({ projects, ownRepos }) {
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
+
+    // Process monitoring
+    const { getPortsForProject, isProjectRunning } = useProcesses(30000)
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -190,9 +194,25 @@ export function ProjectTable({ projects, ownRepos }) {
             cell: ({ row }) => {
                 const name = row.getValue("project_name")
                 const displayName = name.length > 40 ? `${name.slice(0, 40)}...` : name
+                const directory = row.original.directory
+                const ports = getPortsForProject(directory)
+                const running = ports.length > 0
+
                 return (
-                    <div className="capitalize" title={name}>
-                        {displayName}
+                    <div className="flex items-center gap-2">
+                        {running && (
+                            <span
+                                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400"
+                                title={`Running on port${ports.length > 1 ? 's' : ''}: ${ports.join(', ')}`}
+                            >
+                                <Circle className="h-2 w-2 fill-current" />
+                                {ports.slice(0, 2).join(', ')}
+                                {ports.length > 2 && '...'}
+                            </span>
+                        )}
+                        <span className="capitalize" title={name}>
+                            {displayName}
+                        </span>
                     </div>
                 )
             },

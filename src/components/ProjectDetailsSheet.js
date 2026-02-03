@@ -10,7 +10,9 @@ import {
     GitBranch,
     ExternalLink,
     Loader2,
-    AlertCircle
+    AlertCircle,
+    Circle,
+    Square
 } from "lucide-react"
 
 import {
@@ -82,6 +84,8 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [gitDetails, setGitDetails] = React.useState(null)
     const [loading, setLoading] = React.useState(false)
     const [error, setError] = React.useState(null)
+    const [processes, setProcesses] = React.useState([])
+    const [processesLoading, setProcessesLoading] = React.useState(false)
 
     React.useEffect(() => {
         if (open && project?.directory) {
@@ -103,6 +107,20 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 })
                 .finally(() => {
                     setLoading(false)
+                })
+
+            // Fetch running processes
+            setProcessesLoading(true)
+            fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
+                .then(res => res.json())
+                .then(data => {
+                    setProcesses(data.processes || [])
+                })
+                .catch(() => {
+                    setProcesses([])
+                })
+                .finally(() => {
+                    setProcessesLoading(false)
                 })
         }
     }, [open, project?.directory])
@@ -170,6 +188,44 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 </TooltipProvider>
 
                 <div className="mt-6 space-y-6">
+                    {/* Running Processes */}
+                    {processesLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Checking running processes...
+                        </div>
+                    ) : processes.length > 0 && (
+                        <>
+                            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                                <p className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-2">
+                                    <Circle className="h-3 w-3 fill-current" />
+                                    {processes.length} running process{processes.length > 1 ? 'es' : ''}
+                                </p>
+                                <div className="mt-2 space-y-2">
+                                    {processes.map((proc, index) => (
+                                        <div key={index} className="text-xs bg-background/50 rounded p-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-mono font-medium">{proc.command}</span>
+                                                <span className="text-muted-foreground">PID: {proc.pid}</span>
+                                            </div>
+                                            {proc.ports && proc.ports.length > 0 && (
+                                                <div className="mt-1 text-green-600 dark:text-green-400">
+                                                    Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
+                                                </div>
+                                            )}
+                                            {proc.args && (
+                                                <div className="mt-1 text-muted-foreground truncate" title={proc.args}>
+                                                    {proc.args.length > 60 ? proc.args.slice(0, 60) + '...' : proc.args}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <Separator />
+                        </>
+                    )}
+
                     {/* Credentials Warning - show first if exists */}
                     {project.credentials && project.credentials.length > 0 && (
                         <>
