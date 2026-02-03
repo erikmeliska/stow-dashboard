@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -153,7 +153,7 @@ export function ProjectTable({ projects, ownRepos }) {
     }
 
     // Process monitoring
-    const { processes, getPortsForProject, isProjectRunning } = useProcesses(30000)
+    const { getPortsForProject, getRunningInfo } = useProcesses(30000)
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -519,22 +519,42 @@ export function ProjectTable({ projects, ownRepos }) {
             header: "Running",
             cell: ({ row }) => {
                 const project = row.original
-                const ports = getPortsForProject(project.directory)
+                const info = getRunningInfo(project.directory)
 
-                if (ports.length === 0) return null
+                if (!info.isRunning) return null
+
+                const tooltipParts = []
+                if (info.hasProcesses) {
+                    tooltipParts.push(`${info.processes.length} process${info.processes.length > 1 ? 'es' : ''}`)
+                }
+                if (info.hasDocker) {
+                    tooltipParts.push(`${info.docker.length} container${info.docker.length > 1 ? 's' : ''}`)
+                }
+                if (info.ports.length > 0) {
+                    tooltipParts.push(`port${info.ports.length > 1 ? 's' : ''}: ${info.ports.join(', ')}`)
+                }
 
                 return (
                     <TooltipProvider delayDuration={300}>
                         <Tooltip>
                             <TooltipTrigger asChild>
-                                <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400 cursor-default">
-                                    <Circle className="h-2 w-2 fill-current" />
-                                    {ports.slice(0, 2).join(', ')}
-                                    {ports.length > 2 && '...'}
+                                <span className="flex items-center gap-1.5 cursor-default">
+                                    {info.hasProcesses && (
+                                        <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400">
+                                            <Circle className="h-2 w-2 fill-current" />
+                                            {info.processes.length}
+                                        </span>
+                                    )}
+                                    {info.hasDocker && (
+                                        <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 dark:text-blue-400">
+                                            <Container className="h-3 w-3" />
+                                            {info.docker.length}
+                                        </span>
+                                    )}
                                 </span>
                             </TooltipTrigger>
                             <TooltipContent>
-                                <p>Running on port{ports.length > 1 ? 's' : ''}: {ports.join(', ')}</p>
+                                <p>{tooltipParts.join(' • ')}</p>
                             </TooltipContent>
                         </Tooltip>
                     </TooltipProvider>

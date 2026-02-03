@@ -7,7 +7,7 @@ export function cn(...inputs) {
 }
 
 export function formatTimeAgo(date) {
-  return formatDistanceToNow(new Date(date), { addSuffix: true })
+  return formatDistanceToNow(new Date(date), { addSuffix: false })
 }
 
 export function getGitProvider(remoteUrl = '') {

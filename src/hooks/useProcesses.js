@@ -51,6 +51,29 @@ export function useProcesses(pollInterval = 30000) {
         return procs.some(p => p.ports && p.ports.length > 0)
     }, [processes])
 
+    const hasDockerContainers = useCallback((directory) => {
+        const procs = processes[directory] || []
+        return procs.some(p => p.type === 'docker')
+    }, [processes])
+
+    const getRunningInfo = useCallback((directory) => {
+        const procs = processes[directory] || []
+        const regularProcesses = procs.filter(p => p.type !== 'docker')
+        const dockerContainers = procs.filter(p => p.type === 'docker')
+        const allPorts = []
+        for (const proc of procs) {
+            allPorts.push(...(proc.ports || []))
+        }
+        return {
+            processes: regularProcesses,
+            docker: dockerContainers,
+            ports: [...new Set(allPorts)],
+            hasProcesses: regularProcesses.length > 0,
+            hasDocker: dockerContainers.length > 0,
+            isRunning: procs.length > 0
+        }
+    }, [processes])
+
     return {
         processes,
         loading,
@@ -59,6 +82,8 @@ export function useProcesses(pollInterval = 30000) {
         refresh: fetchProcesses,
         getProcessesForProject,
         getPortsForProject,
-        isProjectRunning
+        isProjectRunning,
+        hasDockerContainers,
+        getRunningInfo
     }
 }

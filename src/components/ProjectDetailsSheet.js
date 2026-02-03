@@ -12,7 +12,8 @@ import {
     Loader2,
     AlertCircle,
     Circle,
-    Square
+    Square,
+    Container
 } from "lucide-react"
 
 import {
@@ -188,84 +189,175 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 </TooltipProvider>
 
                 <div className="mt-6 space-y-6">
-                    {/* Running Processes */}
+                    {/* Running Processes & Docker Containers */}
                     {processesLoading ? (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Checking running processes...
                         </div>
-                    ) : processes.length > 0 && (
-                        <>
-                            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-                                <div className="flex items-center justify-between">
-                                    <p className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-2">
-                                        <Circle className="h-3 w-3 fill-current" />
-                                        {processes.length} running process{processes.length > 1 ? 'es' : ''}
-                                    </p>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
-                                        onClick={async () => {
-                                            const pids = processes.map(p => p.pid)
-                                            await fetch('/api/processes/kill', {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ pids })
-                                            })
-                                            // Refresh processes
-                                            setProcessesLoading(true)
-                                            const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
-                                            const data = await res.json()
-                                            setProcesses(data.processes || [])
-                                            setProcessesLoading(false)
-                                        }}
-                                    >
-                                        <Square className="h-3 w-3 mr-1" />
-                                        Kill All
-                                    </Button>
-                                </div>
-                                <div className="mt-2 space-y-2">
-                                    {processes.map((proc, index) => (
-                                        <div key={index} className="text-xs bg-background/50 rounded p-2">
-                                            <div className="flex items-center justify-between">
-                                                <span className="font-mono font-medium">{proc.command}</span>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-muted-foreground">PID: {proc.pid}</span>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
-                                                        onClick={async () => {
-                                                            await fetch('/api/processes/kill', {
-                                                                method: 'POST',
-                                                                headers: { 'Content-Type': 'application/json' },
-                                                                body: JSON.stringify({ pids: [proc.pid] })
-                                                            })
-                                                            // Refresh processes
-                                                            setProcessesLoading(true)
-                                                            const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
-                                                            const data = await res.json()
-                                                            setProcesses(data.processes || [])
-                                                            setProcessesLoading(false)
-                                                        }}
-                                                    >
-                                                        Kill
-                                                    </Button>
-                                                </div>
+                    ) : processes.length > 0 && (() => {
+                        const regularProcesses = processes.filter(p => p.type !== 'docker')
+                        const dockerContainers = processes.filter(p => p.type === 'docker')
+
+                        const refreshProcesses = async () => {
+                            setProcessesLoading(true)
+                            const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
+                            const data = await res.json()
+                            setProcesses(data.processes || [])
+                            setProcessesLoading(false)
+                        }
+
+                        const killProcess = async (pid) => {
+                            await fetch('/api/processes/kill', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ pids: [pid] })
+                            })
+                            await refreshProcesses()
+                        }
+
+                        const killAllProcesses = async () => {
+                            const pids = regularProcesses.map(p => p.pid).filter(Boolean)
+                            if (pids.length > 0) {
+                                await fetch('/api/processes/kill', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ pids })
+                                })
+                            }
+                            await refreshProcesses()
+                        }
+
+                        const stopContainer = async (id) => {
+                            await fetch('/api/processes/docker', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'stop', ids: [id] })
+                            })
+                            await refreshProcesses()
+                        }
+
+                        const stopAllContainers = async () => {
+                            const ids = dockerContainers.map(c => c.id)
+                            await fetch('/api/processes/docker', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ action: 'stop', ids })
+                            })
+                            await refreshProcesses()
+                        }
+
+                        return (
+                            <>
+                                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-2">
+                                            <Circle className="h-3 w-3 fill-current" />
+                                            {processes.length} running
+                                            {regularProcesses.length > 0 && ` (${regularProcesses.length} process${regularProcesses.length > 1 ? 'es' : ''})`}
+                                            {dockerContainers.length > 0 && ` (${dockerContainers.length} container${dockerContainers.length > 1 ? 's' : ''})`}
+                                        </p>
+                                    </div>
+
+                                    {/* Regular Processes */}
+                                    {regularProcesses.length > 0 && (
+                                        <div className="mt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-xs text-muted-foreground uppercase tracking-wide">Processes</span>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                    onClick={killAllProcesses}
+                                                >
+                                                    <Square className="h-3 w-3 mr-1" />
+                                                    Kill All
+                                                </Button>
                                             </div>
-                                            {proc.ports && proc.ports.length > 0 && (
-                                                <div className="mt-1 text-green-600 dark:text-green-400">
-                                                    Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
-                                                </div>
-                                            )}
+                                            <div className="space-y-2">
+                                                {regularProcesses.map((proc, index) => (
+                                                    <div key={index} className="text-xs bg-background/50 rounded p-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-mono font-medium">{proc.command}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-muted-foreground">PID: {proc.pid}</span>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                                    onClick={() => killProcess(proc.pid)}
+                                                                >
+                                                                    Kill
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                        {proc.ports && proc.ports.length > 0 && (
+                                                            <div className="mt-1 text-green-600 dark:text-green-400">
+                                                                Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    ))}
+                                    )}
+
+                                    {/* Docker Containers */}
+                                    {dockerContainers.length > 0 && (
+                                        <div className="mt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                                                    <Container className="h-3 w-3" />
+                                                    Docker
+                                                </span>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                    onClick={stopAllContainers}
+                                                >
+                                                    <Square className="h-3 w-3 mr-1" />
+                                                    Stop All
+                                                </Button>
+                                            </div>
+                                            <div className="space-y-2">
+                                                {dockerContainers.map((container, index) => (
+                                                    <div key={index} className="text-xs bg-blue-500/10 border border-blue-500/20 rounded p-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-mono font-medium">{container.name}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-muted-foreground">{container.id.slice(0, 12)}</span>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                                    onClick={() => stopContainer(container.id)}
+                                                                >
+                                                                    Stop
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="mt-1 text-muted-foreground">{container.image}</div>
+                                                        {container.ports && container.ports.length > 0 && (
+                                                            <div className="mt-1 text-blue-600 dark:text-blue-400">
+                                                                Port{container.ports.length > 1 ? 's' : ''}: {container.ports.join(', ')}
+                                                            </div>
+                                                        )}
+                                                        {container.status && (
+                                                            <div className="mt-1 text-green-600 dark:text-green-400 text-xs">
+                                                                {container.status}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                            <Separator />
-                        </>
-                    )}
+                                <Separator />
+                            </>
+                        )
+                    })()}
 
                     {/* Credentials Warning - show first if exists */}
                     {project.credentials && project.credentials.length > 0 && (

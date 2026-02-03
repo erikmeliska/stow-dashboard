@@ -34,7 +34,7 @@ async function getRunningProcesses() {
 
             if (portMatch && pid) {
                 if (!processes.has(pid)) {
-                    processes.set(pid, { pid, command, ports: [], cwd: null })
+                    processes.set(pid, { pid, command, ports: [], cwd: null, type: 'process' })
                 }
                 const port = portMatch[1]
                 if (!processes.get(pid).ports.includes(port)) {
@@ -70,6 +70,47 @@ async function getRunningProcesses() {
     return Array.from(processes.values())
 }
 
+async function getDockerContainers() {
+    const containers = []
+
+    try {
+        // Check if docker is available and running
+        const { stdout } = await execAsync(
+            `docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Status}}' 2>/dev/null || true`,
+            { timeout: 5000 }
+        )
+
+        for (const line of stdout.split('\n').filter(Boolean)) {
+            const [id, name, image, portsStr, workingDir, status] = line.split('\t')
+
+            if (!id) continue
+
+            // Parse ports (format: "0.0.0.0:3000->3000/tcp, :::3000->3000/tcp")
+            const ports = []
+            const portMatches = portsStr.matchAll(/(?:[\d.]+)?:(\d+)->/g)
+            for (const match of portMatches) {
+                if (!ports.includes(match[1])) {
+                    ports.push(match[1])
+                }
+            }
+
+            containers.push({
+                id,
+                name,
+                image,
+                ports,
+                cwd: workingDir || null,
+                status,
+                type: 'docker'
+            })
+        }
+    } catch {
+        // Docker not available or not running
+    }
+
+    return containers
+}
+
 function matchProcessToProject(processCwd, projectDirs) {
     if (!processCwd) return null
 
@@ -87,14 +128,16 @@ export async function GET(request) {
     const directory = searchParams.get('directory')
 
     try {
-        const [runningProcesses, projectDirs] = await Promise.all([
+        const [runningProcesses, dockerContainers, projectDirs] = await Promise.all([
             getRunningProcesses(),
+            getDockerContainers(),
             getProjectDirectories()
         ])
 
         // Group processes by project directory
         const projectProcesses = {}
 
+        // Add regular processes
         for (const proc of runningProcesses) {
             const matchedDir = matchProcessToProject(proc.cwd, projectDirs)
 
@@ -105,7 +148,27 @@ export async function GET(request) {
                 projectProcesses[matchedDir].push({
                     pid: parseInt(proc.pid),
                     command: proc.command,
-                    ports: proc.ports
+                    ports: proc.ports,
+                    type: 'process'
+                })
+            }
+        }
+
+        // Add Docker containers
+        for (const container of dockerContainers) {
+            const matchedDir = matchProcessToProject(container.cwd, projectDirs)
+
+            if (matchedDir) {
+                if (!projectProcesses[matchedDir]) {
+                    projectProcesses[matchedDir] = []
+                }
+                projectProcesses[matchedDir].push({
+                    id: container.id,
+                    name: container.name,
+                    image: container.image,
+                    ports: container.ports,
+                    status: container.status,
+                    type: 'docker'
                 })
             }
         }
