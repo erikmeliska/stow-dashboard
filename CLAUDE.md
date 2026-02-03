@@ -76,7 +76,11 @@ TanStack React Table (sorting, filtering, pagination)
 
 ### Important Files
 
-- `src/app/dashboard/project-table.js` - Main interactive table with all filtering/sorting logic
+- `src/app/dashboard/project-table.js` - Main interactive table with filtering/sorting/group filter
+- `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status
+- `src/components/ScanControls.js` - Scan buttons with progress indicator
+- `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder
+- `src/app/api/project-details/route.js` - API for live git status
 - `src/lib/projects.js` - JSONL parsing and data loading
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
@@ -88,7 +92,7 @@ TanStack React Table (sorting, filtering, pagination)
 The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON object with project metadata including:
 - `directory`, `project_name`, `description`
 - `stack` (array of technologies)
-- `git_info` (remotes, commits, branch, etc.)
+- `git_info` (remotes, commits, branch, ahead, behind, is_clean, uncommitted_changes, etc.)
 - `file_types`
 - `content_size_bytes` (size of your code without libraries)
 - `libs_size_bytes` (size of node_modules, venv, etc.)

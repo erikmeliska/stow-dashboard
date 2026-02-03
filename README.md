@@ -5,9 +5,13 @@ A modern web dashboard for visualizing and managing your local development proje
 ## Features
 
 - **Interactive Project Table** - Sortable, filterable, paginated table powered by TanStack Table
-- **Built-in Scanner** - Node.js project scanner (no external dependencies required)
+- **Group Filter** - Multi-select filter by folder groups with dynamic counts
+- **Git Sync Status** - See uncommitted changes, ahead/behind indicators at a glance
+- **Project Details Panel** - Side sheet with comprehensive project info and live git status
+- **Quick Actions** - Open projects in IDE, Terminal, or Finder with one click
+- **Built-in Scanner** - Node.js project scanner with real-time progress (no external dependencies)
 - **Git Integration** - Automatic detection of repositories (GitHub, GitLab, Bitbucket), commit counts, and contribution stats
-- **Smart Search** - Global filter across project names, paths, and Git remotes
+- **Smart Search** - Global filter across project names, paths, stack, and Git remotes
 - **Stack Detection** - Extracts technologies from package.json, requirements.txt, etc.
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
@@ -124,29 +128,34 @@ curl -X POST http://localhost:3000/api/scan -H "Content-Type: application/json" 
 src/
 ├── app/
 │   ├── api/
-│   │   ├── readme/      # README fetcher API
-│   │   └── scan/        # Scanner API
-│   └── dashboard/       # Main dashboard page
+│   │   ├── open-with/        # Open in IDE/Terminal/Finder API
+│   │   ├── project-details/  # Live git status API
+│   │   ├── readme/           # README fetcher API
+│   │   └── scan/             # Scanner API with SSE progress
+│   └── dashboard/            # Main dashboard page
 ├── components/
-│   ├── ui/              # shadcn/ui components
-│   ├── ReadmeDialog.js  # README viewer
-│   └── ScanControls.js  # Scan buttons
-├── scanner/             # Project scanner module
-└── lib/                 # Utilities
+│   ├── ui/                   # shadcn/ui components
+│   ├── ProjectDetailsSheet.js # Project details side panel
+│   ├── ReadmeDialog.js       # README viewer
+│   └── ScanControls.js       # Scan buttons with progress
+├── scanner/                  # Project scanner module
+└── lib/                      # Utilities
 scripts/
-└── scan.mjs             # CLI scanner script
+└── scan.mjs                  # CLI scanner script
 data/
-└── projects_metadata.jsonl  # Generated metadata (gitignored)
+└── projects_metadata.jsonl   # Generated metadata (gitignored)
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Example |
+| Variable | Description | Default |
 |----------|-------------|---------|
-| `SCAN_ROOTS` | Comma-separated directories to scan | `/home/user/projects,/home/user/work` |
-| `BASE_DIR` | Base path for relative directory display | `/home/user/projects` |
+| `SCAN_ROOTS` | Comma-separated directories to scan | - |
+| `BASE_DIR` | Base path for relative directory display | - |
+| `TERMINAL_APP` | Terminal app for "Open in Terminal" | `Terminal` |
+| `IDE_COMMAND` | IDE command for "Open in IDE" | `code` |
 
 ## Contributing
 
