@@ -146,6 +146,57 @@ data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
 ```
 
+## MCP Server
+
+Stow Dashboard includes an MCP (Model Context Protocol) server that allows AI assistants like Claude to access your project data.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_projects` | Search projects by name, stack, or group |
+| `get_project_details` | Get detailed info including live git status |
+| `get_project_readme` | Read project README file |
+| `open_project` | Open project in IDE, Terminal, or Finder |
+| `list_dirty_projects` | List projects with uncommitted changes or behind remote |
+| `get_project_stats` | Get aggregate statistics about all projects |
+
+### Setup for Claude Desktop
+
+Add to `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "stow-dashboard": {
+      "command": "node",
+      "args": ["/path/to/stow-dashboard/src/mcp/server.mjs"]
+    }
+  }
+}
+```
+
+### Setup for Claude Code
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "stow-dashboard": {
+      "command": "node",
+      "args": ["/path/to/stow-dashboard/src/mcp/server.mjs"]
+    }
+  }
+}
+```
+
+### Test MCP Server
+
+```bash
+npm run mcp
+```
+
 ## Configuration
 
 ### Environment Variables

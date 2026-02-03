@@ -81,11 +81,22 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/components/ScanControls.js` - Scan buttons with progress indicator
 - `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder
 - `src/app/api/project-details/route.js` - API for live git status
+- `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
 - `scripts/scan.mjs` - CLI for running the scanner
 - `tailwind.config.js` - Custom color scheme with CSS variables
+
+### MCP Server
+
+The project includes an MCP server (`src/mcp/server.mjs`) that exposes project data to AI assistants:
+
+```bash
+npm run mcp  # Start MCP server on stdio
+```
+
+Tools: `search_projects`, `get_project_details`, `get_project_readme`, `open_project`, `list_dirty_projects`, `get_project_stats`
 
 ## Data Requirements
 

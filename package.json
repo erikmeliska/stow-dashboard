@@ -15,17 +15,22 @@
     "react",
     "developer-tools"
   ],
+  "bin": {
+    "stow-mcp": "./src/mcp/server.mjs"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
-    "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f"
+    "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f",
+    "mcp": "node src/mcp/server.mjs"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
+    "@modelcontextprotocol/sdk": "^1.25.3",
     "@next/eslint-plugin-next": "^16.1.6",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-dropdown-menu": "^2.1.2",
