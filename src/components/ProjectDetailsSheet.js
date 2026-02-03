@@ -197,25 +197,66 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                     ) : processes.length > 0 && (
                         <>
                             <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-                                <p className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-2">
-                                    <Circle className="h-3 w-3 fill-current" />
-                                    {processes.length} running process{processes.length > 1 ? 'es' : ''}
-                                </p>
+                                <div className="flex items-center justify-between">
+                                    <p className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-2">
+                                        <Circle className="h-3 w-3 fill-current" />
+                                        {processes.length} running process{processes.length > 1 ? 'es' : ''}
+                                    </p>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                        onClick={async () => {
+                                            const pids = processes.map(p => p.pid)
+                                            await fetch('/api/processes/kill', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ pids })
+                                            })
+                                            // Refresh processes
+                                            setProcessesLoading(true)
+                                            const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
+                                            const data = await res.json()
+                                            setProcesses(data.processes || [])
+                                            setProcessesLoading(false)
+                                        }}
+                                    >
+                                        <Square className="h-3 w-3 mr-1" />
+                                        Kill All
+                                    </Button>
+                                </div>
                                 <div className="mt-2 space-y-2">
                                     {processes.map((proc, index) => (
                                         <div key={index} className="text-xs bg-background/50 rounded p-2">
                                             <div className="flex items-center justify-between">
                                                 <span className="font-mono font-medium">{proc.command}</span>
-                                                <span className="text-muted-foreground">PID: {proc.pid}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-muted-foreground">PID: {proc.pid}</span>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                        onClick={async () => {
+                                                            await fetch('/api/processes/kill', {
+                                                                method: 'POST',
+                                                                headers: { 'Content-Type': 'application/json' },
+                                                                body: JSON.stringify({ pids: [proc.pid] })
+                                                            })
+                                                            // Refresh processes
+                                                            setProcessesLoading(true)
+                                                            const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
+                                                            const data = await res.json()
+                                                            setProcesses(data.processes || [])
+                                                            setProcessesLoading(false)
+                                                        }}
+                                                    >
+                                                        Kill
+                                                    </Button>
+                                                </div>
                                             </div>
                                             {proc.ports && proc.ports.length > 0 && (
                                                 <div className="mt-1 text-green-600 dark:text-green-400">
                                                     Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
-                                                </div>
-                                            )}
-                                            {proc.args && (
-                                                <div className="mt-1 text-muted-foreground truncate" title={proc.args}>
-                                                    {proc.args.length > 60 ? proc.args.slice(0, 60) + '...' : proc.args}
                                                 </div>
                                             )}
                                         </div>
