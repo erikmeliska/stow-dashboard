@@ -42,6 +42,8 @@ Configure in `.env.local`:
 ```bash
 SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
 BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
+TERMINAL_APP=Terminal                                    # Terminal app (Terminal, Warp, iTerm, etc.)
+IDE_COMMAND=code                                         # IDE command (code, cursor, zed, etc.)
 ```
 
 ## Architecture

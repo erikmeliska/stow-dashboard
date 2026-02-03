@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Copy } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -96,9 +96,75 @@ export function ProjectTable({ projects, ownRepos }) {
     const [columnFilters, setColumnFilters] = React.useState([])
     const [columnVisibility, setColumnVisibility] = React.useState({})
     const [globalFilter, setGlobalFilter] = React.useState("")
+    const [selectedGroups, setSelectedGroups] = React.useState([])
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
+
+    // Search filter function (same logic as globalFilterFn)
+    const matchesSearch = React.useCallback((project, searchValue) => {
+        if (!searchValue) return true
+        const search = searchValue.toLowerCase()
+
+        if (project.project_name?.toLowerCase().includes(search)) return true
+        if (project.description?.toLowerCase().includes(search)) return true
+        if (project.directory?.toLowerCase().includes(search)) return true
+        if (project.stack?.some(tech => tech.toLowerCase().includes(search))) return true
+        if (project.groupParts?.some(part => part.toLowerCase().includes(search))) return true
+        if (project.git_info?.remotes?.some(remote => remote.toLowerCase().includes(search))) return true
+
+        return false
+    }, [])
+
+    // Projects filtered by search (for group stats calculation)
+    const searchFilteredProjects = React.useMemo(() => {
+        if (!globalFilter) return projects
+        return projects.filter(project => matchesSearch(project, globalFilter))
+    }, [projects, globalFilter, matchesSearch])
+
+    // Extract groups with counts from search-filtered projects
+    const groupStats = React.useMemo(() => {
+        const counts = {}
+        searchFilteredProjects.forEach(project => {
+            (project.groupParts || []).forEach(group => {
+                counts[group] = (counts[group] || 0) + 1
+            })
+        })
+        return Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => ({ name, count }))
+    }, [searchFilteredProjects])
+
+    // Final filtered projects (search + groups)
+    const filteredProjects = React.useMemo(() => {
+        if (selectedGroups.length === 0) return searchFilteredProjects
+        return searchFilteredProjects.filter(project =>
+            selectedGroups.some(group => (project.groupParts || []).includes(group))
+        )
+    }, [searchFilteredProjects, selectedGroups])
+
+    const toggleGroup = (groupName) => {
+        setSelectedGroups(prev =>
+            prev.includes(groupName)
+                ? prev.filter(g => g !== groupName)
+                : [...prev, groupName]
+        )
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const clearGroups = () => {
+        setSelectedGroups([])
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    // Auto-remove selected groups that no longer exist in filtered results
+    React.useEffect(() => {
+        const availableGroups = new Set(groupStats.map(g => g.name))
+        const validGroups = selectedGroups.filter(g => availableGroups.has(g))
+        if (validGroups.length !== selectedGroups.length) {
+            setSelectedGroups(validGroups)
+        }
+    }, [groupStats, selectedGroups])
 
     // Load settings from localStorage on mount
     React.useEffect(() => {
@@ -344,21 +410,6 @@ export function ProjectTable({ projects, ownRepos }) {
                                     <p>View details</p>
                                 </TooltipContent>
                             </Tooltip>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-8 w-8 p-0"
-                                        onClick={() => navigator.clipboard.writeText(project.directory)}
-                                    >
-                                        <Copy className="h-4 w-4" />
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Copy path</p>
-                                </TooltipContent>
-                            </Tooltip>
                         </div>
                     </TooltipProvider>
                 )
@@ -367,7 +418,7 @@ export function ProjectTable({ projects, ownRepos }) {
     ]
 
     const table = useReactTable({
-        data: projects,
+        data: filteredProjects,
         columns,
         onSortingChange: setSorting,
         onColumnFiltersChange: setColumnFilters,
@@ -434,37 +485,103 @@ export function ProjectTable({ projects, ownRepos }) {
             project={detailsSheet.project}
         />
         <div className="w-full">
-            <div className="flex items-center py-4">
-                <Input
-                    placeholder="Search projects..."
-                    value={globalFilter ?? ""}
-                    onChange={(event) => setGlobalFilter(event.target.value)}
-                    className="max-w-sm"
-                />
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="outline" className="ml-auto">
-                            Columns <ChevronDown className="ml-2 h-4 w-4" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                        {table
-                            .getAllColumns()
-                            .filter((column) => column.getCanHide())
-                            .map((column) => {
-                                return (
-                                    <DropdownMenuCheckboxItem
-                                        key={column.id}
-                                        className="capitalize"
-                                        checked={column.getIsVisible()}
-                                        onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                                    >
-                                        {column.id}
-                                    </DropdownMenuCheckboxItem>
-                                )
-                            })}
-                    </DropdownMenuContent>
-                </DropdownMenu>
+            <div className="flex flex-col gap-4 py-4">
+                <div className="flex items-center gap-2">
+                    <div className="relative max-w-sm">
+                        <Input
+                            placeholder="Search projects..."
+                            value={globalFilter ?? ""}
+                            onChange={(event) => setGlobalFilter(event.target.value)}
+                            className="pr-8"
+                        />
+                        {globalFilter && (
+                            <button
+                                onClick={() => setGlobalFilter("")}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        )}
+                    </div>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" className={selectedGroups.length > 0 ? "border-primary" : ""}>
+                                <Filter className="mr-2 h-4 w-4" />
+                                Groups
+                                {selectedGroups.length > 0 && (
+                                    <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                                        {selectedGroups.length}
+                                    </span>
+                                )}
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-56 max-h-80 overflow-y-auto">
+                            {selectedGroups.length > 0 && (
+                                <div
+                                    className="px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:text-foreground"
+                                    onClick={clearGroups}
+                                >
+                                    Clear all filters
+                                </div>
+                            )}
+                            {groupStats.map(({ name, count }) => (
+                                <DropdownMenuCheckboxItem
+                                    key={name}
+                                    checked={selectedGroups.includes(name)}
+                                    onCheckedChange={() => toggleGroup(name)}
+                                >
+                                    <span className="flex-1">{name}</span>
+                                    <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+                                </DropdownMenuCheckboxItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" className="ml-auto">
+                                Columns <ChevronDown className="ml-2 h-4 w-4" />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            {table
+                                .getAllColumns()
+                                .filter((column) => column.getCanHide())
+                                .map((column) => {
+                                    return (
+                                        <DropdownMenuCheckboxItem
+                                            key={column.id}
+                                            className="capitalize"
+                                            checked={column.getIsVisible()}
+                                            onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                                        >
+                                            {column.id}
+                                        </DropdownMenuCheckboxItem>
+                                    )
+                                })}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
+                {/* Selected groups as chips */}
+                {selectedGroups.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        {selectedGroups.map(group => (
+                            <span
+                                key={group}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-md text-sm cursor-pointer hover:bg-primary/20 transition-colors"
+                                onClick={() => toggleGroup(group)}
+                            >
+                                {group}
+                                <X className="h-3 w-3" />
+                            </span>
+                        ))}
+                        <button
+                            className="text-sm text-muted-foreground hover:text-foreground"
+                            onClick={clearGroups}
+                        >
+                            Clear all
+                        </button>
+                    </div>
+                )}
             </div>
             <div className="rounded-md border">
                 <Table>
@@ -512,7 +629,8 @@ export function ProjectTable({ projects, ownRepos }) {
             </div>
             <div className="flex items-center justify-between space-x-2 py-4">
                 <div className="flex-1 text-sm text-muted-foreground">
-                    {table.getFilteredRowModel().rows.length} project(s) total
+                    {table.getFilteredRowModel().rows.length} project(s)
+                    {selectedGroups.length > 0 && ` (filtered from ${projects.length})`}
                 </div>
                 <div className="flex items-center space-x-6 lg:space-x-8">
                     <div className="flex items-center space-x-2">

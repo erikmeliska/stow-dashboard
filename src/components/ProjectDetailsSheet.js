@@ -22,6 +22,12 @@ import {
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 function formatBytes(bytes) {
     if (!bytes) return '-'
@@ -31,7 +37,7 @@ function formatBytes(bytes) {
     return `${kb.toFixed(1)} KB`
 }
 
-function CopyButton({ text, label }) {
+function CopyButton({ text, tooltip }) {
     const [copied, setCopied] = React.useState(false)
 
     const handleCopy = async () => {
@@ -41,19 +47,16 @@ function CopyButton({ text, label }) {
     }
 
     return (
-        <Button variant="outline" size="sm" onClick={handleCopy}>
-            {copied ? (
-                <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Copied
-                </>
-            ) : (
-                <>
-                    <Copy className="h-4 w-4 mr-2" />
-                    {label}
-                </>
-            )}
-        </Button>
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleCopy}>
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+                <p>{copied ? 'Copied!' : tooltip}</p>
+            </TooltipContent>
+        </Tooltip>
     )
 }
 
@@ -109,18 +112,21 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const gitInfo = project.git_info
     const remotes = gitInfo?.remotes || []
 
-    const openInTerminal = () => {
-        window.open(`vscode://file${project.directory}`, '_blank')
+    const openWith = async (action) => {
+        try {
+            await fetch('/api/open-with', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ directory: project.directory, action })
+            })
+        } catch (e) {
+            console.error(`Failed to open with ${action}:`, e)
+        }
     }
 
-    const openInVSCode = () => {
-        window.open(`vscode://file${project.directory}`, '_blank')
-    }
-
-    const openInFinder = () => {
-        // This won't work directly from browser, but we can try
-        window.open(`file://${project.directory}`, '_blank')
-    }
+    const openInTerminal = () => openWith('terminal')
+    const openInVSCode = () => openWith('vscode')
+    const openInFinder = () => openWith('finder')
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
@@ -133,21 +139,35 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 </SheetHeader>
 
                 {/* Quick Actions - right under header */}
-                <div className="flex flex-wrap gap-2 mt-4">
-                    <CopyButton text={project.directory} label="Copy Path" />
-                    <Button variant="outline" size="sm" onClick={openInVSCode}>
-                        <Code className="h-4 w-4 mr-2" />
-                        VS Code
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={openInFinder}>
-                        <FolderOpen className="h-4 w-4 mr-2" />
-                        Finder
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={openInTerminal}>
-                        <Terminal className="h-4 w-4 mr-2" />
-                        Terminal
-                    </Button>
-                </div>
+                <TooltipProvider>
+                    <div className="flex gap-1 mt-4">
+                        <CopyButton text={project.directory} tooltip="Copy path" />
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInVSCode}>
+                                    <Code className="h-4 w-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Open in IDE</p></TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInFinder}>
+                                    <FolderOpen className="h-4 w-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Open in Finder</p></TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInTerminal}>
+                                    <Terminal className="h-4 w-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent><p>Open in Terminal</p></TooltipContent>
+                        </Tooltip>
+                    </div>
+                </TooltipProvider>
 
                 <div className="mt-6 space-y-6">
                     {/* Credentials Warning - show first if exists */}
