@@ -105,17 +105,33 @@ export function ProjectTable({ projects, ownRepos }) {
     // Quick filters
     const [filters, setFilters] = React.useState({
         running: false,
-        // Future filters:
-        // hasGit: null,        // true/false/null(any)
-        // hasRemote: null,
-        // uncommitted: null,
-        // behind: null,
-        // hasOwnCommits: null,
-        // hasReadme: null,
+        hasGit: false,
+        hasRemote: false,
+        uncommitted: false,
+        behind: false,
+        ahead: false,
+        hasOwnCommits: false,
+        hasReadme: false,
     })
 
     const toggleFilter = (key) => {
         setFilters(prev => ({ ...prev, [key]: !prev[key] }))
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const activeFiltersCount = Object.values(filters).filter(Boolean).length
+
+    const clearAllFilters = () => {
+        setFilters({
+            running: false,
+            hasGit: false,
+            hasRemote: false,
+            uncommitted: false,
+            behind: false,
+            ahead: false,
+            hasOwnCommits: false,
+            hasReadme: false,
+        })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
 
@@ -167,12 +183,44 @@ export function ProjectTable({ projects, ownRepos }) {
             )
         }
 
-        // Running filter
+        // Quick filters
         if (filters.running) {
             result = result.filter(project => {
                 const ports = getPortsForProject(project.directory)
                 return ports.length > 0
             })
+        }
+
+        if (filters.hasGit) {
+            result = result.filter(project => project.git_info?.git_detected)
+        }
+
+        if (filters.hasRemote) {
+            result = result.filter(project =>
+                project.git_info?.remotes && project.git_info.remotes.length > 0
+            )
+        }
+
+        if (filters.uncommitted) {
+            result = result.filter(project =>
+                project.git_info?.uncommitted_changes > 0 || project.git_info?.is_clean === false
+            )
+        }
+
+        if (filters.behind) {
+            result = result.filter(project => project.git_info?.behind > 0)
+        }
+
+        if (filters.ahead) {
+            result = result.filter(project => project.git_info?.ahead > 0)
+        }
+
+        if (filters.hasOwnCommits) {
+            result = result.filter(project => project.git_info?.user_commits > 0)
+        }
+
+        if (filters.hasReadme) {
+            result = result.filter(project => project.hasReadme)
         }
 
         return result
@@ -626,15 +674,83 @@ export function ProjectTable({ projects, ownRepos }) {
                             ))}
                         </DropdownMenuContent>
                     </DropdownMenu>
-                    <Button
-                        variant={filters.running ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => toggleFilter('running')}
-                        className={filters.running ? "bg-green-600 hover:bg-green-700" : ""}
-                    >
-                        <Circle className={`mr-2 h-3 w-3 ${filters.running ? "fill-current" : ""}`} />
-                        Running
-                    </Button>
+
+                    {/* Quick Filters */}
+                    <div className="flex items-center gap-1 flex-wrap">
+                        <Button
+                            variant={filters.running ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('running')}
+                            className={filters.running ? "bg-green-600 hover:bg-green-700" : ""}
+                        >
+                            <Circle className={`mr-1.5 h-2.5 w-2.5 ${filters.running ? "fill-current" : ""}`} />
+                            Running
+                        </Button>
+                        <Button
+                            variant={filters.uncommitted ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('uncommitted')}
+                            className={filters.uncommitted ? "bg-yellow-600 hover:bg-yellow-700" : ""}
+                        >
+                            Uncommitted
+                        </Button>
+                        <Button
+                            variant={filters.behind ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('behind')}
+                            className={filters.behind ? "bg-red-600 hover:bg-red-700" : ""}
+                        >
+                            Behind
+                        </Button>
+                        <Button
+                            variant={filters.ahead ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('ahead')}
+                            className={filters.ahead ? "bg-blue-600 hover:bg-blue-700" : ""}
+                        >
+                            Ahead
+                        </Button>
+                        <Button
+                            variant={filters.hasGit ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('hasGit')}
+                        >
+                            Git
+                        </Button>
+                        <Button
+                            variant={filters.hasRemote ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('hasRemote')}
+                        >
+                            Remote
+                        </Button>
+                        <Button
+                            variant={filters.hasOwnCommits ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('hasOwnCommits')}
+                        >
+                            My Commits
+                        </Button>
+                        <Button
+                            variant={filters.hasReadme ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => toggleFilter('hasReadme')}
+                        >
+                            README
+                        </Button>
+                        {activeFiltersCount > 0 && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={clearAllFilters}
+                                className="text-muted-foreground"
+                            >
+                                <X className="mr-1 h-3 w-3" />
+                                Clear ({activeFiltersCount})
+                            </Button>
+                        )}
+                    </div>
+
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="outline" className="ml-auto">
