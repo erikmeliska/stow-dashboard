@@ -59,17 +59,17 @@ data/projects_metadata.jsonl (JSONL file)
     ↓
 lib/projects.js - readProjectsData() [Server-side]
     ↓
-app/dashboard/page.js [Server Component - async data loading]
+app/page.js [Server Component - async data loading]
     ↓
-app/dashboard/project-table.js [Client Component - interactive table]
+app/project-table.js [Client Component - interactive table]
     ↓
 TanStack React Table (sorting, filtering, pagination)
 ```
 
 ### Server vs Client Components
 
-- **Server Components**: `app/dashboard/page.js` reads JSONL at request time, `app/layout.js`
-- **Client Components**: `project-table.js` (marked with `'use client'`), `app/dashboard/layout.js`
+- **Server Components**: `app/page.js` reads JSONL at request time, `app/layout.js`
+- **Client Components**: `project-table.js` (marked with `'use client'`)
 
 ### Key Patterns
 
@@ -80,7 +80,7 @@ TanStack React Table (sorting, filtering, pagination)
 
 ### Important Files
 
-- `src/app/dashboard/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters
+- `src/app/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters
 - `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status and process info
 - `src/components/ScanControls.js` - Scan buttons with progress indicator
 - `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder

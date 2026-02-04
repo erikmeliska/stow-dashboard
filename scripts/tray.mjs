@@ -22,7 +22,7 @@ const execAsync = promisify(exec)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const PORT = process.env.STOW_PORT || 3088
-const URL = `http://localhost:${PORT}/dashboard`
+const URL = `http://localhost:${PORT}`
 const NO_OPEN = process.argv.includes('--no-open')
 
 async function checkDependencies() {

@@ -72,7 +72,7 @@ A modern web dashboard for visualizing and managing your local development proje
    npm run dev    # Development mode with hot reload
    ```
 
-6. Open [http://localhost:3088/dashboard](http://localhost:3088/dashboard)
+6. Open [http://localhost:3088](http://localhost:3088)
 
 ## Scripts
 
@@ -146,7 +146,8 @@ src/
 │   │   ├── project-details/  # Live git status API
 │   │   ├── readme/           # README fetcher API
 │   │   └── scan/             # Scanner API with SSE progress
-│   └── dashboard/            # Main dashboard page
+│   ├── page.js               # Main dashboard page
+│   └── project-table.js      # Interactive project table
 ├── components/
 │   ├── ui/                   # shadcn/ui components
 │   ├── ProjectDetailsSheet.js # Project details side panel
