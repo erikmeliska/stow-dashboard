@@ -6,8 +6,11 @@ A modern web dashboard for visualizing and managing your local development proje
 
 - **Interactive Project Table** - Sortable, filterable, paginated table powered by TanStack Table
 - **Group Filter** - Multi-select filter by folder groups with dynamic counts
+- **Quick Filters** - 3-state toggle filters (any/yes/no) for Running, Git, Uncommitted, Behind, etc.
+- **Process Monitoring** - Detect running processes and Docker containers for each project
+- **Docker Integration** - See running containers from `docker compose`, with stop/restart controls
 - **Git Sync Status** - See uncommitted changes, ahead/behind indicators at a glance
-- **Project Details Panel** - Side sheet with comprehensive project info and live git status
+- **Project Details Panel** - Side sheet with comprehensive project info, live git status, and process info
 - **Quick Actions** - Open projects in IDE, Terminal, or Finder with one click
 - **Built-in Scanner** - Node.js project scanner with real-time progress (no external dependencies)
 - **Git Integration** - Automatic detection of repositories (GitHub, GitLab, Bitbucket), commit counts, and contribution stats
@@ -15,6 +18,7 @@ A modern web dashboard for visualizing and managing your local development proje
 - **Stack Detection** - Extracts technologies from package.json, requirements.txt, etc.
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
+- **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
 - **Dark Mode** - Full dark mode support
 
@@ -129,6 +133,10 @@ src/
 ├── app/
 │   ├── api/
 │   │   ├── open-with/        # Open in IDE/Terminal/Finder API
+│   │   ├── processes/        # Process & Docker monitoring API
+│   │   │   ├── route.js      # GET running processes/containers
+│   │   │   ├── docker/       # Docker container operations
+│   │   │   └── kill/         # Kill process by PID
 │   │   ├── project-details/  # Live git status API
 │   │   ├── readme/           # README fetcher API
 │   │   └── scan/             # Scanner API with SSE progress
@@ -138,6 +146,10 @@ src/
 │   ├── ProjectDetailsSheet.js # Project details side panel
 │   ├── ReadmeDialog.js       # README viewer
 │   └── ScanControls.js       # Scan buttons with progress
+├── hooks/
+│   └── useProcesses.js       # Process monitoring hook
+├── mcp/
+│   └── server.mjs            # MCP server for AI assistants
 ├── scanner/                  # Project scanner module
 └── lib/                      # Utilities
 scripts/

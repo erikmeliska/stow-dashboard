@@ -76,17 +76,37 @@ TanStack React Table (sorting, filtering, pagination)
 
 ### Important Files
 
-- `src/app/dashboard/project-table.js` - Main interactive table with filtering/sorting/group filter
-- `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status
+- `src/app/dashboard/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters
+- `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status and process info
 - `src/components/ScanControls.js` - Scan buttons with progress indicator
 - `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder
 - `src/app/api/project-details/route.js` - API for live git status
+- `src/app/api/processes/route.js` - API for detecting running processes and Docker containers
+- `src/app/api/processes/docker/route.js` - API for Docker container operations (stop, restart, kill)
+- `src/app/api/processes/kill/route.js` - API for killing processes
+- `src/hooks/useProcesses.js` - Hook for process monitoring with polling
 - `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
 - `scripts/scan.mjs` - CLI for running the scanner
 - `tailwind.config.js` - Custom color scheme with CSS variables
+
+### Process Monitoring
+
+The dashboard detects running processes and Docker containers for each project:
+
+- Uses `lsof` to find processes with listening ports and their working directories
+- Uses `docker ps` with compose labels to detect containers from `docker compose`
+- Matches processes/containers to projects by comparing cwd with project directories
+- Polls every 30 seconds for updates
+- Displays process count (green) and container count (blue) in Running column
+- Project details sheet shows full process/container info with Kill/Stop buttons
+
+### Quick Filters
+
+The table includes 3-state toggle filters (any → yes → no → any):
+- Running, Has Git, Has Remote, Uncommitted, Behind, Ahead, Own Commits, Has README
 
 ### MCP Server
 
