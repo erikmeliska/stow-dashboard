@@ -223,6 +223,13 @@ npm run mcp
 | `TERMINAL_APP` | Terminal app for "Open in Terminal" | `Terminal` |
 | `IDE_COMMAND` | IDE command for "Open in IDE" | `code` |
 
+## Roadmap
+
+- [ ] Windows support for process monitoring (currently macOS/Linux only)
+- [ ] Start/restart projects from dashboard
+- [ ] Project notes and tags
+- [ ] Notifications for git changes
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
