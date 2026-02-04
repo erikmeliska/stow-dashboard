@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::net::TcpStream;
 use std::fs;
 use std::collections::HashMap;
+use std::env;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
@@ -38,6 +39,35 @@ fn get_standalone_dir() -> Option<PathBuf> {
     None
 }
 
+fn find_node() -> Option<PathBuf> {
+    // Common node locations on macOS
+    let paths = [
+        "/opt/homebrew/bin/node",      // Apple Silicon Homebrew
+        "/usr/local/bin/node",          // Intel Homebrew / manual install
+        "/usr/bin/node",                // System
+        "/opt/local/bin/node",          // MacPorts
+    ];
+
+    for path in paths {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // Try to find via PATH (works when run from terminal)
+    if let Ok(output) = Command::new("which").arg("node").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+
+    None
+}
+
 fn parse_env_file(path: &PathBuf) -> HashMap<String, String> {
     let mut env_vars = HashMap::new();
 
@@ -61,31 +91,61 @@ fn parse_env_file(path: &PathBuf) -> HashMap<String, String> {
 }
 
 fn start_server() -> Option<Child> {
-    let standalone_dir = get_standalone_dir()?;
+    let standalone_dir = get_standalone_dir();
+
+    if standalone_dir.is_none() {
+        eprintln!("[Stow] ERROR: Could not find standalone directory");
+        return None;
+    }
+
+    let standalone_dir = standalone_dir.unwrap();
+    eprintln!("[Stow] Standalone dir: {:?}", standalone_dir);
+
     let server_js = standalone_dir.join("server.js");
     let env_file = standalone_dir.join(".env.local");
 
     if !server_js.exists() {
+        eprintln!("[Stow] ERROR: server.js not found at {:?}", server_js);
         return None;
     }
 
+    // Find node binary
+    let node_path = match find_node() {
+        Some(p) => p,
+        None => {
+            eprintln!("[Stow] ERROR: Could not find node binary");
+            return None;
+        }
+    };
+    eprintln!("[Stow] Using node at: {:?}", node_path);
+
     // Parse .env.local and pass as environment variables
     let env_vars = parse_env_file(&env_file);
+    eprintln!("[Stow] Starting server with {} env vars", env_vars.len());
 
-    let mut cmd = Command::new("node");
+    let mut cmd = Command::new(&node_path);
     cmd.arg("server.js")
         .env("PORT", PORT.to_string())
         .env("HOSTNAME", "localhost")
         .current_dir(&standalone_dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
     // Add all env vars from .env.local
     for (key, value) in env_vars {
         cmd.env(key, value);
     }
 
-    cmd.spawn().ok()
+    match cmd.spawn() {
+        Ok(child) => {
+            eprintln!("[Stow] Server started with PID {}", child.id());
+            Some(child)
+        }
+        Err(e) => {
+            eprintln!("[Stow] ERROR: Failed to start server: {}", e);
+            None
+        }
+    }
 }
 
 fn wait_for_server(timeout_secs: u64) -> bool {

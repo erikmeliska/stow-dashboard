@@ -201,7 +201,6 @@ src-tauri/                    # Tauri desktop app (Rust)
 └── icons/                    # App icons
 scripts/
 ├── scan.mjs                  # CLI scanner script
-├── tray.mjs                  # Web launcher script
 └── prepare-tauri.mjs         # Prepare standalone for Tauri
 data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
