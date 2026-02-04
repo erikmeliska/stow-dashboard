@@ -20,8 +20,6 @@ const PROJECT_INDICATORS = [
     '.git'
 ]
 
-const META_FILENAME = '.project_meta.json'
-
 export class ProjectScanner {
     constructor(options = {}) {
         this.scanRoots = options.scanRoots || []
@@ -29,6 +27,7 @@ export class ProjectScanner {
         this.syncFile = options.syncFile || null
         this.forceUpdate = options.forceUpdate || false
         this.onProgress = options.onProgress || (() => {})
+        this.existingProjectsCache = new Map() // Cache loaded from JSONL
     }
 
     isIgnored(filePath) {
@@ -146,6 +145,31 @@ export class ProjectScanner {
         }
     }
 
+    async loadExistingCache() {
+        if (!this.syncFile) return
+
+        try {
+            const content = await fs.readFile(this.syncFile, 'utf-8')
+            const lines = content.trim().split('\n').filter(l => l.trim())
+
+            for (const line of lines) {
+                try {
+                    const project = JSON.parse(line)
+                    if (project.directory) {
+                        this.existingProjectsCache.set(project.directory, project)
+                    }
+                } catch {
+                    // Skip invalid lines
+                }
+            }
+
+            this.onProgress({ type: 'cache_loaded', count: this.existingProjectsCache.size })
+        } catch {
+            // JSONL doesn't exist yet, start fresh
+            this.onProgress({ type: 'cache_empty' })
+        }
+    }
+
     async getLatestTimestamps(directory) {
         let latestAtime = 0
         let latestMtime = 0
@@ -160,8 +184,8 @@ export class ProjectScanner {
                     // Skip ignored paths
                     if (this.isIgnored(fullPath)) continue
 
-                    // Skip meta file
-                    if (entry.name === META_FILENAME) continue
+                    // Skip legacy meta file (may still exist in some projects)
+                    if (entry.name === '.project_meta.json') continue
 
                     try {
                         const stat = await fs.stat(fullPath)
@@ -200,9 +224,6 @@ export class ProjectScanner {
                     if (entry.isDirectory()) {
                         await scanDir(fullPath, isLibPath || isIgnoredPath)
                     } else if (entry.isFile()) {
-                        // Skip meta file
-                        if (entry.name === META_FILENAME) continue
-
                         try {
                             const stat = await fs.stat(fullPath)
                             const size = stat.size
@@ -337,23 +358,31 @@ export class ProjectScanner {
         }
     }
 
-    async shouldUpdateMetadata(directory, metaFilePath) {
-        if (this.forceUpdate) return true
+    async shouldUpdateMetadata(directory) {
+        if (this.forceUpdate) return { needsUpdate: true, cached: null }
 
-        try {
-            await fs.access(metaFilePath)
-            const metaStat = await fs.stat(metaFilePath)
-            const { latestMtime } = await this.getLatestTimestamps(directory)
-
-            return latestMtime > metaStat.mtimeMs
-        } catch {
-            return true // Update if meta doesn't exist
+        const cached = this.existingProjectsCache.get(directory)
+        if (!cached || !cached.last_modified) {
+            return { needsUpdate: true, cached: null }
         }
+
+        const { latestMtime } = await this.getLatestTimestamps(directory)
+        const cachedMtime = new Date(cached.last_modified).getTime()
+
+        // If project hasn't been modified since last scan, use cached data
+        if (latestMtime <= cachedMtime) {
+            return { needsUpdate: false, cached }
+        }
+
+        return { needsUpdate: true, cached: null }
     }
 
     async scanProjects() {
         const scannedProjects = []
         const startTime = Date.now()
+
+        // Load existing JSONL as cache for incremental scanning
+        await this.loadExistingCache()
 
         for (const root of this.scanRoots) {
             try {
@@ -380,20 +409,20 @@ export class ProjectScanner {
 
         if (isProject) {
             const startTime = Date.now()
-            const metaFilePath = path.join(directory, META_FILENAME)
 
             try {
-                let projectMeta
-                const needsUpdate = await this.shouldUpdateMetadata(directory, metaFilePath)
+                const { needsUpdate, cached } = await this.shouldUpdateMetadata(directory)
 
+                let projectMeta
                 if (needsUpdate) {
                     projectMeta = await this.extractProjectMetadata(directory)
-                    await fs.writeFile(metaFilePath, JSON.stringify(projectMeta, null, 2))
                     const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
                     this.onProgress({ type: 'updated', directory, processingTime })
+
+                    // Auto-cleanup legacy .project_meta.json when rescanning
+                    await this.deleteLegacyMetaFile(directory)
                 } else {
-                    const metaContent = await fs.readFile(metaFilePath, 'utf-8')
-                    projectMeta = JSON.parse(metaContent)
+                    projectMeta = cached
                     const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
                     this.onProgress({ type: 'existing', directory, processingTime })
                 }
@@ -421,6 +450,17 @@ export class ProjectScanner {
         }
     }
 
+    async deleteLegacyMetaFile(directory) {
+        const legacyMetaPath = path.join(directory, '.project_meta.json')
+        try {
+            await fs.access(legacyMetaPath)
+            await fs.unlink(legacyMetaPath)
+            this.onProgress({ type: 'legacy_deleted', file: legacyMetaPath })
+        } catch {
+            // File doesn't exist, nothing to delete
+        }
+    }
+
     async syncMetadata(projects) {
         if (!this.syncFile) return
 
@@ -436,12 +476,14 @@ export class ProjectScanner {
     }
 
     async cleanupMetadataFiles() {
+        // Clean up old .project_meta.json files (legacy format)
+        const LEGACY_META_FILENAME = '.project_meta.json'
         let deletedCount = 0
 
         const cleanup = async (directory) => {
             if (this.isIgnored(directory)) return
 
-            const metaFilePath = path.join(directory, META_FILENAME)
+            const metaFilePath = path.join(directory, LEGACY_META_FILENAME)
             try {
                 await fs.access(metaFilePath)
                 await fs.unlink(metaFilePath)

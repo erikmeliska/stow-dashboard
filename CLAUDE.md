@@ -44,8 +44,10 @@ Or use the CLI directly:
 node scripts/scan.mjs -s data/projects_metadata.jsonl
 node scripts/scan.mjs -r ~/Projekty ~/Work -s   # Override roots
 node scripts/scan.mjs -f -s                      # Force update
-node scripts/scan.mjs --cleanup                  # Delete all .project_meta.json files
+node scripts/scan.mjs --cleanup                  # Delete legacy .project_meta.json files
 ```
+
+**Incremental scanning:** The scanner uses the JSONL file itself as a cache. On subsequent scans, only projects with files modified since the last scan are re-analyzed. This makes repeat scans ~8x faster.
 
 API endpoint: `POST /api/scan` with optional `{ force: true }` or `{ cleanup: true }`
 

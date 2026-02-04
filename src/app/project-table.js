@@ -314,6 +314,9 @@ export function ProjectTable({ projects, ownRepos }) {
             if (settings.sorting) setSorting(settings.sorting)
             if (settings.columnVisibility) setColumnVisibility(settings.columnVisibility)
             if (settings.pageSize) setPagination(prev => ({ ...prev, pageSize: settings.pageSize }))
+            if (settings.filters) setFilters(settings.filters)
+            if (settings.globalFilter) setGlobalFilter(settings.globalFilter)
+            if (settings.selectedGroups) setSelectedGroups(settings.selectedGroups)
         }
         setIsHydrated(true)
     }, [])
@@ -321,8 +324,15 @@ export function ProjectTable({ projects, ownRepos }) {
     // Save settings to localStorage on change
     React.useEffect(() => {
         if (!isHydrated) return
-        saveSettings({ sorting, columnVisibility, pageSize: pagination.pageSize })
-    }, [sorting, columnVisibility, pagination.pageSize, isHydrated])
+        saveSettings({
+            sorting,
+            columnVisibility,
+            pageSize: pagination.pageSize,
+            filters,
+            globalFilter,
+            selectedGroups
+        })
+    }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, isHydrated])
     
     const columns = [
         {

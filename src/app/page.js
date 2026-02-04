@@ -65,7 +65,8 @@ export default async function DashboardPage() {
                     </div>
                 </div>
             </div>
-            <div className="flex-1 overflow-hidden px-4">
+            <div className="flex-1 overflow-hidden px-4 relative">
+                <div id="scan-logs-portal" className="absolute top-2 right-4 z-10" />
                 <ProjectTable
                     projects={processedProjects}
                     ownRepos={OWN_REPOS}
