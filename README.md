@@ -167,11 +167,14 @@ Stow Dashboard includes an MCP (Model Context Protocol) server that allows AI as
 | Tool | Description |
 |------|-------------|
 | `search_projects` | Search projects by name, stack, or group |
-| `get_project_details` | Get detailed info including live git status |
+| `get_project_details` | Get detailed info including live git status and running processes |
 | `get_project_readme` | Read project README file |
 | `open_project` | Open project in IDE, Terminal, or Finder |
 | `list_dirty_projects` | List projects with uncommitted changes or behind remote |
 | `get_project_stats` | Get aggregate statistics about all projects |
+| `list_running_projects` | List all projects with running processes or Docker containers |
+| `get_project_processes` | Get running processes and Docker containers for a project |
+| `stop_process` | Stop a process by PID or Docker container by ID |
 
 ### Setup for Claude Desktop
 

@@ -116,7 +116,10 @@ The project includes an MCP server (`src/mcp/server.mjs`) that exposes project d
 npm run mcp  # Start MCP server on stdio
 ```
 
-Tools: `search_projects`, `get_project_details`, `get_project_readme`, `open_project`, `list_dirty_projects`, `get_project_stats`
+Tools:
+- `search_projects`, `get_project_details`, `get_project_readme`, `open_project`
+- `list_dirty_projects`, `get_project_stats`
+- `list_running_projects`, `get_project_processes`, `stop_process`
 
 ## Data Requirements
 
