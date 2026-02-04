@@ -55,18 +55,22 @@ export default async function DashboardPage() {
     }))
     
     return (
-        <div className="container mx-auto py-10">
-            <div className="flex items-start justify-between mb-5">
-                <h1 className="text-3xl font-bold">Project Dashboard</h1>
-                <div className="flex items-start gap-4">
-                    <ScanControls lastSyncTime={lastSyncTime} />
-                    <ThemeToggle />
+        <div className="h-screen flex flex-col overflow-hidden">
+            <div className="flex-none px-4 py-2 border-b">
+                <div className="flex items-start justify-between">
+                    <h1 className="text-xl font-bold pt-1">Project Dashboard</h1>
+                    <div className="flex items-start gap-3">
+                        <ScanControls lastSyncTime={lastSyncTime} />
+                        <ThemeToggle />
+                    </div>
                 </div>
             </div>
-            <ProjectTable
-                projects={processedProjects}
-                ownRepos={OWN_REPOS}
-            />
+            <div className="flex-1 overflow-hidden px-4">
+                <ProjectTable
+                    projects={processedProjects}
+                    ownRepos={OWN_REPOS}
+                />
+            </div>
         </div>
     )
 }

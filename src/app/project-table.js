@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -91,11 +91,20 @@ function TimeAgo({ date }) {
     )
 }
 
+// Defaults (outside component to avoid recreation)
+const defaultColumnVisibility = {
+    'total_size_bytes': false,
+    'git_info.remotes': false,
+    'git_info.total_commits': false,
+    'content_size_bytes': false,
+}
+const defaultSorting = [{ id: 'last_modified', desc: true }]
+
 export function ProjectTable({ projects, ownRepos }) {
     const [isHydrated, setIsHydrated] = React.useState(false)
-    const [sorting, setSorting] = React.useState([])
+    const [sorting, setSorting] = React.useState(defaultSorting)
     const [columnFilters, setColumnFilters] = React.useState([])
-    const [columnVisibility, setColumnVisibility] = React.useState({})
+    const [columnVisibility, setColumnVisibility] = React.useState(defaultColumnVisibility)
     const [globalFilter, setGlobalFilter] = React.useState("")
     const [selectedGroups, setSelectedGroups] = React.useState([])
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
@@ -138,6 +147,20 @@ export function ProjectTable({ projects, ownRepos }) {
             hasReadme: null,
         })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const resetToDefaults = () => {
+        // Clear localStorage
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem(STORAGE_KEY)
+        }
+        // Reset all states to defaults
+        setSorting(defaultSorting)
+        setColumnVisibility(defaultColumnVisibility)
+        setPagination({ pageIndex: 0, pageSize: 20 })
+        setGlobalFilter("")
+        setSelectedGroups([])
+        clearAllFilters()
     }
 
     // Helper to get filter button style
@@ -304,13 +327,12 @@ export function ProjectTable({ projects, ownRepos }) {
     const columns = [
         {
             accessorKey: "project_name",
-            header: "Project Name",
+            header: "Project",
             cell: ({ row }) => {
                 const name = row.getValue("project_name")
-                const displayName = name.length > 40 ? `${name.slice(0, 40)}...` : name
                 return (
-                    <div className="capitalize" title={name}>
-                        {displayName}
+                    <div className="capitalize truncate max-w-[140px]" title={name}>
+                        {name}
                     </div>
                 )
             },
@@ -321,23 +343,31 @@ export function ProjectTable({ projects, ownRepos }) {
             cell: ({ row }) => {
                 const parts = row.getValue("groupParts")
                 return (
-                    <div className="flex gap-1 flex-wrap">
-                        {parts.map((part, index) => (
-                            <span 
+                    <div className="flex gap-0.5 flex-wrap max-w-[120px]">
+                        {parts.slice(0, 3).map((part, index) => (
+                            <span
                                 key={index}
-                                className="px-2 py-1 bg-secondary text-secondary-foreground rounded-md text-xs"
+                                className="px-1.5 py-0.5 bg-secondary text-secondary-foreground rounded text-xs truncate max-w-[80px]"
+                                title={part}
                             >
                                 {part}
                             </span>
                         ))}
+                        {parts.length > 3 && (
+                            <span className="text-xs text-muted-foreground">+{parts.length - 3}</span>
+                        )}
                     </div>
                 )
             },
         },
         {
             accessorKey: "projectDir",
-            header: "Directory",
-            cell: ({ row }) => <div className="text-sm text-muted-foreground">{row.getValue("projectDir")}</div>,
+            header: "Dir",
+            cell: ({ row }) => (
+                <div className="text-sm text-muted-foreground truncate max-w-[100px]" title={row.getValue("projectDir")}>
+                    {row.getValue("projectDir")}
+                </div>
+            ),
         },
         {
             accessorKey: "git_info.git_detected",
@@ -398,26 +428,27 @@ export function ProjectTable({ projects, ownRepos }) {
         },
         {
             accessorKey: "git_info.remotes",
-            header: "Repository",
+            header: "Repo",
             cell: ({ row }) => {
                 const gitInfo = row.original.git_info
                 const remotes = gitInfo?.remotes || []
-                if (!gitInfo?.git_detected || remotes.length === 0) return <div></div>
-                
+                if (!gitInfo?.git_detected || remotes.length === 0) return null
+
                 const repoName = extractRepoName(remotes[0])
                 const isOwnRepo = ownRepos.includes(repoName)
-                
+
                 return (
-                    <div>
-                        <span className={cn(
-                            "px-2 py-1 rounded-full text-xs",
-                            isOwnRepo 
-                                ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-100" 
+                    <span
+                        className={cn(
+                            "px-1.5 py-0.5 rounded text-xs truncate max-w-[70px] inline-block",
+                            isOwnRepo
+                                ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-100"
                                 : "bg-secondary text-secondary-foreground"
-                        )}>
-                            {repoName}
-                        </span>
-                    </div>
+                        )}
+                        title={repoName}
+                    >
+                        {repoName}
+                    </span>
                 )
             },
         },
@@ -427,16 +458,18 @@ export function ProjectTable({ projects, ownRepos }) {
                 return (
                     <Button
                         variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
                         onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
                     >
-                        Last Modified
-                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                        Modified
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
                     </Button>
                 )
             },
             cell: ({ row }) => {
                 const date = row.getValue("last_modified")
-                return <TimeAgo date={date} />
+                return <div className="text-sm whitespace-nowrap"><TimeAgo date={date} /></div>
             },
         },
         {
@@ -445,17 +478,19 @@ export function ProjectTable({ projects, ownRepos }) {
                 return (
                     <Button
                         variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
                         onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
                     >
-                        Code Size
-                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                        Size
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
                     </Button>
                 )
             },
             cell: ({ row }) => {
                 const bytes = row.getValue("content_size_bytes")
-                if (!bytes) return <div className="text-muted-foreground">-</div>
-                return <div>{(bytes / 1024 / 1024).toFixed(2)} MB</div>
+                if (!bytes) return <span className="text-muted-foreground text-sm">-</span>
+                return <span className="text-sm whitespace-nowrap">{(bytes / 1024 / 1024).toFixed(1)}M</span>
             },
         },
         {
@@ -464,17 +499,19 @@ export function ProjectTable({ projects, ownRepos }) {
                 return (
                     <Button
                         variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
                         onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
                     >
-                        Total Size
-                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                        Total
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
                     </Button>
                 )
             },
             cell: ({ row }) => {
                 const bytes = row.getValue("total_size_bytes")
-                if (!bytes) return <div className="text-muted-foreground">-</div>
-                return <div>{(bytes / 1024 / 1024).toFixed(2)} MB</div>
+                if (!bytes) return <span className="text-muted-foreground text-sm">-</span>
+                return <span className="text-sm whitespace-nowrap">{(bytes / 1024 / 1024).toFixed(1)}M</span>
             },
         },
         {
@@ -483,30 +520,32 @@ export function ProjectTable({ projects, ownRepos }) {
                 return (
                     <Button
                         variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
                         onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
                     >
-                        Total Commits
-                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                        Commits
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
                     </Button>
                 )
             },
             cell: ({ row }) => {
                 const gitInfo = row.original.git_info
-                
+
                 if (!gitInfo?.git_detected || !gitInfo?.total_commits) {
-                    return <div></div>
+                    return null
                 }
 
                 const totalCommits = gitInfo.total_commits
                 const userCommits = gitInfo.user_commits || 0
 
                 return (
-                    <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 bg-secondary text-secondary-foreground rounded-full text-xs">
+                    <div className="flex items-center gap-1">
+                        <span className="px-1.5 py-0.5 bg-secondary text-secondary-foreground rounded text-xs">
                             {totalCommits}
                         </span>
                         {userCommits > 0 && (
-                            <span className="px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-100 rounded-full text-xs">
+                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-100 rounded text-xs">
                                 {userCommits}
                             </span>
                         )}
@@ -677,10 +716,12 @@ export function ProjectTable({ projects, ownRepos }) {
             onOpenChange={(open) => setDetailsSheet({ open, project: open ? detailsSheet.project : null })}
             project={detailsSheet.project}
         />
-        <div className="w-full">
-            <div className="flex flex-col gap-4 py-4">
-                <div className="flex items-center gap-2">
-                    <div className="relative max-w-sm">
+        <div className="h-full flex flex-col min-w-0">
+            {/* Filters - fixed */}
+            <div className="flex-none flex flex-col gap-2 py-2">
+                {/* Row 1: Search + Columns */}
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <Input
                             placeholder="Search projects..."
                             value={globalFilter ?? ""}
@@ -698,11 +739,11 @@ export function ProjectTable({ projects, ownRepos }) {
                     </div>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <Button variant="outline" className={selectedGroups.length > 0 ? "border-primary" : ""}>
-                                <Filter className="mr-2 h-4 w-4" />
-                                Groups
+                            <Button variant="outline" size="sm" className={selectedGroups.length > 0 ? "border-primary" : ""}>
+                                <Filter className="mr-1.5 h-4 w-4" />
+                                <span className="hidden sm:inline">Groups</span>
                                 {selectedGroups.length > 0 && (
-                                    <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                                    <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
                                         {selectedGroups.length}
                                     </span>
                                 )}
@@ -730,55 +771,11 @@ export function ProjectTable({ projects, ownRepos }) {
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* Quick Filters - click cycles: any -> yes -> no -> any */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                        {[
-                            { key: 'running', label: 'Running', icon: Circle },
-                            { key: 'uncommitted', label: 'Uncommitted' },
-                            { key: 'behind', label: 'Behind' },
-                            { key: 'ahead', label: 'Ahead' },
-                            { key: 'hasGit', label: 'Git' },
-                            { key: 'hasRemote', label: 'Remote' },
-                            { key: 'hasOwnCommits', label: 'My Commits' },
-                            { key: 'hasReadme', label: 'README' },
-                        ].map(({ key, label, icon: Icon }) => {
-                            const value = filters[key]
-                            return (
-                                <Button
-                                    key={key}
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => cycleFilter(key)}
-                                    className={cn(
-                                        "gap-1.5",
-                                        value === true && "border-green-500 bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-500/20",
-                                        value === false && "border-red-500 bg-red-500/10 text-red-700 dark:text-red-400 hover:bg-red-500/20"
-                                    )}
-                                >
-                                    {value === true && <Check className="h-3 w-3" />}
-                                    {value === false && <X className="h-3 w-3" />}
-                                    {Icon && value === null && <Icon className="h-2.5 w-2.5" />}
-                                    {label}
-                                </Button>
-                            )
-                        })}
-                        {activeFiltersCount > 0 && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={clearAllFilters}
-                                className="text-muted-foreground"
-                            >
-                                <X className="mr-1 h-3 w-3" />
-                                Clear ({activeFiltersCount})
-                            </Button>
-                        )}
-                    </div>
-
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <Button variant="outline" className="ml-auto">
-                                Columns <ChevronDown className="ml-2 h-4 w-4" />
+                            <Button variant="outline" size="sm">
+                                <span className="hidden sm:inline">Columns</span>
+                                <ChevronDown className="sm:ml-1.5 h-4 w-4" />
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -799,14 +796,78 @@ export function ProjectTable({ projects, ownRepos }) {
                                 })}
                         </DropdownMenuContent>
                     </DropdownMenu>
+
+                    <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                    onClick={resetToDefaults}
+                                >
+                                    <RotateCcw className="h-4 w-4" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>Reset to defaults</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
                 </div>
+
+                {/* Row 2: Quick Filters */}
+                <div className="flex items-center gap-1 flex-wrap">
+                    {[
+                        { key: 'running', label: 'Running', shortLabel: 'Run' },
+                        { key: 'uncommitted', label: 'Uncommitted', shortLabel: 'Dirty' },
+                        { key: 'behind', label: 'Behind', shortLabel: '↓' },
+                        { key: 'ahead', label: 'Ahead', shortLabel: '↑' },
+                        { key: 'hasGit', label: 'Git', shortLabel: 'Git' },
+                        { key: 'hasRemote', label: 'Remote', shortLabel: 'Rem' },
+                        { key: 'hasOwnCommits', label: 'My Commits', shortLabel: 'Mine' },
+                        { key: 'hasReadme', label: 'README', shortLabel: 'Docs' },
+                    ].map(({ key, label, shortLabel }) => {
+                        const value = filters[key]
+                        return (
+                            <Button
+                                key={key}
+                                variant="outline"
+                                size="sm"
+                                onClick={() => cycleFilter(key)}
+                                className={cn(
+                                    "h-6 px-2 text-xs",
+                                    value === true && "border-green-500 bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-500/20",
+                                    value === false && "border-red-500 bg-red-500/10 text-red-700 dark:text-red-400 hover:bg-red-500/20"
+                                )}
+                                title={label}
+                            >
+                                {value === true && <Check className="h-3 w-3 mr-0.5" />}
+                                {value === false && <X className="h-3 w-3 mr-0.5" />}
+                                <span className="hidden sm:inline">{label}</span>
+                                <span className="sm:hidden">{shortLabel}</span>
+                            </Button>
+                        )
+                    })}
+                    {activeFiltersCount > 0 && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearAllFilters}
+                            className="h-6 px-1.5 text-xs text-muted-foreground"
+                        >
+                            <X className="h-3 w-3" />
+                        </Button>
+                    )}
+                </div>
+
                 {/* Selected groups as chips */}
                 {selectedGroups.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                         {selectedGroups.map(group => (
                             <span
                                 key={group}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-primary/10 text-primary rounded-md text-sm cursor-pointer hover:bg-primary/20 transition-colors"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary rounded text-xs cursor-pointer hover:bg-primary/20 transition-colors"
                                 onClick={() => toggleGroup(group)}
                             >
                                 {group}
@@ -814,7 +875,7 @@ export function ProjectTable({ projects, ownRepos }) {
                             </span>
                         ))}
                         <button
-                            className="text-sm text-muted-foreground hover:text-foreground"
+                            className="text-xs text-muted-foreground hover:text-foreground"
                             onClick={clearGroups}
                         >
                             Clear all
@@ -822,7 +883,8 @@ export function ProjectTable({ projects, ownRepos }) {
                     </div>
                 )}
             </div>
-            <div className="rounded-md border">
+            {/* Table - scrollable */}
+            <div className="flex-1 overflow-auto rounded-md border">
                 <Table>
                     <TableHeader>
                         {table.getHeaderGroups().map((headerGroup) => (
@@ -866,14 +928,15 @@ export function ProjectTable({ projects, ownRepos }) {
                     </TableBody>
                 </Table>
             </div>
-            <div className="flex items-center justify-between space-x-2 py-4">
-                <div className="flex-1 text-sm text-muted-foreground">
+            {/* Pagination - fixed */}
+            <div className="flex-none flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 py-2 border-t">
+                <div className="text-sm text-muted-foreground">
                     {table.getFilteredRowModel().rows.length} project(s)
-                    {selectedGroups.length > 0 && ` (filtered from ${projects.length})`}
+                    {selectedGroups.length > 0 && ` (filtered)`}
                 </div>
-                <div className="flex items-center space-x-6 lg:space-x-8">
-                    <div className="flex items-center space-x-2">
-                        <p className="text-sm text-muted-foreground">Rows per page</p>
+                <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                    <div className="flex items-center gap-2">
+                        <p className="text-xs sm:text-sm text-muted-foreground hidden sm:block">Rows</p>
                         <select
                             className="h-8 w-16 rounded-md border border-input bg-background px-2 text-sm"
                             value={pagination.pageSize}
@@ -886,28 +949,29 @@ export function ProjectTable({ projects, ownRepos }) {
                             ))}
                         </select>
                     </div>
-                    <div className="flex items-center space-x-2">
-                        <p className="text-sm font-medium">
-                            Page {table.getState().pagination.pageIndex + 1} of{" "}
-                            {table.getPageCount()}
+                    <div className="flex items-center gap-2">
+                        <p className="text-xs sm:text-sm text-muted-foreground">
+                            {table.getState().pagination.pageIndex + 1}/{table.getPageCount()}
                         </p>
-                    </div>
-                    <div className="flex items-center space-x-2">
                         <Button
                             variant="outline"
                             size="sm"
+                            className="h-8 px-2 sm:px-3"
                             onClick={() => table.previousPage()}
                             disabled={!table.getCanPreviousPage()}
                         >
-                            Previous
+                            <span className="hidden sm:inline">Previous</span>
+                            <span className="sm:hidden">←</span>
                         </Button>
                         <Button
                             variant="outline"
                             size="sm"
+                            className="h-8 px-2 sm:px-3"
                             onClick={() => table.nextPage()}
                             disabled={!table.getCanNextPage()}
                         >
-                            Next
+                            <span className="hidden sm:inline">Next</span>
+                            <span className="sm:hidden">→</span>
                         </Button>
                     </div>
                 </div>
