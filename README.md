@@ -76,15 +76,14 @@ Available as a **web app** or **native desktop app** (macOS).
 #### Option 1: Web App (Development)
 ```bash
 npm run dev
-# Open http://localhost:3088
+# Open http://localhost:3089
 ```
 
 #### Option 2: Web App (Production)
 ```bash
 npm run build
 npm run start
-# or simply:
-npm run tray   # Builds, starts server, opens browser
+# Open http://localhost:3088
 ```
 
 #### Option 3: Desktop App (Recommended)
@@ -105,14 +104,13 @@ The desktop app:
 
 ```bash
 # Development
-npm run dev           # Start dev server with hot reload
+npm run dev           # Start dev server on port 3089
 
 # Web Production
 npm run build         # Build Next.js for production
-npm run start         # Start production server
-npm run tray          # Build + start + open browser
+npm run start         # Start production server on port 3088
 
-# Desktop App
+# Desktop App (recommended)
 npm run tauri:build   # Build native macOS app + DMG
 npm run tauri:dev     # Run desktop app in dev mode
 
@@ -125,7 +123,7 @@ npm run mcp           # Start MCP server for AI assistants
 npm run lint          # Run ESLint
 ```
 
-Default port is `3088`. Customize via `STOW_PORT` env variable.
+**Ports:** Dev uses `3089`, Production/Tauri uses `3088` (so they don't conflict).
 
 ## Scanner
 
@@ -273,7 +271,6 @@ npm run mcp
 | `BASE_DIR` | Base path for relative directory display | - |
 | `TERMINAL_APP` | Terminal app for "Open in Terminal" | `Terminal` |
 | `IDE_COMMAND` | IDE command for "Open in IDE" | `code` |
-| `STOW_PORT` | Server port | `3088` |
 
 ## Roadmap
 

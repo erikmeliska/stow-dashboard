@@ -19,10 +19,9 @@
     "stow-mcp": "./src/mcp/server.mjs"
   },
   "scripts": {
-    "dev": "next dev -p ${STOW_PORT:-3088}",
+    "dev": "next dev -p 3089",
     "build": "next build",
-    "start": "next start -p ${STOW_PORT:-3088}",
-    "tray": "node scripts/tray.mjs",
+    "start": "next start -p 3088",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",

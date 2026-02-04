@@ -12,12 +12,11 @@ Available as a web app or native desktop app (Tauri).
 
 ```bash
 # Development
-npm run dev          # Start dev server with Turbopack (port 3088)
+npm run dev          # Start dev server with Turbopack (port 3089)
 
 # Web Production
 npm run build        # Build for production
 npm run start        # Start production server (port 3088)
-npm run tray         # Build + start + open browser
 
 # Desktop App (requires Rust)
 npm run tauri:build  # Build native macOS app + DMG
@@ -27,7 +26,7 @@ npm run tauri:dev    # Run desktop app in dev mode
 npm run lint         # Run ESLint
 ```
 
-Default port is `3088`. Customize via `STOW_PORT` environment variable.
+**Ports:** Dev uses `3089`, Production/Tauri uses `3088` (so they don't conflict).
 
 Next.js 16 uses Turbopack by default and separates dev/build outputs (`.next/dev` vs `.next/build`), so `npm run build` won't interfere with a running dev server.
 
@@ -58,7 +57,6 @@ SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
 BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
 TERMINAL_APP=Terminal                                    # Terminal app (Terminal, Warp, iTerm, etc.)
 IDE_COMMAND=code                                         # IDE command (code, cursor, zed, etc.)
-STOW_PORT=3088                                           # Server port (default: 3088)
 ```
 
 ## Architecture
