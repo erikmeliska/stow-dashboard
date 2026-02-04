@@ -9,11 +9,14 @@ Stow Dashboard is a Next.js 16 web application (React 19) that visualizes projec
 ## Commands
 
 ```bash
-npm run dev      # Start dev server with Turbopack (port 3000)
+npm run tray     # Start production server (port 3088), opens browser
+npm run dev      # Start dev server with Turbopack (port 3088)
 npm run build    # Build for production
-npm run start    # Start production server
+npm run start    # Start production server (port 3088)
 npm run lint     # Run ESLint
 ```
+
+Default port is `3088`. Customize via `STOW_PORT` environment variable.
 
 Next.js 16 uses Turbopack by default and separates dev/build outputs (`.next/dev` vs `.next/build`), so `npm run build` won't interfere with a running dev server.
 
@@ -44,6 +47,7 @@ SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
 BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
 TERMINAL_APP=Terminal                                    # Terminal app (Terminal, Warp, iTerm, etc.)
 IDE_COMMAND=code                                         # IDE command (code, cursor, zed, etc.)
+STOW_PORT=3088                                           # Server port (default: 3088)
 ```
 
 ## Architecture

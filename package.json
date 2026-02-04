@@ -19,9 +19,10 @@
     "stow-mcp": "./src/mcp/server.mjs"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p ${STOW_PORT:-3088}",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${STOW_PORT:-3088}",
+    "tray": "node scripts/tray.mjs",
     "lint": "eslint .",
     "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
     "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f",

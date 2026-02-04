@@ -65,23 +65,29 @@ A modern web dashboard for visualizing and managing your local development proje
    npm run scan
    ```
 
-5. Start the development server:
+5. Start the dashboard:
    ```bash
-   npm run dev
+   npm run tray   # Production mode, opens browser automatically
+   # or
+   npm run dev    # Development mode with hot reload
    ```
 
-6. Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard)
+6. Open [http://localhost:3088/dashboard](http://localhost:3088/dashboard)
 
 ## Scripts
 
 ```bash
-npm run dev        # Start development server
+npm run tray       # Start production server on port 3088, opens browser
+npm run dev        # Start development server on port 3088
 npm run build      # Build for production
-npm run start      # Start production server
+npm run start      # Start production server on port 3088
 npm run scan       # Scan projects and generate metadata
 npm run scan:force # Force rescan all projects
+npm run mcp        # Start MCP server for AI assistants
 npm run lint       # Run ESLint
 ```
+
+The default port is `3088` to avoid conflicts with other projects. Customize via `STOW_PORT` env variable.
 
 ## Scanner
 
@@ -222,6 +228,7 @@ npm run mcp
 | `BASE_DIR` | Base path for relative directory display | - |
 | `TERMINAL_APP` | Terminal app for "Open in Terminal" | `Terminal` |
 | `IDE_COMMAND` | IDE command for "Open in IDE" | `code` |
+| `STOW_PORT` | Server port | `3088` |
 
 ## Roadmap
 
