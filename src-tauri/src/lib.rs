@@ -4,11 +4,10 @@ use std::path::PathBuf;
 use std::net::TcpStream;
 use std::fs;
 use std::collections::HashMap;
-use std::env;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
-    Manager, AppHandle, WebviewWindowBuilder, WebviewUrl,
+    Manager, AppHandle, WebviewWindowBuilder, WebviewUrl, WindowEvent, RunEvent,
 };
 
 const PORT: u16 = 3088;
@@ -131,6 +130,18 @@ fn start_server() -> Option<Child> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
+    // Create a new process group so we can kill all child processes later
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+    }
+
     // Add all env vars from .env.local
     for (key, value) in env_vars {
         cmd.env(key, value);
@@ -170,6 +181,32 @@ fn trigger_rescan() {
             .stderr(Stdio::null())
             .output();
     });
+}
+
+fn kill_server(app: &AppHandle) {
+    if let Some(state) = app.try_state::<ServerProcess>() {
+        if let Ok(mut guard) = state.0.lock() {
+            if let Some(ref mut child) = *guard {
+                let pid = child.id();
+                eprintln!("[Stow] Killing server process group (PID {})", pid);
+                // Kill the entire process group using negative PID
+                #[cfg(unix)]
+                {
+                    let _ = Command::new("kill")
+                        .args(["-TERM", &format!("-{}", pid)])
+                        .output();
+                    // Give it a moment to terminate gracefully
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Force kill if still running
+                    let _ = Command::new("kill")
+                        .args(["-9", &format!("-{}", pid)])
+                        .output();
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
 }
 
 fn show_or_create_window(app: &AppHandle) {
@@ -238,10 +275,11 @@ pub fn run() {
                 &quit_item,
             ])?;
 
-            // Create tray icon
+            // Create tray icon (use default window icon, not as template to show colors)
             let app_handle = app.handle().clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(false)
                 .menu(&menu)
                 .tooltip("Stow Dashboard")
                 .on_tray_icon_event(move |_tray, event| {
@@ -255,13 +293,7 @@ pub fn run() {
                         "hide" => hide_window(app),
                         "rescan" => trigger_rescan(),
                         "quit" => {
-                            if let Some(state) = app.try_state::<ServerProcess>() {
-                                if let Ok(mut guard) = state.0.lock() {
-                                    if let Some(ref mut child) = *guard {
-                                        let _ = child.kill();
-                                    }
-                                }
-                            }
+                            kill_server(app);
                             app.exit(0);
                         }
                         _ => {}
@@ -280,6 +312,19 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|window, event| {
+            // Hide window instead of closing when X is clicked
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Handle app exit (Cmd+Q, app menu quit, etc.)
+            if let RunEvent::Exit = event {
+                kill_server(app);
+            }
+        });
 }
