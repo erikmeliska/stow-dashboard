@@ -91,6 +91,155 @@ function formatBytes(bytes) {
     return `${kb.toFixed(1)} KB`
 }
 
+async function getRunningProcesses() {
+    const processes = new Map()
+
+    try {
+        const { stdout: lsofOut } = await execAsync('lsof -i -P -n 2>/dev/null | grep LISTEN || true')
+
+        for (const line of lsofOut.split('\n').filter(Boolean)) {
+            const parts = line.split(/\s+/)
+            const command = parts[0]
+            const pid = parts[1]
+            const portMatch = line.match(/:(\d+)\s+\(LISTEN\)/)
+
+            if (portMatch && pid) {
+                if (!processes.has(pid)) {
+                    processes.set(pid, { pid, command, ports: [], cwd: null, type: 'process' })
+                }
+                const port = portMatch[1]
+                if (!processes.get(pid).ports.includes(port)) {
+                    processes.get(pid).ports.push(port)
+                }
+            }
+        }
+
+        if (processes.size > 0) {
+            const pids = Array.from(processes.keys()).join(',')
+            try {
+                const { stdout: cwdOut } = await execAsync(
+                    `lsof -a -p ${pids} -d cwd -F n 2>/dev/null || true`
+                )
+
+                let currentPid = null
+                for (const line of cwdOut.split('\n')) {
+                    if (line.startsWith('p')) {
+                        currentPid = line.slice(1)
+                    } else if (line.startsWith('n') && currentPid && processes.has(currentPid)) {
+                        processes.get(currentPid).cwd = line.slice(1)
+                    }
+                }
+            } catch {
+                // Ignore cwd errors
+            }
+        }
+    } catch {
+        // lsof failed
+    }
+
+    return Array.from(processes.values())
+}
+
+async function getDockerContainers() {
+    const containers = []
+
+    try {
+        const { stdout } = await execAsync(
+            `docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Status}}' 2>/dev/null || true`,
+            { timeout: 5000 }
+        )
+
+        for (const line of stdout.split('\n').filter(Boolean)) {
+            const [id, name, image, portsStr, workingDir, status] = line.split('\t')
+
+            if (!id) continue
+
+            const ports = []
+            const portMatches = portsStr.matchAll(/(?:[\d.]+)?:(\d+)->/g)
+            for (const match of portMatches) {
+                if (!ports.includes(match[1])) {
+                    ports.push(match[1])
+                }
+            }
+
+            containers.push({
+                id,
+                name,
+                image,
+                ports,
+                cwd: workingDir || null,
+                status,
+                type: 'docker'
+            })
+        }
+    } catch {
+        // Docker not available
+    }
+
+    return containers
+}
+
+function matchProcessToProject(processCwd, projectDirs) {
+    if (!processCwd) return null
+
+    for (const dir of projectDirs) {
+        if (processCwd === dir || processCwd.startsWith(dir + '/')) {
+            return dir
+        }
+    }
+    return null
+}
+
+async function getProjectProcesses() {
+    const [runningProcesses, dockerContainers, projects] = await Promise.all([
+        getRunningProcesses(),
+        getDockerContainers(),
+        loadProjects()
+    ])
+
+    const projectDirs = projects.map(p => p.directory)
+    const projectProcesses = {}
+
+    for (const proc of runningProcesses) {
+        const matchedDir = matchProcessToProject(proc.cwd, projectDirs)
+        if (matchedDir) {
+            if (!projectProcesses[matchedDir]) {
+                projectProcesses[matchedDir] = { processes: [], docker: [], ports: [] }
+            }
+            projectProcesses[matchedDir].processes.push({
+                pid: parseInt(proc.pid),
+                command: proc.command,
+                ports: proc.ports
+            })
+            projectProcesses[matchedDir].ports.push(...proc.ports)
+        }
+    }
+
+    for (const container of dockerContainers) {
+        const matchedDir = matchProcessToProject(container.cwd, projectDirs)
+        if (matchedDir) {
+            if (!projectProcesses[matchedDir]) {
+                projectProcesses[matchedDir] = { processes: [], docker: [], ports: [] }
+            }
+            projectProcesses[matchedDir].docker.push({
+                id: container.id,
+                name: container.name,
+                image: container.image,
+                ports: container.ports,
+                status: container.status
+            })
+            projectProcesses[matchedDir].ports.push(...container.ports)
+        }
+    }
+
+    // Dedupe ports
+    for (const dir of Object.keys(projectProcesses)) {
+        projectProcesses[dir].ports = [...new Set(projectProcesses[dir].ports)]
+    }
+
+    return projectProcesses
+}
+
 // Create server
 const server = new Server(
     {
@@ -270,6 +419,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: 'object',
                     properties: {}
                 }
+            },
+            {
+                name: 'list_running_projects',
+                description: 'List all projects that have running processes or Docker containers',
+                inputSchema: {
+                    type: 'object',
+                    properties: {}
+                }
+            },
+            {
+                name: 'get_project_processes',
+                description: 'Get running processes and Docker containers for a specific project',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: {
+                            type: 'string',
+                            description: 'Project name or partial path'
+                        }
+                    },
+                    required: ['name']
+                }
+            },
+            {
+                name: 'stop_process',
+                description: 'Stop a running process by PID or Docker container by ID',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        type: {
+                            type: 'string',
+                            enum: ['process', 'docker'],
+                            description: 'Type of target to stop'
+                        },
+                        id: {
+                            type: 'string',
+                            description: 'PID for process or container ID for Docker'
+                        },
+                        signal: {
+                            type: 'string',
+                            enum: ['SIGTERM', 'SIGKILL'],
+                            description: 'Signal to send (default: SIGTERM for process, stop for Docker)'
+                        }
+                    },
+                    required: ['type', 'id']
+                }
             }
         ]
     }
@@ -334,7 +529,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
-            const liveGit = await getLiveGitStatus(project.directory)
+            const [liveGit, projectProcesses] = await Promise.all([
+                getLiveGitStatus(project.directory),
+                getProjectProcesses()
+            ])
+
+            const runningInfo = projectProcesses[project.directory]
 
             const details = {
                 name: project.project_name,
@@ -353,6 +553,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     totalCommits: project.git_info.total_commits,
                     yourCommits: project.git_info.user_commits,
                     live: liveGit
+                } : null,
+                running: runningInfo ? {
+                    processes: runningInfo.processes,
+                    docker: runningInfo.docker,
+                    ports: runningInfo.ports
                 } : null,
                 hasReadme: project.hasReadme,
                 lastModified: project.last_modified
@@ -496,6 +701,88 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
             return {
                 content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }]
+            }
+        }
+
+        case 'list_running_projects': {
+            const projectProcesses = await getProjectProcesses()
+            const projects = await loadProjects()
+
+            const running = []
+            for (const [directory, info] of Object.entries(projectProcesses)) {
+                const project = projects.find(p => p.directory === directory)
+                running.push({
+                    name: project?.project_name || path.basename(directory),
+                    directory,
+                    processes: info.processes.length,
+                    containers: info.docker.length,
+                    ports: info.ports
+                })
+            }
+
+            return {
+                content: [{
+                    type: 'text',
+                    text: running.length > 0
+                        ? JSON.stringify(running, null, 2)
+                        : 'No projects are currently running'
+                }]
+            }
+        }
+
+        case 'get_project_processes': {
+            const project = await getProjectByName(args.name)
+            if (!project) {
+                return {
+                    content: [{ type: 'text', text: `Project not found: ${args.name}` }]
+                }
+            }
+
+            const projectProcesses = await getProjectProcesses()
+            const info = projectProcesses[project.directory]
+
+            if (!info) {
+                return {
+                    content: [{ type: 'text', text: `No running processes or containers for: ${project.project_name}` }]
+                }
+            }
+
+            return {
+                content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        name: project.project_name,
+                        directory: project.directory,
+                        processes: info.processes,
+                        docker: info.docker,
+                        ports: info.ports
+                    }, null, 2)
+                }]
+            }
+        }
+
+        case 'stop_process': {
+            try {
+                if (args.type === 'process') {
+                    const signal = args.signal === 'SIGKILL' ? '-9' : '-15'
+                    await execAsync(`kill ${signal} ${args.id}`)
+                    return {
+                        content: [{ type: 'text', text: `Process ${args.id} stopped` }]
+                    }
+                } else if (args.type === 'docker') {
+                    const action = args.signal === 'SIGKILL' ? 'kill' : 'stop'
+                    await execAsync(`docker ${action} ${args.id}`, { timeout: 30000 })
+                    return {
+                        content: [{ type: 'text', text: `Container ${args.id} stopped` }]
+                    }
+                }
+                return {
+                    content: [{ type: 'text', text: `Unknown type: ${args.type}` }]
+                }
+            } catch (error) {
+                return {
+                    content: [{ type: 'text', text: `Failed to stop: ${error.message}` }]
+                }
             }
         }
 
