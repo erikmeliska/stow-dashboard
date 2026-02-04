@@ -2,6 +2,8 @@
 
 A modern web dashboard for visualizing and managing your local development projects. Automatically scans directories, extracts metadata, and provides an interactive overview of all your projects.
 
+Available as a **web app** or **native desktop app** (macOS).
+
 ## Features
 
 - **Interactive Project Table** - Sortable, filterable, paginated table powered by TanStack Table
@@ -21,6 +23,7 @@ A modern web dashboard for visualizing and managing your local development proje
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
 - **Dark Mode** - Full dark mode support
+- **Desktop App** - Native macOS app with system tray (Tauri)
 
 ## Tech Stack
 
@@ -28,13 +31,14 @@ A modern web dashboard for visualizing and managing your local development proje
 - **UI:** [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS](https://tailwindcss.com/)
 - **Table:** [@tanstack/react-table](https://tanstack.com/table)
 - **Icons:** [Lucide React](https://lucide.dev/)
+- **Desktop:** [Tauri 2](https://tauri.app/) (optional, for native app)
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 20.9 or higher
-- npm
+- **Node.js 20.9+** - Required for web app and desktop app
+- **Rust** - Required only for building the desktop app ([install](https://rustup.rs/))
 
 ### Installation
 
@@ -49,7 +53,7 @@ A modern web dashboard for visualizing and managing your local development proje
    npm install
    ```
 
-3. Configure scan directories in `.env.local`:
+3. Configure environment in `.env.local`:
    ```bash
    cp .env.example .env.local
    # Edit .env.local with your directories
@@ -58,6 +62,8 @@ A modern web dashboard for visualizing and managing your local development proje
    ```env
    SCAN_ROOTS=/Users/you/projects,/Users/you/work
    BASE_DIR=/Users/you/projects
+   TERMINAL_APP=Terminal   # or Warp, iTerm
+   IDE_COMMAND=code        # or cursor, zed
    ```
 
 4. Run the initial scan:
@@ -65,29 +71,61 @@ A modern web dashboard for visualizing and managing your local development proje
    npm run scan
    ```
 
-5. Start the dashboard:
-   ```bash
-   npm run tray   # Production mode, opens browser automatically
-   # or
-   npm run dev    # Development mode with hot reload
-   ```
+### Running the Dashboard
 
-6. Open [http://localhost:3088](http://localhost:3088)
+#### Option 1: Web App (Development)
+```bash
+npm run dev
+# Open http://localhost:3088
+```
+
+#### Option 2: Web App (Production)
+```bash
+npm run build
+npm run start
+# or simply:
+npm run tray   # Builds, starts server, opens browser
+```
+
+#### Option 3: Desktop App (Recommended)
+```bash
+npm run tauri:build
+# Find the app at:
+# - macOS: src-tauri/target/release/bundle/macos/Stow Dashboard.app
+# - DMG:   src-tauri/target/release/bundle/dmg/Stow Dashboard_*.dmg
+```
+
+The desktop app:
+- Runs as a **system tray icon** (click to show/hide window)
+- Bundles the Next.js server (~19MB DMG)
+- Uses your system's Node.js (not bundled)
+- Includes your `.env.local` settings
 
 ## Scripts
 
 ```bash
-npm run tray       # Start production server on port 3088, opens browser
-npm run dev        # Start development server on port 3088
-npm run build      # Build for production
-npm run start      # Start production server on port 3088
-npm run scan       # Scan projects and generate metadata
-npm run scan:force # Force rescan all projects
-npm run mcp        # Start MCP server for AI assistants
-npm run lint       # Run ESLint
+# Development
+npm run dev           # Start dev server with hot reload
+
+# Web Production
+npm run build         # Build Next.js for production
+npm run start         # Start production server
+npm run tray          # Build + start + open browser
+
+# Desktop App
+npm run tauri:build   # Build native macOS app + DMG
+npm run tauri:dev     # Run desktop app in dev mode
+
+# Scanner
+npm run scan          # Scan projects and generate metadata
+npm run scan:force    # Force rescan all projects
+
+# Other
+npm run mcp           # Start MCP server for AI assistants
+npm run lint          # Run ESLint
 ```
 
-The default port is `3088` to avoid conflicts with other projects. Customize via `STOW_PORT` env variable.
+Default port is `3088`. Customize via `STOW_PORT` env variable.
 
 ## Scanner
 
@@ -126,10 +164,10 @@ node scripts/scan.mjs --cleanup
 
 ```bash
 # Trigger scan via API
-curl -X POST http://localhost:3000/api/scan
+curl -X POST http://localhost:3088/api/scan
 
 # Force scan
-curl -X POST http://localhost:3000/api/scan -H "Content-Type: application/json" -d '{"force": true}'
+curl -X POST http://localhost:3088/api/scan -H "Content-Type: application/json" -d '{"force": true}'
 ```
 
 ## Project Structure
@@ -159,8 +197,14 @@ src/
 │   └── server.mjs            # MCP server for AI assistants
 ├── scanner/                  # Project scanner module
 └── lib/                      # Utilities
+src-tauri/                    # Tauri desktop app (Rust)
+├── src/lib.rs                # Main app logic
+├── tauri.conf.json           # Tauri configuration
+└── icons/                    # App icons
 scripts/
-└── scan.mjs                  # CLI scanner script
+├── scan.mjs                  # CLI scanner script
+├── tray.mjs                  # Web launcher script
+└── prepare-tauri.mjs         # Prepare standalone for Tauri
 data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
 ```
@@ -234,6 +278,7 @@ npm run mcp
 ## Roadmap
 
 - [ ] Windows support for process monitoring (currently macOS/Linux only)
+- [ ] Windows/Linux Tauri builds
 - [ ] Start/restart projects from dashboard
 - [ ] Project notes and tags
 - [ ] Notifications for git changes

@@ -6,14 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Stow Dashboard is a Next.js 16 web application (React 19) that visualizes projects scanned by `stow-agent`. It displays project metadata, Git information, file statistics, and technology stack detection from a JSONL data file.
 
+Available as a web app or native desktop app (Tauri).
+
 ## Commands
 
 ```bash
-npm run tray     # Start production server (port 3088), opens browser
-npm run dev      # Start dev server with Turbopack (port 3088)
-npm run build    # Build for production
-npm run start    # Start production server (port 3088)
-npm run lint     # Run ESLint
+# Development
+npm run dev          # Start dev server with Turbopack (port 3088)
+
+# Web Production
+npm run build        # Build for production
+npm run start        # Start production server (port 3088)
+npm run tray         # Build + start + open browser
+
+# Desktop App (requires Rust)
+npm run tauri:build  # Build native macOS app + DMG
+npm run tauri:dev    # Run desktop app in dev mode
+
+# Other
+npm run lint         # Run ESLint
 ```
 
 Default port is `3088`. Customize via `STOW_PORT` environment variable.
@@ -94,7 +105,27 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
 - `scripts/scan.mjs` - CLI for running the scanner
+- `scripts/prepare-tauri.mjs` - Prepares standalone build for Tauri bundling
 - `tailwind.config.js` - Custom color scheme with CSS variables
+
+### Tauri Desktop App
+
+The project includes a Tauri-based desktop app (`src-tauri/`):
+
+- **System tray** - Click to show/hide window, right-click for menu
+- **Bundled server** - Next.js standalone output (~19MB DMG)
+- **Uses system Node.js** - Not bundled, must be installed
+- **Includes .env.local** - Copied during build via `prepare-tauri.mjs`
+
+Key Tauri files:
+- `src-tauri/src/lib.rs` - Main Rust code (server startup, tray, window management)
+- `src-tauri/tauri.conf.json` - Tauri configuration
+- `src-tauri/Cargo.toml` - Rust dependencies
+
+Build process:
+1. `npm run build` - Creates Next.js standalone in `.next/standalone/`
+2. `prepare-tauri.mjs` - Copies static assets, data, and .env.local
+3. `tauri build` - Compiles Rust and bundles into .app/.dmg
 
 ### Process Monitoring
 
