@@ -17,7 +17,8 @@ const PROJECT_INDICATORS = [
     'composer.json',
     'build.gradle',
     'pom.xml',
-    '.git'
+    '.git',
+    'README.md'
 ]
 
 export class ProjectScanner {

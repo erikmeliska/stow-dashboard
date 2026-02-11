@@ -133,6 +133,7 @@ The built-in scanner detects projects by looking for:
 - `composer.json` (PHP)
 - `build.gradle` / `pom.xml` (Java)
 - `.git` directory
+- `README.md` file
 
 For each project, it extracts:
 - Project name and description

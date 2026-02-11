@@ -167,6 +167,11 @@ The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON obj
 - `libs_size_bytes` (size of node_modules, venv, etc.)
 - `total_size_bytes` (total directory size)
 
+### Project Detection
+
+The scanner identifies a directory as a project if it contains at least one of these indicator files:
+`package.json`, `requirements.txt`, `pyproject.toml`, `composer.json`, `build.gradle`, `pom.xml`, `.git`, `README.md`
+
 ## Hydration Notes
 
 TimeAgo components use `useEffect` to prevent SSR/client hydration mismatches - the server renders a placeholder and client updates with actual relative time.
