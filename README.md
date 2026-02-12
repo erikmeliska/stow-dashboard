@@ -135,6 +135,8 @@ The built-in scanner detects projects by looking for:
 - `.git` directory
 - `README.md` file
 
+**Monorepo support:** If a detected project contains subdirectories that are also projects, the scanner indexes the sub-projects instead of the parent.
+
 For each project, it extracts:
 - Project name and description
 - Technology stack (dependencies)

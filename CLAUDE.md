@@ -172,6 +172,8 @@ The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON obj
 The scanner identifies a directory as a project if it contains at least one of these indicator files:
 `package.json`, `requirements.txt`, `pyproject.toml`, `composer.json`, `build.gradle`, `pom.xml`, `.git`, `README.md`
 
+If a project directory contains subdirectories that are also projects (monorepo/multi-project), the scanner indexes the sub-projects instead of the parent.
+
 ## Hydration Notes
 
 TimeAgo components use `useEffect` to prevent SSR/client hydration mismatches - the server renders a placeholder and client updates with actual relative time.

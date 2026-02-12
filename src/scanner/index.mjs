@@ -409,6 +409,31 @@ export class ProjectScanner {
         const isProject = await this.isProjectDirectory(directory)
 
         if (isProject) {
+            // Check if subdirectories contain their own projects (monorepo/multi-project)
+            const subProjects = []
+            try {
+                const entries = await fs.readdir(directory, { withFileTypes: true })
+                for (const entry of entries) {
+                    if (entry.isDirectory() && !this.isIgnored(path.join(directory, entry.name))) {
+                        const subPath = path.join(directory, entry.name)
+                        if (await this.isProjectDirectory(subPath)) {
+                            subProjects.push(subPath)
+                        }
+                    }
+                }
+            } catch {
+                // Ignore read errors
+            }
+
+            if (subProjects.length > 0) {
+                // Has sub-projects: scan each sub-project instead of the parent
+                for (const subPath of subProjects) {
+                    await this.scanDirectory(subPath, scannedProjects)
+                }
+                return
+            }
+
+            // Leaf project (no sub-projects): index it
             const startTime = Date.now()
 
             try {
@@ -433,7 +458,7 @@ export class ProjectScanner {
                 this.onProgress({ type: 'error', directory, error: error.message })
             }
 
-            return // Don't scan deeper into projects
+            return // Don't scan deeper into leaf projects
         }
 
         // Scan subdirectories
