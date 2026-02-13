@@ -1,5 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
+import crypto from 'crypto'
 import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
 
@@ -361,7 +362,10 @@ export class ProjectScanner {
         // Git information
         const gitInfo = await this.getGitInfo(directory)
 
+        const id = crypto.createHash('sha256').update(directory).digest('base64url').slice(0, 8)
+
         return {
+            id,
             directory,
             created: createdTime ? createdTime.toISOString() : null,
             last_accessed: new Date(latestAtime).toISOString(),
@@ -391,6 +395,10 @@ export class ProjectScanner {
 
         // If project hasn't been modified since last scan, use cached data
         if (latestMtime <= cachedMtime) {
+            // Backfill ID for projects cached before ID was added
+            if (!cached.id) {
+                cached.id = crypto.createHash('sha256').update(directory).digest('base64url').slice(0, 8)
+            }
             return { needsUpdate: false, cached }
         }
 

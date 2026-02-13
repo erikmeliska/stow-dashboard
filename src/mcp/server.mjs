@@ -16,6 +16,10 @@ import { promisify } from 'util'
 import { simpleGit } from 'simple-git'
 
 const execAsync = promisify(exec)
+
+// Ensure /usr/sbin is in PATH for lsof
+process.env.PATH = `${process.env.PATH}:/usr/sbin:/sbin`
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = path.resolve(__dirname, '../..')
 const DATA_FILE = path.join(PROJECT_ROOT, 'data', 'projects_metadata.jsonl')
@@ -51,8 +55,12 @@ async function loadProjects() {
     }
 }
 
-async function getProjectByName(name) {
+async function getProjectByIdOrName(name) {
     const projects = await loadProjects()
+    // Try exact ID match first
+    const byId = projects.find(p => p.id === name)
+    if (byId) return byId
+    // Then name/path match
     return projects.find(p =>
         p.project_name.toLowerCase() === name.toLowerCase() ||
         p.directory.toLowerCase().includes(name.toLowerCase())
@@ -304,7 +312,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
     if (uri.startsWith('stow://project/')) {
         const name = decodeURIComponent(uri.replace('stow://project/', ''))
-        const project = await getProjectByName(name)
+        const project = await getProjectByIdOrName(name)
 
         if (!project) {
             throw new Error(`Project not found: ${name}`)
@@ -328,7 +336,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: 'search_projects',
-                description: 'Search projects by name, stack, or group. Returns matching projects with basic info.',
+                description: 'Search projects by name, stack, or group. Returns matching projects with basic info including unique project IDs.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -359,7 +367,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         name: {
                             type: 'string',
-                            description: 'Project name or partial path'
+                            description: 'Project ID, name, or partial path'
                         }
                     },
                     required: ['name']
@@ -373,7 +381,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         name: {
                             type: 'string',
-                            description: 'Project name or partial path'
+                            description: 'Project ID, name, or partial path'
                         }
                     },
                     required: ['name']
@@ -387,7 +395,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         name: {
                             type: 'string',
-                            description: 'Project name or partial path'
+                            description: 'Project ID, name, or partial path'
                         },
                         app: {
                             type: 'string',
@@ -436,7 +444,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         name: {
                             type: 'string',
-                            description: 'Project name or partial path'
+                            description: 'Project ID, name, or partial path'
                         }
                     },
                     required: ['name']
@@ -515,6 +523,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             })
 
             results = results.slice(0, limit).map(p => ({
+                id: p.id,
                 name: p.project_name,
                 directory: p.directory,
                 stack: p.stack?.slice(0, 5),
@@ -535,7 +544,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         case 'get_project_details': {
-            const project = await getProjectByName(args.name)
+            const project = await getProjectByIdOrName(args.name)
             if (!project) {
                 return {
                     content: [{ type: 'text', text: `Project not found: ${args.name}` }]
@@ -550,6 +559,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const runningInfo = projectProcesses[project.directory]
 
             const details = {
+                id: project.id,
                 name: project.project_name,
                 directory: project.directory,
                 description: project.description,
@@ -582,7 +592,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         case 'get_project_readme': {
-            const project = await getProjectByName(args.name)
+            const project = await getProjectByIdOrName(args.name)
             if (!project) {
                 return {
                     content: [{ type: 'text', text: `Project not found: ${args.name}` }]
@@ -608,7 +618,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         case 'open_project': {
-            const project = await getProjectByName(args.name)
+            const project = await getProjectByIdOrName(args.name)
             if (!project) {
                 return {
                     content: [{ type: 'text', text: `Project not found: ${args.name}` }]
@@ -657,6 +667,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
                 if (isDirty) {
                     dirty.push({
+                        id: p.id,
                         name: p.project_name,
                         directory: p.directory,
                         uncommitted,
@@ -725,11 +736,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             for (const [directory, info] of Object.entries(projectProcesses)) {
                 const project = projects.find(p => p.directory === directory)
                 running.push({
+                    id: project?.id,
                     name: project?.project_name || path.basename(directory),
                     directory,
-                    processes: info.processes.length,
-                    containers: info.docker.length,
-                    ports: info.ports
+                    ports: info.ports,
+                    processes: info.processes.map(p => ({
+                        pid: p.pid,
+                        command: p.command,
+                        ports: p.ports
+                    })),
+                    docker: info.docker.map(c => ({
+                        id: c.id,
+                        name: c.name,
+                        image: c.image,
+                        ports: c.ports,
+                        status: c.status
+                    }))
                 })
             }
 
@@ -744,7 +766,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         case 'get_project_processes': {
-            const project = await getProjectByName(args.name)
+            const project = await getProjectByIdOrName(args.name)
             if (!project) {
                 return {
                     content: [{ type: 'text', text: `Project not found: ${args.name}` }]
@@ -764,6 +786,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 content: [{
                     type: 'text',
                     text: JSON.stringify({
+                        id: project.id,
                         name: project.project_name,
                         directory: project.directory,
                         processes: info.processes,
@@ -783,6 +806,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 .sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified))
                 .slice(0, limit)
                 .map(p => ({
+                    id: p.id,
                     name: p.project_name,
                     directory: p.directory,
                     lastModified: p.last_modified,
