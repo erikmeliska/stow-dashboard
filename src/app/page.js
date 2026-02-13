@@ -4,6 +4,7 @@ import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
 import { ScanControls } from '@/components/ScanControls'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { WelcomeScreen } from '@/components/WelcomeScreen'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +55,32 @@ export default async function DashboardPage() {
         }
     }))
     
+    if (processedProjects.length === 0) {
+        const scanRoots = process.env.SCAN_ROOTS || ''
+        const baseDir = process.env.BASE_DIR || ''
+        const terminalApp = process.env.TERMINAL_APP || 'Terminal'
+        const ideCommand = process.env.IDE_COMMAND || 'code'
+
+        return (
+            <div className="h-screen flex flex-col overflow-hidden">
+                <div className="flex-none px-4 py-2 border-b">
+                    <div className="flex items-start justify-between">
+                        <h1 className="text-xl font-bold pt-1">Project Dashboard</h1>
+                        <ThemeToggle />
+                    </div>
+                </div>
+                <WelcomeScreen
+                    initialConfig={{
+                        SCAN_ROOTS: scanRoots,
+                        BASE_DIR: baseDir,
+                        TERMINAL_APP: terminalApp,
+                        IDE_COMMAND: ideCommand
+                    }}
+                />
+            </div>
+        )
+    }
+
     return (
         <div className="h-screen flex flex-col overflow-hidden">
             <div className="flex-none px-4 py-2 border-b">

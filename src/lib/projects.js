@@ -14,7 +14,9 @@ export async function readProjectsData() {
         
         return projects
     } catch (error) {
-        console.error('Error reading projects data:', error)
+        if (error.code !== 'ENOENT') {
+            console.error('Error reading projects data:', error)
+        }
         return []
     }
 } 
