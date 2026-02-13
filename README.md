@@ -135,7 +135,7 @@ The built-in scanner detects projects by looking for:
 - `.git` directory
 - `README.md` file
 
-**Monorepo support:** If a detected project contains subdirectories that are also projects, the scanner indexes the sub-projects instead of the parent.
+**Multi-project support:** Directories with only `.git` (weak indicator) and sub-projects are treated as groups — only their sub-projects are indexed. Directories with strong indicators (`package.json`, `README.md`, etc.) are always indexed, and their sub-projects are also indexed separately.
 
 For each project, it extracts:
 - Project name and description
@@ -223,6 +223,7 @@ Stow Dashboard includes an MCP (Model Context Protocol) server that allows AI as
 | `open_project` | Open project in IDE, Terminal, or Finder |
 | `list_dirty_projects` | List projects with uncommitted changes or behind remote |
 | `get_project_stats` | Get aggregate statistics about all projects |
+| `list_recent_projects` | List most recently modified projects (default: 10) |
 | `list_running_projects` | List all projects with running processes or Docker containers |
 | `get_project_processes` | Get running processes and Docker containers for a project |
 | `stop_process` | Stop a process by PID or Docker container by ID |

@@ -153,7 +153,7 @@ npm run mcp  # Start MCP server on stdio
 
 Tools:
 - `search_projects`, `get_project_details`, `get_project_readme`, `open_project`
-- `list_dirty_projects`, `get_project_stats`
+- `list_dirty_projects`, `get_project_stats`, `list_recent_projects`
 - `list_running_projects`, `get_project_processes`, `stop_process`
 
 ## Data Requirements
@@ -170,9 +170,10 @@ The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON obj
 ### Project Detection
 
 The scanner identifies a directory as a project if it contains at least one of these indicator files:
-`package.json`, `requirements.txt`, `pyproject.toml`, `composer.json`, `build.gradle`, `pom.xml`, `.git`, `README.md`
+- **Strong indicators**: `package.json`, `requirements.txt`, `pyproject.toml`, `composer.json`, `build.gradle`, `pom.xml`, `README.md`
+- **Weak indicators**: `.git`
 
-If a project directory contains subdirectories that are also projects (monorepo/multi-project), the scanner indexes the sub-projects instead of the parent.
+When a directory with sub-projects has only weak indicators (just `.git`), it's treated as a group and skipped — only sub-projects are indexed. Directories with strong indicators are always indexed, and their sub-projects are also indexed separately.
 
 ## Hydration Notes
 

@@ -10,16 +10,23 @@ const DEFAULT_IGNORE_PATTERNS = [
     'python3.11', 'python3.12', '.next'
 ]
 
-const PROJECT_INDICATORS = [
+// Strong indicators: manifest/doc files that define a real project
+const STRONG_PROJECT_INDICATORS = [
     'package.json',
     'requirements.txt',
     'pyproject.toml',
     'composer.json',
     'build.gradle',
     'pom.xml',
-    '.git',
     'README.md'
 ]
+
+// Weak indicators: present in projects but also in group/parent directories
+const WEAK_PROJECT_INDICATORS = [
+    '.git'
+]
+
+const PROJECT_INDICATORS = [...STRONG_PROJECT_INDICATORS, ...WEAK_PROJECT_INDICATORS]
 
 export class ProjectScanner {
     constructor(options = {}) {
@@ -45,6 +52,18 @@ export class ProjectScanner {
 
     async isProjectDirectory(directory) {
         for (const indicator of PROJECT_INDICATORS) {
+            try {
+                await fs.access(path.join(directory, indicator))
+                return true
+            } catch {
+                // Continue checking
+            }
+        }
+        return false
+    }
+
+    async hasStrongIndicator(directory) {
+        for (const indicator of STRONG_PROJECT_INDICATORS) {
             try {
                 await fs.access(path.join(directory, indicator))
                 return true
@@ -409,15 +428,17 @@ export class ProjectScanner {
         const isProject = await this.isProjectDirectory(directory)
 
         if (isProject) {
-            // Check if subdirectories contain their own projects (monorepo/multi-project)
-            const subProjects = []
+            const isStrong = await this.hasStrongIndicator(directory)
+
+            // Check if subdirectories contain their own projects
+            const subProjectPaths = []
             try {
                 const entries = await fs.readdir(directory, { withFileTypes: true })
                 for (const entry of entries) {
                     if (entry.isDirectory() && !this.isIgnored(path.join(directory, entry.name))) {
                         const subPath = path.join(directory, entry.name)
                         if (await this.isProjectDirectory(subPath)) {
-                            subProjects.push(subPath)
+                            subProjectPaths.push(subPath)
                         }
                     }
                 }
@@ -425,15 +446,15 @@ export class ProjectScanner {
                 // Ignore read errors
             }
 
-            if (subProjects.length > 0) {
-                // Has sub-projects: scan each sub-project instead of the parent
-                for (const subPath of subProjects) {
+            if (subProjectPaths.length > 0 && !isStrong) {
+                // Weak-only project with sub-projects (group dir): skip it, scan sub-projects
+                for (const subPath of subProjectPaths) {
                     await this.scanDirectory(subPath, scannedProjects)
                 }
                 return
             }
 
-            // Leaf project (no sub-projects): index it
+            // Index this project (strong indicator, or no sub-projects)
             const startTime = Date.now()
 
             try {
@@ -458,7 +479,14 @@ export class ProjectScanner {
                 this.onProgress({ type: 'error', directory, error: error.message })
             }
 
-            return // Don't scan deeper into leaf projects
+            // Strong project with sub-projects: also scan sub-projects
+            if (subProjectPaths.length > 0) {
+                for (const subPath of subProjectPaths) {
+                    await this.scanDirectory(subPath, scannedProjects)
+                }
+            }
+
+            return
         }
 
         // Scan subdirectories

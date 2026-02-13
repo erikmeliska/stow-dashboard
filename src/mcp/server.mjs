@@ -443,6 +443,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 }
             },
             {
+                name: 'list_recent_projects',
+                description: 'List most recently modified projects, sorted by last modification date (newest first)',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        limit: {
+                            type: 'number',
+                            description: 'Maximum number of results (default: 10)'
+                        }
+                    }
+                }
+            },
+            {
                 name: 'stop_process',
                 description: 'Stop a running process by PID or Docker container by ID',
                 inputSchema: {
@@ -757,6 +770,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         docker: info.docker,
                         ports: info.ports
                     }, null, 2)
+                }]
+            }
+        }
+
+        case 'list_recent_projects': {
+            const projects = await loadProjects()
+            const limit = args.limit || 10
+
+            const recent = projects
+                .filter(p => p.last_modified)
+                .sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified))
+                .slice(0, limit)
+                .map(p => ({
+                    name: p.project_name,
+                    directory: p.directory,
+                    lastModified: p.last_modified,
+                    stack: p.stack?.slice(0, 5),
+                    size: formatBytes(p.content_size_bytes),
+                    hasGit: p.git_info?.git_detected || false,
+                    uncommitted: p.git_info?.uncommitted_changes || 0
+                }))
+
+            return {
+                content: [{
+                    type: 'text',
+                    text: recent.length > 0
+                        ? JSON.stringify(recent, null, 2)
+                        : 'No projects found'
                 }]
             }
         }
