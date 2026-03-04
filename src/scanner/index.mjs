@@ -54,7 +54,7 @@ export class ProjectScanner {
     async isProjectDirectory(directory) {
         for (const indicator of PROJECT_INDICATORS) {
             try {
-                await fs.access(path.join(directory, indicator))
+                await fs.access(`${directory}/${indicator}`)
                 return true
             } catch {
                 // Continue checking
@@ -66,7 +66,7 @@ export class ProjectScanner {
     async hasStrongIndicator(directory) {
         for (const indicator of STRONG_PROJECT_INDICATORS) {
             try {
-                await fs.access(path.join(directory, indicator))
+                await fs.access(`${directory}/${indicator}`)
                 return true
             } catch {
                 // Continue checking
@@ -399,6 +399,10 @@ export class ProjectScanner {
             if (!cached.id) {
                 cached.id = crypto.createHash('sha256').update(directory).digest('base64url').slice(0, 8)
             }
+            // Fix stale last_modified if it was inflated (e.g. from previously counted .git dir)
+            if (latestMtime < cachedMtime) {
+                cached.last_modified = new Date(latestMtime).toISOString()
+            }
             return { needsUpdate: false, cached }
         }
 
@@ -578,6 +582,16 @@ export class ProjectScanner {
 
         return deletedCount
     }
+}
+
+/**
+ * Standalone function to get the latest file modification time for a directory.
+ * Skips ignored paths (.git, node_modules, .next, etc.)
+ */
+export async function getLatestMtime(directory) {
+    const scanner = new ProjectScanner({ scanRoots: [] })
+    const { latestMtime } = await scanner.getLatestTimestamps(directory)
+    return new Date(latestMtime).toISOString()
 }
 
 export default ProjectScanner

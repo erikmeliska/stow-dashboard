@@ -16,7 +16,7 @@ const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 async function checkReadmeExists(directory) {
     for (const name of README_NAMES) {
         try {
-            await fs.access(path.join(directory, name))
+            await fs.access(`${directory}/${name}`)
             return true
         } catch {
             // Continue to next variant

@@ -14,7 +14,7 @@ export async function GET(request) {
     const readmeNames = ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README', 'readme']
 
     for (const name of readmeNames) {
-        const readmePath = path.join(directory, name)
+        const readmePath = `${directory}/${name}`
         try {
             const content = await fs.readFile(readmePath, 'utf-8')
             return NextResponse.json({ content, filename: name })

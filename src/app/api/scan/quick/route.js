@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs/promises'
 import { simpleGit } from 'simple-git'
+import { getLatestMtime } from '@/scanner/index.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
@@ -163,9 +164,12 @@ export async function POST() {
                     current++
                     sendEvent({ type: 'refreshing', directory: project.directory, current, total: activeProjects.length })
 
-                    const gitInfo = await getGitInfo(project.directory)
+                    const [gitInfo, lastModified] = await Promise.all([
+                        getGitInfo(project.directory),
+                        getLatestMtime(project.directory)
+                    ])
                     project.git_info = gitInfo
-                    project.last_modified = new Date().toISOString()
+                    project.last_modified = lastModified
 
                     projectMap.set(project.directory, project)
                 }

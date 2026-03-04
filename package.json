@@ -16,19 +16,22 @@
     "developer-tools"
   ],
   "bin": {
+    "stow": "./scripts/cli.mjs",
     "stow-mcp": "./src/mcp/server.mjs"
   },
   "scripts": {
     "dev": "next dev -p 3089",
     "build": "next build",
     "start": "next start -p 3088",
+    "start:bg": "nohup next start -p 3088 > /tmp/stow-dashboard.log 2>&1 & echo \"PID: $!\" && echo 'Log: /tmp/stow-dashboard.log'",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",
     "lint": "eslint .",
     "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
     "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f",
-    "mcp": "node src/mcp/server.mjs"
+    "mcp": "node src/mcp/server.mjs",
+    "stow": "node scripts/cli.mjs"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.3",

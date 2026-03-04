@@ -109,6 +109,7 @@ npm run dev           # Start dev server on port 3089
 # Web Production
 npm run build         # Build Next.js for production
 npm run start         # Start production server on port 3088
+npm run start:bg      # Start production server in background
 
 # Desktop App (recommended)
 npm run tauri:build   # Build native macOS app + DMG
@@ -203,11 +204,49 @@ src-tauri/                    # Tauri desktop app (Rust)
 ├── tauri.conf.json           # Tauri configuration
 └── icons/                    # App icons
 scripts/
+├── cli.mjs                   # CLI tool (stow command)
 ├── scan.mjs                  # CLI scanner script
 └── prepare-tauri.mjs         # Prepare standalone for Tauri
 data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
 ```
+
+## CLI
+
+Stow includes a terminal CLI for quick access to project data without opening the dashboard.
+
+### Install globally
+
+```bash
+npm link    # makes `stow` available from any terminal
+```
+
+### Usage
+
+```bash
+# List projects (default: 20 most recently modified)
+stow                 # Top 20 projects
+stow --all           # All projects
+stow --limit 50      # Top 50
+
+# Filters
+stow --running       # Show projects with running processes/containers
+stow --dirty         # Show projects with uncommitted changes
+stow --behind        # Show projects behind remote
+stow --ahead         # Show projects ahead of remote
+stow --no-git        # Show projects without Git
+stow --search next   # Search by name, path, or stack
+stow --stats         # Show summary statistics
+
+# Scanning
+stow scan            # Full scan of all project directories
+stow scan -f         # Force rescan all projects
+stow quickscan       # Refresh git info for running projects only
+```
+
+Directories are clickable (OSC 8 terminal hyperlinks) — click to open in Finder.
+
+No server needed — reads directly from `data/projects_metadata.jsonl` and detects processes via `lsof`.
 
 ## MCP Server
 
