@@ -32,7 +32,8 @@ async function getRunningProcesses() {
             const pid = parts[1]
             const portMatch = line.match(/:(\d+)\s+\(LISTEN\)/)
 
-            if (portMatch && pid) {
+            // Skip system-level port forwarders (OrbStack handles Docker port forwarding)
+            if (portMatch && pid && !command.startsWith('OrbStack')) {
                 if (!processes.has(pid)) {
                     processes.set(pid, { pid, command, ports: [], cwd: null, type: 'process' })
                 }
@@ -114,13 +115,16 @@ async function getDockerContainers() {
 function matchProcessToProject(processCwd, projectDirs) {
     if (!processCwd) return null
 
-    // Exact match or process cwd is inside project
+    // Find the most specific (longest) matching project directory
+    let bestMatch = null
     for (const dir of projectDirs) {
         if (processCwd === dir || processCwd.startsWith(dir + '/')) {
-            return dir
+            if (!bestMatch || dir.length > bestMatch.length) {
+                bestMatch = dir
+            }
         }
     }
-    return null
+    return bestMatch
 }
 
 export async function GET(request) {
