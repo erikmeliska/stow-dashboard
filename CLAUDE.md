@@ -49,6 +49,8 @@ node scripts/scan.mjs --cleanup                  # Delete legacy .project_meta.j
 
 **Incremental scanning:** The scanner uses the JSONL file itself as a cache. On subsequent scans, only projects with files modified since the last scan are re-analyzed. This makes repeat scans ~8x faster.
 
+**Scanner features:** Concurrent analysis (8 projects at a time), respects `.gitignore` files for accurate file type/size analysis, integrates `scc` for code metrics, uses `ignore` npm package for gitignore pattern matching.
+
 API endpoint: `POST /api/scan` with optional `{ force: true }` or `{ cleanup: true }`
 
 ### Environment Variables
@@ -99,6 +101,9 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/app/api/processes/route.js` - API for detecting running processes and Docker containers
 - `src/app/api/processes/docker/route.js` - API for Docker container operations (stop, restart, kill)
 - `src/app/api/processes/kill/route.js` - API for killing processes
+- `src/app/api/scripts/route.js` - API for listing available npm/shell scripts in a project
+- `src/app/api/scripts/run/route.js` - API for running scripts in background with log capture
+- `src/app/api/scripts/attach/route.js` - API for attaching terminal to running script output
 - `src/hooks/useProcesses.js` - Hook for process monitoring with polling
 - `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
@@ -137,6 +142,27 @@ The dashboard detects running processes and Docker containers for each project:
 - Polls every 30 seconds for updates
 - Displays process count (green) and container count (blue) in Running column
 - Project details sheet shows full process/container info with Kill/Stop buttons
+- Process entries have Globe button to open localhost port and Terminal button to attach
+
+### Script Runner
+
+The project details sheet includes a script runner dropdown (Play button):
+
+- Lists available npm scripts from `package.json` and `.sh` files from project root
+- Runs scripts in background via `nohup`, captures output to log files in `/tmp/stow-scripts/`
+- Tracks running scripts by PID, polls to detect when they finish
+- Attach button opens terminal with `tail -f` on the script's log file
+- API: `GET /api/scripts?directory=...`, `POST /api/scripts/run`, `POST /api/scripts/attach`
+
+### Code Stats (scc)
+
+The scanner integrates with [scc](https://github.com/boyter/scc) (Sloc Cloc and Code) for code metrics:
+
+- Runs `scc --by-file -f json` on each project during scanning
+- Collects: lines of code, comments, blank lines, complexity, file count per language
+- Estimates project value (COCOMO model), schedule, and team size
+- Table shows "Lines" and "Value" columns (Value hidden by default)
+- Project details sheet shows full code stats breakdown with language list
 
 ### Quick Filters
 
@@ -166,6 +192,7 @@ The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON obj
 - `content_size_bytes` (size of your code without libraries)
 - `libs_size_bytes` (size of node_modules, venv, etc.)
 - `total_size_bytes` (total directory size)
+- `scc` (code stats: `total_code`, `total_comment`, `total_blank`, `total_lines`, `total_complexity`, `total_files`, `estimated_cost`, `estimated_schedule_months`, `estimated_people`, `languages[]`)
 
 ### Project Detection
 
