@@ -13,7 +13,11 @@ import {
     AlertCircle,
     Circle,
     Square,
-    Container
+    Container,
+    Play,
+    ChevronDown,
+    SquareTerminal,
+    Globe,
 } from "lucide-react"
 
 import {
@@ -25,6 +29,12 @@ import {
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
     Tooltip,
     TooltipContent,
@@ -87,6 +97,9 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [error, setError] = React.useState(null)
     const [processes, setProcesses] = React.useState([])
     const [processesLoading, setProcessesLoading] = React.useState(false)
+    const [scripts, setScripts] = React.useState({})
+    const [runningScripts, setRunningScripts] = React.useState([]) // { pid, script, logFile }
+    const [scriptRunning, setScriptRunning] = React.useState(null) // currently launching script name
 
     React.useEffect(() => {
         if (open && project?.directory) {
@@ -123,8 +136,43 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 .finally(() => {
                     setProcessesLoading(false)
                 })
+
+            // Fetch available scripts
+            fetch(`/api/scripts?directory=${encodeURIComponent(project.directory)}`)
+                .then(res => res.json())
+                .then(data => {
+                    setScripts(data.scripts || {})
+                })
+                .catch(() => {
+                    setScripts({})
+                })
+
+            // Reset running scripts tracking when project changes
+            setRunningScripts([])
         }
     }, [open, project?.directory])
+
+    // Poll to check if running scripts are still alive, clean up finished ones
+    React.useEffect(() => {
+        if (runningScripts.length === 0) return
+
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/processes?directory=${encodeURIComponent(project?.directory)}`)
+                const data = await res.json()
+                const currentProcesses = data.processes || []
+                setProcesses(currentProcesses)
+
+                // Remove scripts whose PID is no longer running
+                const activePids = new Set(currentProcesses.map(p => p.pid))
+                setRunningScripts(prev => prev.filter(s => activePids.has(s.pid)))
+            } catch {
+                // Ignore
+            }
+        }, 3000)
+
+        return () => clearInterval(interval)
+    }, [runningScripts.length, project?.directory])
 
     if (!project) return null
 
@@ -146,6 +194,43 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const openInTerminal = () => openWith('terminal')
     const openInVSCode = () => openWith('vscode')
     const openInFinder = () => openWith('finder')
+
+    const runScript = async (scriptName) => {
+        setScriptRunning(scriptName)
+        try {
+            const res = await fetch('/api/scripts/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ directory: project.directory, script: scriptName })
+            })
+            const data = await res.json()
+            if (data.success) {
+                setRunningScripts(prev => [...prev, { pid: data.pid, script: data.script, logFile: data.logFile }])
+                // Refresh processes after a short delay to pick up new process
+                setTimeout(async () => {
+                    const res = await fetch(`/api/processes?directory=${encodeURIComponent(project.directory)}`)
+                    const d = await res.json()
+                    setProcesses(d.processes || [])
+                }, 2000)
+            }
+        } catch (e) {
+            console.error('Failed to run script:', e)
+        } finally {
+            setScriptRunning(null)
+        }
+    }
+
+    const attachToProcess = async (pid, logFile) => {
+        try {
+            await fetch('/api/scripts/attach', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pid, logFile, directory: project.directory })
+            })
+        } catch (e) {
+            console.error('Failed to attach:', e)
+        }
+    }
 
     return (
         <Sheet open={open} onOpenChange={onOpenChange}>
@@ -185,6 +270,36 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                             </TooltipTrigger>
                             <TooltipContent><p>Open in Terminal</p></TooltipContent>
                         </Tooltip>
+
+                        {/* Scripts dropdown */}
+                        {Object.keys(scripts).length > 0 && (
+                            <DropdownMenu>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="outline" className="h-8 px-2 gap-1">
+                                                <Play className="h-4 w-4" />
+                                                <ChevronDown className="h-3 w-3" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                    </TooltipTrigger>
+                                    <TooltipContent><p>Run script</p></TooltipContent>
+                                </Tooltip>
+                                <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
+                                    {Object.entries(scripts).map(([name, cmd]) => (
+                                        <DropdownMenuItem
+                                            key={name}
+                                            onClick={() => runScript(name)}
+                                            disabled={scriptRunning === name}
+                                            className="flex flex-col items-start gap-0.5"
+                                        >
+                                            <span className="font-mono text-sm font-medium">{name}</span>
+                                            <span className="text-xs text-muted-foreground truncate max-w-[250px]">{cmd}</span>
+                                        </DropdownMenuItem>
+                                    ))}
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
                     </div>
                 </TooltipProvider>
 
@@ -275,29 +390,56 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                 </Button>
                                             </div>
                                             <div className="space-y-2">
-                                                {regularProcesses.map((proc, index) => (
-                                                    <div key={index} className="text-xs bg-background/50 rounded p-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="font-mono font-medium">{proc.command}</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-muted-foreground">PID: {proc.pid}</span>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="sm"
-                                                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
-                                                                    onClick={() => killProcess(proc.pid)}
-                                                                >
-                                                                    Kill
-                                                                </Button>
+                                                {regularProcesses.map((proc, index) => {
+                                                    const scriptInfo = runningScripts.find(s => s.pid === proc.pid)
+                                                    return (
+                                                        <div key={index} className="text-xs bg-background/50 rounded p-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-mono font-medium">
+                                                                    {scriptInfo
+                                                                        ? (scriptInfo.script.endsWith('.sh') ? `./${scriptInfo.script}` : `npm run ${scriptInfo.script}`)
+                                                                        : proc.command}
+                                                                </span>
+                                                                <div className="flex items-center gap-1">
+                                                                    <span className="text-muted-foreground mr-1">PID: {proc.pid}</span>
+                                                                    {proc.ports?.length > 0 && (
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            className="h-6 px-2 text-xs"
+                                                                            onClick={() => window.open(`http://localhost:${proc.ports[0]}`, '_blank')}
+                                                                            title={`Open localhost:${proc.ports[0]}`}
+                                                                        >
+                                                                            <Globe className="h-3 w-3" />
+                                                                        </Button>
+                                                                    )}
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-xs"
+                                                                        onClick={() => attachToProcess(proc.pid, scriptInfo?.logFile)}
+                                                                        title="Open in terminal (tail log if available)"
+                                                                    >
+                                                                        <SquareTerminal className="h-3 w-3" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                                        onClick={() => killProcess(proc.pid)}
+                                                                    >
+                                                                        Kill
+                                                                    </Button>
+                                                                </div>
                                                             </div>
+                                                            {proc.ports && proc.ports.length > 0 && (
+                                                                <div className="mt-1 text-green-600 dark:text-green-400">
+                                                                    Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                        {proc.ports && proc.ports.length > 0 && (
-                                                            <div className="mt-1 text-green-600 dark:text-green-400">
-                                                                Port{proc.ports.length > 1 ? 's' : ''}: {proc.ports.join(', ')}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                    )
+                                                })}
                                             </div>
                                         </div>
                                     )}
@@ -325,8 +467,19 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     <div key={index} className="text-xs bg-blue-500/10 border border-blue-500/20 rounded p-2">
                                                         <div className="flex items-center justify-between">
                                                             <span className="font-mono font-medium">{container.name}</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-muted-foreground">{container.id.slice(0, 12)}</span>
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-muted-foreground mr-1">{container.id.slice(0, 12)}</span>
+                                                                {container.ports?.length > 0 && (
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-xs"
+                                                                        onClick={() => window.open(`http://localhost:${container.ports[0]}`, '_blank')}
+                                                                        title={`Open localhost:${container.ports[0]}`}
+                                                                    >
+                                                                        <Globe className="h-3 w-3" />
+                                                                    </Button>
+                                                                )}
                                                                 <Button
                                                                     variant="ghost"
                                                                     size="sm"
@@ -510,6 +663,61 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     </a>
                                                 )
                                             })}
+                                        </div>
+                                    )}
+                                </div>
+                            </Section>
+                            <Separator />
+                        </>
+                    )}
+
+                    {/* Code Stats (scc) */}
+                    {project.scc && (
+                        <>
+                            <Section title="Code Stats">
+                                <div className="space-y-4">
+                                    <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                        <StatItem label="Lines of Code" value={project.scc.total_code?.toLocaleString()} className="font-semibold" />
+                                        <StatItem label="Comments" value={project.scc.total_comment?.toLocaleString()} />
+                                        <StatItem label="Blank Lines" value={project.scc.total_blank?.toLocaleString()} />
+                                        <StatItem label="Total Lines" value={project.scc.total_lines?.toLocaleString()} />
+                                        <StatItem label="Complexity" value={project.scc.total_complexity?.toLocaleString()} />
+                                        <StatItem label="Files" value={project.scc.total_files?.toLocaleString()} />
+                                    </div>
+
+                                    <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                        <StatItem
+                                            label="Estimated Value"
+                                            value={`$${project.scc.estimated_cost?.toLocaleString()}`}
+                                            className="font-semibold text-green-600 dark:text-green-400"
+                                        />
+                                        <StatItem label="Schedule" value={`${project.scc.estimated_schedule_months} months`} />
+                                        <StatItem label="People" value={project.scc.estimated_people} />
+                                    </div>
+
+                                    {/* Top Languages */}
+                                    {project.scc.languages?.length > 0 && (
+                                        <div className="bg-muted/50 rounded-lg p-3">
+                                            <p className="text-xs text-muted-foreground mb-2">Languages</p>
+                                            <div className="space-y-1.5">
+                                                {project.scc.languages.slice(0, 10).map((lang) => {
+                                                    const pct = project.scc.total_code > 0
+                                                        ? Math.round((lang.code / project.scc.total_code) * 100)
+                                                        : 0
+                                                    return (
+                                                        <div key={lang.name} className="flex items-center gap-2 text-sm">
+                                                            <span className="flex-1 truncate">{lang.name}</span>
+                                                            <span className="text-muted-foreground text-xs w-8 text-right">{pct}%</span>
+                                                            <span className="font-medium w-16 text-right">{lang.code.toLocaleString()}</span>
+                                                        </div>
+                                                    )
+                                                })}
+                                                {project.scc.languages.length > 10 && (
+                                                    <p className="text-xs text-muted-foreground mt-1">
+                                                        +{project.scc.languages.length - 10} more
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
                                     )}
                                 </div>

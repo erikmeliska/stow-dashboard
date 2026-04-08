@@ -97,6 +97,7 @@ const defaultColumnVisibility = {
     'git_info.remotes': false,
     'git_info.total_commits': false,
     'content_size_bytes': false,
+    'scc.estimated_cost': false,
 }
 const defaultSorting = [{ id: 'last_modified', desc: true }]
 
@@ -561,6 +562,51 @@ export function ProjectTable({ projects, ownRepos }) {
                         )}
                     </div>
                 )
+            },
+        },
+        {
+            accessorKey: "scc.total_code",
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Lines
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const code = row.original.scc?.total_code
+                if (!code) return <span className="text-muted-foreground text-sm">-</span>
+                if (code >= 1000) return <span className="text-sm whitespace-nowrap">{(code / 1000).toFixed(1)}k</span>
+                return <span className="text-sm">{code}</span>
+            },
+        },
+        {
+            accessorKey: "scc.estimated_cost",
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Value
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const cost = row.original.scc?.estimated_cost
+                if (!cost) return <span className="text-muted-foreground text-sm">-</span>
+                if (cost >= 1000000) return <span className="text-sm whitespace-nowrap">${(cost / 1000000).toFixed(1)}M</span>
+                if (cost >= 1000) return <span className="text-sm whitespace-nowrap">${(cost / 1000).toFixed(0)}k</span>
+                return <span className="text-sm">${cost}</span>
             },
         },
         {
