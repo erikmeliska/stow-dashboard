@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -177,7 +177,7 @@ export function ProjectTable({ projects, ownRepos }) {
     }
 
     // Process monitoring
-    const { getPortsForProject, getRunningInfo } = useProcesses(30000)
+    const { getPortsForProject, getRunningInfo, isProjectRunning } = useProcesses(30000)
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -227,8 +227,7 @@ export function ProjectTable({ projects, ownRepos }) {
         // Quick filters (null = any, true = must have, false = must not have)
         if (filters.running !== null) {
             result = result.filter(project => {
-                const ports = getPortsForProject(project.directory)
-                const isRunning = ports.length > 0
+                const isRunning = isProjectRunning(project.directory)
                 return filters.running ? isRunning : !isRunning
             })
         }
@@ -283,7 +282,7 @@ export function ProjectTable({ projects, ownRepos }) {
         }
 
         return result
-    }, [searchFilteredProjects, selectedGroups, filters, getPortsForProject])
+    }, [searchFilteredProjects, selectedGroups, filters, getPortsForProject, isProjectRunning])
 
     const toggleGroup = (groupName) => {
         setSelectedGroups(prev =>
@@ -622,6 +621,11 @@ export function ProjectTable({ projects, ownRepos }) {
                 if (info.hasProcesses) {
                     tooltipParts.push(`${info.processes.length} process${info.processes.length > 1 ? 'es' : ''}`)
                 }
+                if (info.hasClaude) {
+                    const hosts = info.claude.map(c => c.hostLabel).filter(Boolean)
+                    const hostSuffix = hosts.length > 0 ? ` (${[...new Set(hosts)].join(', ')})` : ''
+                    tooltipParts.push(`${info.claude.length} Claude session${info.claude.length > 1 ? 's' : ''}${hostSuffix}`)
+                }
                 if (info.hasDocker) {
                     tooltipParts.push(`${info.docker.length} container${info.docker.length > 1 ? 's' : ''}`)
                 }
@@ -638,6 +642,12 @@ export function ProjectTable({ projects, ownRepos }) {
                                         <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-600 dark:text-green-400">
                                             <Circle className="h-2 w-2 fill-current" />
                                             {info.processes.length}
+                                        </span>
+                                    )}
+                                    {info.hasClaude && (
+                                        <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-600 dark:text-purple-400">
+                                            <Sparkles className="h-3 w-3" />
+                                            {info.claude.length}
                                         </span>
                                     )}
                                     {info.hasDocker && (

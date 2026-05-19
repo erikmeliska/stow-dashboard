@@ -71,6 +71,93 @@ async function getRunningProcesses() {
     return Array.from(processes.values())
 }
 
+const HOST_PATTERNS = [
+    { test: c => c.includes('/cmux.app/') || /\bcmux$/.test(c), id: 'cmux', label: 'cmux' },
+    { test: c => c.includes('/Zed.app/') || c.endsWith('/zed') || c === 'zed', id: 'zed', label: 'Zed' },
+    { test: c => c.includes('/Cursor.app/') || /Cursor Helper/.test(c), id: 'cursor', label: 'Cursor' },
+    { test: c => /Code Helper|\/Visual Studio Code\.app\//.test(c) || c.endsWith('/Code') || c === 'Code', id: 'vscode', label: 'VS Code' },
+    { test: c => c.includes('/Claude.app/Contents/MacOS/Claude') && !/Claude Helper/.test(c), id: 'claude-app', label: 'Claude Desktop' },
+    { test: c => /iTerm2?(\.app)?/.test(c), id: 'iterm', label: 'iTerm' },
+    { test: c => /\/Warp\.app\//.test(c) || c.endsWith('/stable') && /Warp/.test(c), id: 'warp', label: 'Warp' },
+    { test: c => /\/Ghostty\.app\//.test(c) || c.endsWith('/ghostty'), id: 'ghostty', label: 'Ghostty' },
+    { test: c => /\/Alacritty\.app\//.test(c) || c.endsWith('/alacritty'), id: 'alacritty', label: 'Alacritty' },
+    { test: c => /\/kitty\.app\//.test(c) || c.endsWith('/kitty'), id: 'kitty', label: 'kitty' },
+    { test: c => /\/WezTerm\.app\//.test(c) || /wezterm(-gui)?$/.test(c), id: 'wezterm', label: 'WezTerm' },
+    { test: c => /\/Hyper\.app\//.test(c), id: 'hyper', label: 'Hyper' },
+    { test: c => c.includes('/Terminal.app/'), id: 'terminal', label: 'Terminal' },
+    { test: c => /\btmux(: server)?$/.test(c) || c === 'tmux', id: 'tmux', label: 'tmux' },
+    { test: c => /\/JetBrains Toolbox\.app\//.test(c) || /\/(IntelliJ IDEA|PyCharm|WebStorm|PhpStorm|RubyMine|GoLand|CLion|Rider|DataGrip|RustRover|Android Studio)\.app\//.test(c), id: 'jetbrains', label: 'JetBrains' },
+]
+
+function classifyHost(comm) {
+    for (const p of HOST_PATTERNS) {
+        if (p.test(comm)) return { id: p.id, label: p.label }
+    }
+    return null
+}
+
+async function getClaudeSessions() {
+    const sessions = new Map() // pid -> { pid, command, ports, cwd, type, host, hostLabel }
+    const procTable = new Map() // pid -> { ppid, comm }
+
+    try {
+        const { stdout: psOut } = await execAsync('ps -axo pid=,ppid=,comm= 2>/dev/null || true')
+
+        for (const line of psOut.split('\n')) {
+            const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/)
+            if (!match) continue
+            const pid = match[1]
+            const ppid = match[2]
+            const comm = match[3]
+            procTable.set(pid, { ppid, comm })
+            const basename = comm.split('/').pop()
+            if (basename === 'claude') {
+                sessions.set(pid, { pid, command: 'claude', ports: [], cwd: null, type: 'claude', host: null, hostLabel: null })
+            }
+        }
+
+        // Walk parent process tree to classify host (terminal/editor)
+        for (const session of sessions.values()) {
+            let cur = procTable.get(session.pid)?.ppid
+            for (let depth = 0; depth < 12 && cur && cur !== '0' && cur !== '1'; depth++) {
+                const parent = procTable.get(cur)
+                if (!parent) break
+                const matched = classifyHost(parent.comm)
+                if (matched) {
+                    session.host = matched.id
+                    session.hostLabel = matched.label
+                    break
+                }
+                cur = parent.ppid
+            }
+        }
+
+        if (sessions.size > 0) {
+            const pids = Array.from(sessions.keys()).join(',')
+            try {
+                const { stdout: cwdOut } = await execAsync(
+                    `lsof -a -p ${pids} -d cwd -F n 2>/dev/null || true`
+                )
+
+                let currentPid = null
+                for (const line of cwdOut.split('\n')) {
+                    if (line.startsWith('p')) {
+                        currentPid = line.slice(1)
+                    } else if (line.startsWith('n') && currentPid && sessions.has(currentPid)) {
+                        sessions.get(currentPid).cwd = line.slice(1)
+                    }
+                }
+            } catch {
+                // Ignore cwd errors
+            }
+        }
+    } catch {
+        // ps failed
+    }
+
+    return Array.from(sessions.values()).filter(s => s.cwd)
+}
+
 async function getDockerContainers() {
     const containers = []
 
@@ -132,9 +219,10 @@ export async function GET(request) {
     const directory = searchParams.get('directory')
 
     try {
-        const [runningProcesses, dockerContainers, projectDirs] = await Promise.all([
+        const [runningProcesses, dockerContainers, claudeSessions, projectDirs] = await Promise.all([
             getRunningProcesses(),
             getDockerContainers(),
+            getClaudeSessions(),
             getProjectDirectories()
         ])
 
@@ -154,6 +242,26 @@ export async function GET(request) {
                     command: proc.command,
                     ports: proc.ports,
                     type: 'process'
+                })
+            }
+        }
+
+        // Add Claude CLI sessions
+        for (const session of claudeSessions) {
+            const matchedDir = matchProcessToProject(session.cwd, projectDirs)
+
+            if (matchedDir) {
+                if (!projectProcesses[matchedDir]) {
+                    projectProcesses[matchedDir] = []
+                }
+                projectProcesses[matchedDir].push({
+                    pid: parseInt(session.pid),
+                    command: 'claude',
+                    cwd: session.cwd,
+                    ports: [],
+                    type: 'claude',
+                    host: session.host,
+                    hostLabel: session.hostLabel
                 })
             }
         }

@@ -18,6 +18,7 @@ import {
     ChevronDown,
     SquareTerminal,
     Globe,
+    Sparkles,
 } from "lucide-react"
 
 import {
@@ -311,8 +312,9 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                             Checking running processes...
                         </div>
                     ) : processes.length > 0 && (() => {
-                        const regularProcesses = processes.filter(p => p.type !== 'docker')
+                        const claudeSessions = processes.filter(p => p.type === 'claude')
                         const dockerContainers = processes.filter(p => p.type === 'docker')
+                        const regularProcesses = processes.filter(p => p.type !== 'docker' && p.type !== 'claude')
 
                         const refreshProcesses = async () => {
                             setProcessesLoading(true)
@@ -370,6 +372,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                             <Circle className="h-3 w-3 fill-current" />
                                             {processes.length} running
                                             {regularProcesses.length > 0 && ` (${regularProcesses.length} process${regularProcesses.length > 1 ? 'es' : ''})`}
+                                            {claudeSessions.length > 0 && ` (${claudeSessions.length} Claude session${claudeSessions.length > 1 ? 's' : ''})`}
                                             {dockerContainers.length > 0 && ` (${dockerContainers.length} container${dockerContainers.length > 1 ? 's' : ''})`}
                                         </p>
                                     </div>
@@ -440,6 +443,51 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                         </div>
                                                     )
                                                 })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Claude CLI Sessions */}
+                                    {claudeSessions.length > 0 && (
+                                        <div className="mt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                                                    <Sparkles className="h-3 w-3" />
+                                                    Claude CLI
+                                                </span>
+                                            </div>
+                                            <div className="space-y-2">
+                                                {claudeSessions.map((session, index) => (
+                                                    <div key={index} className="text-xs bg-purple-500/10 border border-purple-500/20 rounded p-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-mono font-medium text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                                                                <Sparkles className="h-3 w-3" />
+                                                                claude
+                                                                {session.hostLabel && (
+                                                                    <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-[10px] font-sans font-normal">
+                                                                        {session.hostLabel}
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-muted-foreground mr-1">PID: {session.pid}</span>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                                    onClick={() => killProcess(session.pid)}
+                                                                >
+                                                                    Kill
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                        {session.cwd && (
+                                                            <div className="mt-1 text-muted-foreground font-mono break-all">
+                                                                {session.cwd}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
                                             </div>
                                         </div>
                                     )}

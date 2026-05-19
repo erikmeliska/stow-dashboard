@@ -48,7 +48,7 @@ export function useProcesses(pollInterval = 30000) {
 
     const isProjectRunning = useCallback((directory) => {
         const procs = processes[directory] || []
-        return procs.some(p => p.ports && p.ports.length > 0)
+        return procs.some(p => (p.ports && p.ports.length > 0) || p.type === 'claude' || p.type === 'docker')
     }, [processes])
 
     const hasDockerContainers = useCallback((directory) => {
@@ -58,8 +58,9 @@ export function useProcesses(pollInterval = 30000) {
 
     const getRunningInfo = useCallback((directory) => {
         const procs = processes[directory] || []
-        const regularProcesses = procs.filter(p => p.type !== 'docker')
+        const claudeSessions = procs.filter(p => p.type === 'claude')
         const dockerContainers = procs.filter(p => p.type === 'docker')
+        const regularProcesses = procs.filter(p => p.type !== 'docker' && p.type !== 'claude')
         const allPorts = []
         for (const proc of procs) {
             allPorts.push(...(proc.ports || []))
@@ -67,9 +68,11 @@ export function useProcesses(pollInterval = 30000) {
         return {
             processes: regularProcesses,
             docker: dockerContainers,
+            claude: claudeSessions,
             ports: [...new Set(allPorts)],
             hasProcesses: regularProcesses.length > 0,
             hasDocker: dockerContainers.length > 0,
+            hasClaude: claudeSessions.length > 0,
             isRunning: procs.length > 0
         }
     }, [processes])
