@@ -400,10 +400,15 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     return (
                                                         <div key={index} className="text-xs bg-background/50 rounded p-2">
                                                             <div className="flex items-center justify-between">
-                                                                <span className="font-mono font-medium">
+                                                                <span className="font-mono font-medium flex items-center gap-1">
                                                                     {scriptInfo
                                                                         ? (scriptInfo.script.endsWith('.sh') ? `./${scriptInfo.script}` : `npm run ${scriptInfo.script}`)
                                                                         : proc.command}
+                                                                    {proc.hostLabel && (
+                                                                        <span className="ml-1 px-1.5 py-0.5 rounded bg-green-500/20 text-[10px] font-sans font-normal text-green-700 dark:text-green-300">
+                                                                            {proc.hostLabel}
+                                                                        </span>
+                                                                    )}
                                                                 </span>
                                                                 <div className="flex items-center gap-1">
                                                                     <span className="text-muted-foreground mr-1">PID: {proc.pid}</span>

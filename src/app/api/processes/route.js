@@ -19,7 +19,7 @@ async function getProjectDirectories() {
     }
 }
 
-async function getRunningProcesses() {
+async function getRunningProcesses(procTable) {
     const processes = new Map() // pid -> { command, ports, cwd }
 
     try {
@@ -35,7 +35,7 @@ async function getRunningProcesses() {
             // Skip system-level port forwarders (OrbStack handles Docker port forwarding)
             if (portMatch && pid && !command.startsWith('OrbStack')) {
                 if (!processes.has(pid)) {
-                    processes.set(pid, { pid, command, ports: [], cwd: null, type: 'process' })
+                    processes.set(pid, { pid, command, ports: [], cwd: null, type: 'process', host: null, hostLabel: null })
                 }
                 const port = portMatch[1]
                 if (!processes.get(pid).ports.includes(port)) {
@@ -62,6 +62,17 @@ async function getRunningProcesses() {
                 }
             } catch {
                 // Ignore cwd errors
+            }
+        }
+
+        // Classify host (terminal/editor) via parent process tree
+        if (procTable) {
+            for (const proc of processes.values()) {
+                const host = resolveHost(procTable, proc.pid)
+                if (host) {
+                    proc.host = host.id
+                    proc.hostLabel = host.label
+                }
             }
         }
     } catch {
@@ -152,9 +163,7 @@ async function batchLsofCwd(pids) {
     return cwds
 }
 
-async function getClaudeAndTerminalSessions() {
-    const { procTable, childCount } = await getProcTable()
-
+async function getClaudeAndTerminalSessions(procTable, childCount) {
     const claudePids = []
     const terminalPids = []
 
@@ -270,10 +279,12 @@ export async function GET(request) {
     const directory = searchParams.get('directory')
 
     try {
+        const { procTable, childCount } = await getProcTable()
+
         const [runningProcesses, dockerContainers, terminalsAndClaude, projectDirs] = await Promise.all([
-            getRunningProcesses(),
+            getRunningProcesses(procTable),
             getDockerContainers(),
-            getClaudeAndTerminalSessions(),
+            getClaudeAndTerminalSessions(procTable, childCount),
             getProjectDirectories()
         ])
         const { claudeSessions, openTerminals } = terminalsAndClaude
@@ -293,7 +304,9 @@ export async function GET(request) {
                     pid: parseInt(proc.pid),
                     command: proc.command,
                     ports: proc.ports,
-                    type: 'process'
+                    type: 'process',
+                    host: proc.host,
+                    hostLabel: proc.hostLabel
                 })
             }
         }

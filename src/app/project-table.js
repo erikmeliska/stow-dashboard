@@ -619,7 +619,9 @@ export function ProjectTable({ projects, ownRepos }) {
 
                 const tooltipParts = []
                 if (info.hasProcesses) {
-                    tooltipParts.push(`${info.processes.length} process${info.processes.length > 1 ? 'es' : ''}`)
+                    const hosts = info.processes.map(p => p.hostLabel).filter(Boolean)
+                    const hostSuffix = hosts.length > 0 ? ` (${[...new Set(hosts)].join(', ')})` : ''
+                    tooltipParts.push(`${info.processes.length} process${info.processes.length > 1 ? 'es' : ''}${hostSuffix}`)
                 }
                 if (info.hasClaude) {
                     const hosts = info.claude.map(c => c.hostLabel).filter(Boolean)
