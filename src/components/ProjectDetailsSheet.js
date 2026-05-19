@@ -314,7 +314,8 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                     ) : processes.length > 0 && (() => {
                         const claudeSessions = processes.filter(p => p.type === 'claude')
                         const dockerContainers = processes.filter(p => p.type === 'docker')
-                        const regularProcesses = processes.filter(p => p.type !== 'docker' && p.type !== 'claude')
+                        const openTerminals = processes.filter(p => p.type === 'terminal')
+                        const regularProcesses = processes.filter(p => p.type !== 'docker' && p.type !== 'claude' && p.type !== 'terminal')
 
                         const refreshProcesses = async () => {
                             setProcessesLoading(true)
@@ -373,6 +374,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                             {processes.length} running
                                             {regularProcesses.length > 0 && ` (${regularProcesses.length} process${regularProcesses.length > 1 ? 'es' : ''})`}
                                             {claudeSessions.length > 0 && ` (${claudeSessions.length} Claude session${claudeSessions.length > 1 ? 's' : ''})`}
+                                            {openTerminals.length > 0 && ` (${openTerminals.length} open terminal${openTerminals.length > 1 ? 's' : ''})`}
                                             {dockerContainers.length > 0 && ` (${dockerContainers.length} container${dockerContainers.length > 1 ? 's' : ''})`}
                                         </p>
                                     </div>
@@ -486,6 +488,49 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                                 {session.cwd}
                                                             </div>
                                                         )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Open Terminals (idle shells) */}
+                                    {openTerminals.length > 0 && (
+                                        <div className="mt-3">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                                                    <SquareTerminal className="h-3 w-3" />
+                                                    Open Terminals
+                                                </span>
+                                            </div>
+                                            <div className="space-y-2">
+                                                {openTerminals.map((term, index) => (
+                                                    <div key={index} className="text-xs bg-amber-500/10 border border-amber-500/20 rounded p-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="font-mono font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                                                <SquareTerminal className="h-3 w-3" />
+                                                                {term.command}
+                                                                {term.hostLabel && (
+                                                                    <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-[10px] font-sans font-normal">
+                                                                        {term.hostLabel}
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-muted-foreground mr-1">
+                                                                    {term.tty && <span className="mr-2">tty: {term.tty}</span>}
+                                                                    PID: {term.pid}
+                                                                </span>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="h-6 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                                                    onClick={() => killProcess(term.pid)}
+                                                                >
+                                                                    Kill
+                                                                </Button>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 ))}
                                             </div>

@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -626,6 +626,11 @@ export function ProjectTable({ projects, ownRepos }) {
                     const hostSuffix = hosts.length > 0 ? ` (${[...new Set(hosts)].join(', ')})` : ''
                     tooltipParts.push(`${info.claude.length} Claude session${info.claude.length > 1 ? 's' : ''}${hostSuffix}`)
                 }
+                if (info.hasTerminals) {
+                    const hosts = info.terminals.map(t => t.hostLabel).filter(Boolean)
+                    const hostSuffix = hosts.length > 0 ? ` (${[...new Set(hosts)].join(', ')})` : ''
+                    tooltipParts.push(`${info.terminals.length} open terminal${info.terminals.length > 1 ? 's' : ''}${hostSuffix}`)
+                }
                 if (info.hasDocker) {
                     tooltipParts.push(`${info.docker.length} container${info.docker.length > 1 ? 's' : ''}`)
                 }
@@ -648,6 +653,12 @@ export function ProjectTable({ projects, ownRepos }) {
                                         <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-600 dark:text-purple-400">
                                             <Sparkles className="h-3 w-3" />
                                             {info.claude.length}
+                                        </span>
+                                    )}
+                                    {info.hasTerminals && (
+                                        <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                                            <SquareTerminal className="h-3 w-3" />
+                                            {info.terminals.length}
                                         </span>
                                     )}
                                     {info.hasDocker && (

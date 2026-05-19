@@ -96,66 +96,117 @@ function classifyHost(comm) {
     return null
 }
 
-async function getClaudeSessions() {
-    const sessions = new Map() // pid -> { pid, command, ports, cwd, type, host, hostLabel }
-    const procTable = new Map() // pid -> { ppid, comm }
+const SHELL_RE = /^-?(zsh|bash|fish|sh)$/
+
+async function getProcTable() {
+    const procTable = new Map() // pid -> { ppid, comm, tty }
+    const childCount = new Map() // pid -> child count
 
     try {
-        const { stdout: psOut } = await execAsync('ps -axo pid=,ppid=,comm= 2>/dev/null || true')
+        const { stdout } = await execAsync('ps -axo pid=,ppid=,tt=,comm= 2>/dev/null || true')
 
-        for (const line of psOut.split('\n')) {
-            const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/)
+        for (const line of stdout.split('\n')) {
+            const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/)
             if (!match) continue
-            const pid = match[1]
-            const ppid = match[2]
-            const comm = match[3]
-            procTable.set(pid, { ppid, comm })
-            const basename = comm.split('/').pop()
-            if (basename === 'claude') {
-                sessions.set(pid, { pid, command: 'claude', ports: [], cwd: null, type: 'claude', host: null, hostLabel: null })
-            }
-        }
-
-        // Walk parent process tree to classify host (terminal/editor)
-        for (const session of sessions.values()) {
-            let cur = procTable.get(session.pid)?.ppid
-            for (let depth = 0; depth < 12 && cur && cur !== '0' && cur !== '1'; depth++) {
-                const parent = procTable.get(cur)
-                if (!parent) break
-                const matched = classifyHost(parent.comm)
-                if (matched) {
-                    session.host = matched.id
-                    session.hostLabel = matched.label
-                    break
-                }
-                cur = parent.ppid
-            }
-        }
-
-        if (sessions.size > 0) {
-            const pids = Array.from(sessions.keys()).join(',')
-            try {
-                const { stdout: cwdOut } = await execAsync(
-                    `lsof -a -p ${pids} -d cwd -F n 2>/dev/null || true`
-                )
-
-                let currentPid = null
-                for (const line of cwdOut.split('\n')) {
-                    if (line.startsWith('p')) {
-                        currentPid = line.slice(1)
-                    } else if (line.startsWith('n') && currentPid && sessions.has(currentPid)) {
-                        sessions.get(currentPid).cwd = line.slice(1)
-                    }
-                }
-            } catch {
-                // Ignore cwd errors
-            }
+            const [, pid, ppid, tty, comm] = match
+            procTable.set(pid, { ppid, comm, tty })
+            childCount.set(ppid, (childCount.get(ppid) || 0) + 1)
         }
     } catch {
         // ps failed
     }
 
-    return Array.from(sessions.values()).filter(s => s.cwd)
+    return { procTable, childCount }
+}
+
+function resolveHost(procTable, startPid) {
+    let cur = procTable.get(startPid)?.ppid
+    for (let depth = 0; depth < 12 && cur && cur !== '0' && cur !== '1'; depth++) {
+        const parent = procTable.get(cur)
+        if (!parent) break
+        const matched = classifyHost(parent.comm)
+        if (matched) return matched
+        cur = parent.ppid
+    }
+    return null
+}
+
+async function batchLsofCwd(pids) {
+    const cwds = new Map()
+    if (pids.length === 0) return cwds
+    try {
+        const { stdout } = await execAsync(
+            `lsof -a -p ${pids.join(',')} -d cwd -F n 2>/dev/null || true`
+        )
+        let currentPid = null
+        for (const line of stdout.split('\n')) {
+            if (line.startsWith('p')) {
+                currentPid = line.slice(1)
+            } else if (line.startsWith('n') && currentPid) {
+                cwds.set(currentPid, line.slice(1))
+            }
+        }
+    } catch {
+        // ignore
+    }
+    return cwds
+}
+
+async function getClaudeAndTerminalSessions() {
+    const { procTable, childCount } = await getProcTable()
+
+    const claudePids = []
+    const terminalPids = []
+
+    for (const [pid, info] of procTable.entries()) {
+        const basename = info.comm.split('/').pop()
+        if (basename === 'claude') {
+            claudePids.push(pid)
+        } else if (SHELL_RE.test(basename) && info.tty !== '??' && !childCount.has(pid)) {
+            // Leaf shell on a tty (no children) = idle open terminal
+            terminalPids.push(pid)
+        }
+    }
+
+    const cwds = await batchLsofCwd([...claudePids, ...terminalPids])
+
+    const claudeSessions = claudePids
+        .map(pid => {
+            const cwd = cwds.get(pid)
+            if (!cwd) return null
+            const host = resolveHost(procTable, pid)
+            return {
+                pid,
+                command: 'claude',
+                cwd,
+                ports: [],
+                type: 'claude',
+                host: host?.id || null,
+                hostLabel: host?.label || null
+            }
+        })
+        .filter(Boolean)
+
+    const openTerminals = terminalPids
+        .map(pid => {
+            const cwd = cwds.get(pid)
+            if (!cwd) return null
+            const proc = procTable.get(pid)
+            const host = resolveHost(procTable, pid)
+            return {
+                pid,
+                command: proc.comm.replace(/^-/, '').split('/').pop(),
+                cwd,
+                tty: proc.tty,
+                ports: [],
+                type: 'terminal',
+                host: host?.id || null,
+                hostLabel: host?.label || null
+            }
+        })
+        .filter(Boolean)
+
+    return { claudeSessions, openTerminals }
 }
 
 async function getDockerContainers() {
@@ -219,12 +270,13 @@ export async function GET(request) {
     const directory = searchParams.get('directory')
 
     try {
-        const [runningProcesses, dockerContainers, claudeSessions, projectDirs] = await Promise.all([
+        const [runningProcesses, dockerContainers, terminalsAndClaude, projectDirs] = await Promise.all([
             getRunningProcesses(),
             getDockerContainers(),
-            getClaudeSessions(),
+            getClaudeAndTerminalSessions(),
             getProjectDirectories()
         ])
+        const { claudeSessions, openTerminals } = terminalsAndClaude
 
         // Group processes by project directory
         const projectProcesses = {}
@@ -262,6 +314,27 @@ export async function GET(request) {
                     type: 'claude',
                     host: session.host,
                     hostLabel: session.hostLabel
+                })
+            }
+        }
+
+        // Add idle open terminals
+        for (const term of openTerminals) {
+            const matchedDir = matchProcessToProject(term.cwd, projectDirs)
+
+            if (matchedDir) {
+                if (!projectProcesses[matchedDir]) {
+                    projectProcesses[matchedDir] = []
+                }
+                projectProcesses[matchedDir].push({
+                    pid: parseInt(term.pid),
+                    command: term.command,
+                    cwd: term.cwd,
+                    tty: term.tty,
+                    ports: [],
+                    type: 'terminal',
+                    host: term.host,
+                    hostLabel: term.hostLabel
                 })
             }
         }
