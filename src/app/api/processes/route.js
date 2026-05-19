@@ -83,6 +83,7 @@ async function getRunningProcesses(procTable) {
 }
 
 const HOST_PATTERNS = [
+    { test: c => c.split('/').pop() === 'claude', id: 'claude-agent', label: 'Claude' },
     { test: c => c.includes('/cmux.app/') || /\bcmux$/.test(c), id: 'cmux', label: 'cmux' },
     { test: c => c.includes('/Zed.app/') || c.endsWith('/zed') || c === 'zed', id: 'zed', label: 'Zed' },
     { test: c => c.includes('/Cursor.app/') || /Cursor Helper/.test(c), id: 'cursor', label: 'Cursor' },
