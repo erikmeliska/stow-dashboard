@@ -524,12 +524,56 @@ async function commandSkills(subArgs) {
     process.exit(1)
 }
 
+async function commandTask(taskArgs) {
+    const sub = taskArgs[0]
+    if (sub !== 'add') {
+        console.error(c.red + 'Usage: stow task add <project> "<text>" [-p P1] [--source <ref>]' + c.reset)
+        process.exit(1)
+    }
+    const { addTask, taskPrefix } = await import('../src/lib/tasks.mjs')
+    const rest = taskArgs.slice(1)
+    let priority = 'P2'
+    let source = null
+    const positional = []
+    for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === '--priority' || rest[i] === '-p') priority = rest[++i]
+        else if (rest[i] === '--source') source = rest[++i]
+        else positional.push(rest[i])
+    }
+    const project = positional[0]
+    const text = positional.slice(1).join(' ')
+    if (!project || !text) {
+        console.error(c.red + 'Usage: stow task add <project> "<text>" [-p P1] [--source <ref>]' + c.reset)
+        process.exit(1)
+    }
+    const projects = await loadProjects()
+    const found = projects.find(p =>
+        p.project_name === project ||
+        p.directory === project ||
+        p.directory.endsWith('/' + project) ||
+        p.id === project
+    )
+    if (!found) {
+        console.error(c.red + `Project not found: ${project}` + c.reset)
+        process.exit(1)
+    }
+    const baseDir = process.env.BASE_DIR || '/Users/ericsko/Projekty'
+    const groupParts = found.directory.replace(baseDir, '').split('/').filter(Boolean).slice(0, -1)
+    const prefix = taskPrefix(groupParts, found.project_name)
+    const task = await addTask(found.directory, { text, priority, source, prefix })
+    console.log()
+    console.log(`${c.green}Added ${c.bold}${task.id}${c.reset} ${c.dim}(${task.priority})${c.reset} → ${found.project_name}`)
+    console.log(`  ${task.text}`)
+    console.log()
+}
+
 // Argument parsing
 function parseArgs() {
     const args = process.argv.slice(2)
     const opts = {
         command: null,
         subArgs: [],
+        taskArgs: [],
         running: false,
         dirty: false,
         behind: false,
@@ -548,6 +592,7 @@ function parseArgs() {
             case 'scan': opts.command = 'scan'; break
             case 'quickscan': opts.command = 'quickscan'; break
             case 'skills': opts.command = 'skills'; opts.subArgs = args.slice(i + 1); i = args.length; break
+            case 'task': opts.command = 'task'; opts.taskArgs = args.slice(i + 1); i = args.length; break
             case '--running': case '-r': opts.running = true; break
             case '--dirty': case '-d': opts.dirty = true; break
             case '--behind': opts.behind = true; break
@@ -619,6 +664,11 @@ async function main() {
 
     if (args.command === 'skills') {
         await commandSkills(args.subArgs)
+        return
+    }
+
+    if (args.command === 'task') {
+        await commandTask(args.taskArgs)
         return
     }
 

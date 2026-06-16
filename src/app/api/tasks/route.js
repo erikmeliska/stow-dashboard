@@ -20,6 +20,7 @@ export async function GET(request) {
 
   for (const p of projects) {
     const groupParts = computeGroupParts(p.directory)
+    if (groupParts.includes('_Sandbox')) continue
     let tasks = []
     try { tasks = await readTasks(p.directory) } catch { /* no TASKS.md */ }
 

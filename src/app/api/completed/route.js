@@ -23,6 +23,7 @@ export async function GET(request) {
     if (!existsSync(path.join(p.directory, 'TASKS.md'))) continue // skip projects w/o tasks
 
     const groupParts = computeGroupParts(p.directory)
+    if (groupParts.includes('_Sandbox')) continue
 
     if (client && !groupParts.some(g => String(g).toLowerCase() === client.toLowerCase())) continue
 
