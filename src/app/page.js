@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import path from 'path'
+import Link from 'next/link'
 import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
 import { ScanControls } from '@/components/ScanControls'
@@ -85,7 +86,12 @@ export default async function DashboardPage() {
         <div className="h-screen flex flex-col overflow-hidden">
             <div className="flex-none px-4 py-2 border-b">
                 <div className="flex items-start justify-between">
-                    <h1 className="text-xl font-bold pt-1">Project Dashboard</h1>
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-xl font-bold pt-1">Project Dashboard</h1>
+                        <Link href="/tasks" className="text-sm text-muted-foreground hover:text-foreground transition-colors pt-1">
+                            Tasks
+                        </Link>
+                    </div>
                     <div className="flex items-start gap-3">
                         <ScanControls lastSyncTime={lastSyncTime} />
                         <ThemeToggle />
