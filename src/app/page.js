@@ -3,6 +3,7 @@ import path from 'path'
 import Link from 'next/link'
 import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
+import { readTasks } from '@/lib/tasks.mjs'
 import { ScanControls } from '@/components/ScanControls'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
@@ -41,6 +42,17 @@ export default async function DashboardPage() {
         getLastSyncTime()
     ])
 
+    // Build a directory → open-task-count map once. Resilient: any failure → 0.
+    const openTaskCounts = new Map()
+    await Promise.all(projects.map(async project => {
+        try {
+            const tasks = await readTasks(project.directory)
+            openTaskCounts.set(project.directory, tasks.filter(t => !t.done).length)
+        } catch {
+            openTaskCounts.set(project.directory, 0)
+        }
+    }))
+
     const processedProjects = await Promise.all(projects.map(async project => {
         const relativePath = project.directory.replace(BASE_DIR, '')
         const parts = relativePath.split('/')
@@ -52,7 +64,8 @@ export default async function DashboardPage() {
             ...project,
             groupParts,
             projectDir,
-            hasReadme
+            hasReadme,
+            openTaskCount: openTaskCounts.get(project.directory) || 0
         }
     }))
     

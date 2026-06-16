@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import simpleGit from 'simple-git'
+import { readTasks } from '@/lib/tasks.mjs'
 
 export async function GET(request) {
     const { searchParams } = new URL(request.url)
@@ -26,8 +27,12 @@ export async function GET(request) {
 
         const lastCommit = log?.latest
 
+        let tasks = []
+        try { tasks = await readTasks(directory) } catch { tasks = [] }
+
         return NextResponse.json({
             isGitRepo: true,
+            tasks,
             uncommittedChanges: status.files.length,
             isClean: status.isClean(),
             staged: status.staged.length,

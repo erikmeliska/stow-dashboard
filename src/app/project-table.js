@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal, CheckSquare } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -340,9 +340,21 @@ export function ProjectTable({ projects, ownRepos }) {
             header: "Project",
             cell: ({ row }) => {
                 const name = row.getValue("project_name")
+                const openTaskCount = row.original.openTaskCount || 0
                 return (
-                    <div className="capitalize truncate max-w-[140px]" title={name}>
-                        {name}
+                    <div className="flex items-center gap-1.5 max-w-[140px]">
+                        <span className="capitalize truncate" title={name}>
+                            {name}
+                        </span>
+                        {openTaskCount > 0 && (
+                            <span
+                                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 dark:text-blue-400 flex-shrink-0"
+                                title={`${openTaskCount} open task${openTaskCount === 1 ? '' : 's'}`}
+                            >
+                                <CheckSquare className="h-3 w-3" />
+                                {openTaskCount}
+                            </span>
+                        )}
                     </div>
                 )
             },
