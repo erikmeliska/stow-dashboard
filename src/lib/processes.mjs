@@ -2,9 +2,10 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs/promises'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
 const execAsync = promisify(exec)
-const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+const DATA_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/projects_metadata.jsonl')
 
 /**
  * Coarse command -> host-label classifier.
@@ -16,6 +17,7 @@ export function classifyHost(command) {
     const c = (command || '').toLowerCase()
     if (/\bclaude\b/.test(c)) return 'claude'
     if (/\bnext dev\b|\bvite\b|\bnodemon\b|\bng serve\b|\bwebpack\b.*\bserve\b/.test(c)) return 'dev-server'
+    // tmux is also in HOST_PATTERNS (detectHostApp) for parent-tree detection; keep both in sync
     if (/(^|\/)-?(z?sh|bash|fish|tmux)\b/.test(c)) return 'terminal'
     return 'process'
 }
@@ -115,7 +117,7 @@ const HOST_PATTERNS = [
     { test: c => /\/JetBrains Toolbox\.app\//.test(c) || /\/(IntelliJ IDEA|PyCharm|WebStorm|PhpStorm|RubyMine|GoLand|CLion|Rider|DataGrip|RustRover|Android Studio)\.app\//.test(c), id: 'jetbrains', label: 'JetBrains' },
 ]
 
-function classifyHostPattern(comm) {
+function detectHostApp(comm) {
     for (const p of HOST_PATTERNS) {
         if (p.test(comm)) return { id: p.id, label: p.label }
     }
@@ -150,7 +152,7 @@ function resolveHost(procTable, startPid) {
     for (let depth = 0; depth < 12 && cur && cur !== '0' && cur !== '1'; depth++) {
         const parent = procTable.get(cur)
         if (!parent) break
-        const matched = classifyHostPattern(parent.comm)
+        const matched = detectHostApp(parent.comm)
         if (matched) return matched
         cur = parent.ppid
     }
