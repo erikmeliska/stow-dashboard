@@ -28,6 +28,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",
     "lint": "eslint .",
+    "test": "node --test",
     "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
     "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f",
     "mcp": "node src/mcp/server.mjs",
