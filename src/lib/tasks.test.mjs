@@ -4,6 +4,13 @@ import { mkdtemp, rm, readFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { parseTasks, serializeTasks, readTasks, writeTasks, allocateTaskId, addTask } from './tasks.mjs'
+import { taskPrefix } from './tasks.mjs'
+
+test('taskPrefix derives CLIENT-PROJECT code from group + name', () => {
+  assert.equal(taskPrefix(['_Bizz', 'Innovis'], 'clm-backend'), 'INN-CLM')
+  assert.equal(taskPrefix(['_Bizz', 'Intelimail'], 'new-admin'), 'INT-NEW')
+  assert.equal(taskPrefix([], 'standalone'), 'PRJ-STAN')
+})
 
 test('parseTasks reads id, text, source, priority, done', () => {
   const ts = parseTasks('# Tasks\n\n## P1\n- [ ] [INV-CLM-0042] Add SSO logout — from Meetings/x.md\n- [x] [INV-CLM-0041] done thing\n\n## P2\n- [ ] no id task\n')

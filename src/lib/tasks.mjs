@@ -59,6 +59,15 @@ export async function allocateTaskId(dir, prefix) {
   return `${prefix}-${String(n).padStart(4, '0')}`
 }
 
+export function taskPrefix(groupParts, projectName) {
+  const parts = (groupParts || []).filter(g => g && !g.startsWith('_'))
+  const client = parts.length ? parts[parts.length - 1] : 'PRJ'
+  const clientCode = (client.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase()) || 'PRJ'
+  const seg = (projectName || 'proj').split(/[-_ ]/)[0]
+  const projCode = (seg.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase()) || 'PROJ'
+  return `${clientCode}-${projCode}`
+}
+
 export async function addTask(dir, { text, priority = 'P2', source = null, prefix, id }) {
   const taskId = id ?? (prefix ? await allocateTaskId(dir, prefix) : null)
   const tasks = await readTasks(dir)

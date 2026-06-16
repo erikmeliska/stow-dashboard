@@ -17,6 +17,7 @@ import { simpleGit } from 'simple-git'
 import { getProjectProcesses } from '../lib/processes.mjs'
 import { readStatus, writeStatus } from '../lib/status.mjs'
 import { listScripts, runScript } from '../lib/scripts.mjs'
+import { readTasks, addTask, taskPrefix } from '../lib/tasks.mjs'
 
 const execAsync = promisify(exec)
 
@@ -384,7 +385,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ['name', 'script'],
                 },
-            }
+            },
+            {
+                name: 'list_tasks',
+                description: 'List open tasks across all projects (the cross-project backlog). Optionally filter by client (group name), priority (P1..P9), or status (open|done|all, default open).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        client: { type: 'string', description: 'Filter to a client/group, e.g. "Innovis"' },
+                        priority: { type: 'string', description: 'Filter to a priority, e.g. "P1"' },
+                        status: { type: 'string', enum: ['open', 'done', 'all'], description: 'Default open' },
+                    },
+                },
+            },
+            {
+                name: 'add_task',
+                description: 'Add a task to a project TASKS.md. Allocates a task ID (CLIENT-PROJECT-NNNN). Use when triaging an intake item or capturing work for a project.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Project ID, name, or partial path' },
+                        text: { type: 'string', description: 'The task description' },
+                        priority: { type: 'string', description: 'P1..P9 (default P2)' },
+                        source: { type: 'string', description: 'Where it came from, e.g. a meeting note path' },
+                    },
+                    required: ['name', 'text'],
+                },
+            },
         ]
     }
 })
@@ -777,6 +804,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
             const result = await runScript(project.directory, args.script)
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+        }
+        case 'list_tasks': {
+            const projects = await loadProjects()
+            const status = args.status || 'open'
+            const out = []
+            for (const p of projects) {
+                let tasks = []
+                try { tasks = await readTasks(p.directory) } catch { /* no TASKS.md */ }
+                for (const t of tasks) {
+                    if (status === 'open' && t.done) continue
+                    if (status === 'done' && !t.done) continue
+                    if (args.priority && t.priority !== args.priority) continue
+                    if (args.client && !(p.groupParts || []).some(g => String(g).toLowerCase() === String(args.client).toLowerCase())) continue
+                    out.push({ ...t, project: p.project_name, directory: p.directory, group: p.groupParts })
+                }
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+        }
+        case 'add_task': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const prefix = taskPrefix(project.groupParts, project.project_name)
+            const task = await addTask(project.directory, { text: args.text, priority: args.priority || 'P2', source: args.source || null, prefix })
+            return { content: [{ type: 'text', text: JSON.stringify(task, null, 2) }] }
         }
 
         default:
