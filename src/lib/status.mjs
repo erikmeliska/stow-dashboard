@@ -3,6 +3,15 @@ import path from 'path'
 
 const STATUS_FILE = 'STATUS.md'
 
+function extractSection(body, heading) {
+  const re = new RegExp(`^##\\s*${heading}\\s*$`, 'm')
+  const m = re.exec(body)
+  if (!m) return null
+  const rest = body.slice(m.index + m[0].length)
+  const nextIdx = rest.search(/\n##\s/)
+  return (nextIdx === -1 ? rest : rest.slice(0, nextIdx)).replace(/^\n+/, '').replace(/\s+$/, '')
+}
+
 export function parseStatus(content) {
   const result = { status: null, updated: null, next: null, links: [], notes: '' }
   if (!content) return result
@@ -19,19 +28,19 @@ export function parseStatus(content) {
   }
   const nextM = body.match(/^NEXT:\s*(.*)$/m)
   if (nextM) result.next = nextM[1].trim()
-  const linksM = body.match(/^##\s*Links\s*\n((?:.*\n)*?)(?=##\s|\s*$(?![\s\S]))/m)
-  if (linksM) {
-    for (const line of linksM[1].split('\n')) {
+  const linksSection = extractSection(body, 'Links')
+  if (linksSection) {
+    for (const line of linksSection.split('\n')) {
       const lm = line.match(/^-\s*(\S+)(?:\s+[—-]\s*(.*))?$/)
       if (lm) result.links.push({ url: lm[1], label: (lm[2] || '').trim() })
     }
   }
-  const notesM = body.match(/^##\s*Notes\s*\n([\s\S]*)$/m)
-  if (notesM) result.notes = notesM[1].replace(/\s+$/, '')
+  const notesSection = extractSection(body, 'Notes')
+  if (notesSection) result.notes = notesSection
   return result
 }
 
-export function serializeStatus({ status = 'active', updated, next = '', links = [], notes = '' }) {
+export function serializeStatus({ status = 'active', updated = '', next = '', links = [], notes = '' }) {
   const lines = ['---', `status: ${status}`, `updated: ${updated}`, '---', '', `NEXT: ${next}`, '', '## Links']
   for (const l of links) lines.push(`- ${l.url}${l.label ? ` — ${l.label}` : ''}`)
   if (notes) { lines.push('', '## Notes', notes) }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'fs/promises'
+import { mkdtemp, writeFile, rm } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { parseStatus, serializeStatus, readStatus, writeStatus } from './status.mjs'
@@ -61,8 +61,6 @@ test('parseStatus reads the Notes section and writeStatus preserves it', async (
   )
   assert.equal(s.notes, 'line one\nline two')
   // read-modify-write must NOT drop notes
-  const { mkdtemp, writeFile, rm } = await import('fs/promises')
-  const os = await import('os'); const path = await import('path')
   const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-notes-'))
   try {
     await writeFile(path.join(dir, 'STATUS.md'),
@@ -72,4 +70,15 @@ test('parseStatus reads the Notes section and writeStatus preserves it', async (
     assert.equal(back.notes, 'keep me')
     assert.equal(back.next, 'changed')
   } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('parseStatus handles a Links section with no trailing newline (hand-edited)', () => {
+  const s = parseStatus('---\nstatus: active\nupdated: 2026-06-16\n---\n\nNEXT: x\n\n## Links\n- https://a.test — dev\n- https://b.test — repo')
+  assert.equal(s.links.length, 2)
+  assert.equal(s.links[1].url, 'https://b.test')
+})
+
+test('parseStatus handles Notes as the last section with no trailing newline', () => {
+  const s = parseStatus('---\nstatus: active\nupdated: 2026-06-16\n---\n\nNEXT: x\n\n## Notes\nfinal line no newline')
+  assert.equal(s.notes, 'final line no newline')
 })
