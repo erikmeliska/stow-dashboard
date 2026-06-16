@@ -7,12 +7,9 @@ import { fileURLToPath } from 'url'
 const execAsync = promisify(exec)
 const DATA_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/projects_metadata.jsonl')
 
-/**
- * Coarse command -> host-label classifier.
- *
- * Buckets a raw command string into one of: 'claude' | 'dev-server' | 'terminal' | 'process'.
- * This is the single shared classifier consumed by both the dashboard API route and the MCP.
- */
+// Coarse, pure command-string classifier (claude | dev-server | terminal | process).
+// Standalone utility for display/labeling surfaces; NOT part of the parent-process-tree
+// host detection used in production (see detectHostApp / HOST_PATTERNS / resolveHost).
 export function classifyHost(command) {
     const c = (command || '').toLowerCase()
     if (/\bclaude\b/.test(c)) return 'claude'

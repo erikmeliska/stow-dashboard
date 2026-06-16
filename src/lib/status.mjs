@@ -26,7 +26,7 @@ export function parseStatus(content) {
       if (m[1] === 'updated') result.updated = m[2].trim()
     }
   }
-  const nextM = body.match(/^NEXT:\s*(.*)$/m)
+  const nextM = body.match(/^NEXT:[ \t]*(.*)$/m)
   if (nextM) result.next = nextM[1].trim()
   const linksSection = extractSection(body, 'Links')
   if (linksSection) {

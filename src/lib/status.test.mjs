@@ -82,3 +82,15 @@ test('parseStatus handles Notes as the last section with no trailing newline', (
   const s = parseStatus('---\nstatus: active\nupdated: 2026-06-16\n---\n\nNEXT: x\n\n## Notes\nfinal line no newline')
   assert.equal(s.notes, 'final line no newline')
 })
+
+test('empty NEXT round-trips as empty, not the next line (set_status with no next)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-emptynext-'))
+  try {
+    // simulate set_status that only sets status+links, leaving next empty
+    await writeStatus(dir, { status: 'paused', updated: '2026-06-16', next: '', links: [{ url: 'https://a.test', label: 'dev' }] })
+    const back = await readStatus(dir)
+    assert.equal(back.next, '')          // NOT '## Links'
+    assert.equal(back.status, 'paused')
+    assert.equal(back.links.length, 1)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
