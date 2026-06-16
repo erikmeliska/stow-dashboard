@@ -19,7 +19,6 @@ import {
     SquareTerminal,
     Globe,
     Sparkles,
-    CheckSquare,
 } from "lucide-react"
 
 import {
@@ -659,6 +658,41 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                         </>
                     )}
 
+                    {/* Tasks */}
+                    {gitDetails?.tasks && (
+                        <>
+                            <Section title={`Tasks (${gitDetails.tasks.filter(t => !t.done).length})`}>
+                                {gitDetails.tasks.filter(t => !t.done).length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No open tasks</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {gitDetails.tasks.filter(t => !t.done).map((t, i) => (
+                                            <div key={t.id || i} className="flex items-start gap-2 text-sm bg-muted/50 rounded-lg p-2">
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
+                                                    t.priority === 'P1'
+                                                        ? 'bg-red-500/20 text-red-600 dark:text-red-400'
+                                                        : t.priority === 'P3'
+                                                            ? 'bg-muted text-muted-foreground'
+                                                            : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                                                }`}>{t.priority || 'P2'}</span>
+                                                <div className="min-w-0">
+                                                    {t.id && (
+                                                        <span className="font-mono text-xs text-muted-foreground mr-1.5">{t.id}</span>
+                                                    )}
+                                                    <span>{t.text}</span>
+                                                    {t.source && (
+                                                        <span className="block text-xs text-muted-foreground">from {t.source}</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </Section>
+                            <Separator />
+                        </>
+                    )}
+
                     {/* Git Information */}
                     {gitInfo?.git_detected && (
                         <>
@@ -735,39 +769,6 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     <p className="text-xs text-muted-foreground mt-1">
                                                         by {gitDetails.lastCommitAuthor}
                                                     </p>
-                                                </div>
-                                            )}
-
-                                            {gitDetails.tasks && (
-                                                <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                                                    <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                                                        <CheckSquare className="h-3.5 w-3.5" />
-                                                        Tasks ({gitDetails.tasks.filter(t => !t.done).length})
-                                                    </p>
-                                                    {gitDetails.tasks.filter(t => !t.done).length === 0 ? (
-                                                        <p className="text-sm text-muted-foreground">No open tasks</p>
-                                                    ) : (
-                                                        gitDetails.tasks.filter(t => !t.done).map((t, i) => (
-                                                            <div key={t.id || i} className="flex items-start gap-2 text-sm">
-                                                                <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${
-                                                                    t.priority === 'P1'
-                                                                        ? 'bg-red-500/20 text-red-600 dark:text-red-400'
-                                                                        : t.priority === 'P3'
-                                                                            ? 'bg-muted text-muted-foreground'
-                                                                            : 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
-                                                                }`}>{t.priority || 'P2'}</span>
-                                                                <div className="min-w-0">
-                                                                    {t.id && (
-                                                                        <span className="font-mono text-xs text-muted-foreground mr-1.5">{t.id}</span>
-                                                                    )}
-                                                                    <span>{t.text}</span>
-                                                                    {t.source && (
-                                                                        <span className="block text-xs text-muted-foreground">from {t.source}</span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        ))
-                                                    )}
                                                 </div>
                                             )}
                                         </div>

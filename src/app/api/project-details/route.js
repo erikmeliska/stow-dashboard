@@ -11,12 +11,16 @@ export async function GET(request) {
     }
 
     try {
+        let tasks = []
+        try { tasks = await readTasks(directory) } catch { tasks = [] }
+
         const git = simpleGit(directory)
         const isRepo = await git.checkIsRepo()
 
         if (!isRepo) {
             return NextResponse.json({
-                isGitRepo: false
+                isGitRepo: false,
+                tasks
             })
         }
 
@@ -26,9 +30,6 @@ export async function GET(request) {
         ])
 
         const lastCommit = log?.latest
-
-        let tasks = []
-        try { tasks = await readTasks(directory) } catch { tasks = [] }
 
         return NextResponse.json({
             isGitRepo: true,
