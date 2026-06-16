@@ -122,6 +122,7 @@ export function ProjectTable({ projects, ownRepos }) {
         ahead: null,
         hasOwnCommits: null,
         hasReadme: null,
+        hasTasks: null,
     })
 
     // Cycle through: null -> true -> false -> null
@@ -146,6 +147,7 @@ export function ProjectTable({ projects, ownRepos }) {
             ahead: null,
             hasOwnCommits: null,
             hasReadme: null,
+            hasTasks: null,
         })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
@@ -281,6 +283,13 @@ export function ProjectTable({ projects, ownRepos }) {
             })
         }
 
+        if (filters.hasTasks !== null) {
+            result = result.filter(project => {
+                const hasTasks = (project.openTaskCount || 0) > 0
+                return filters.hasTasks ? hasTasks : !hasTasks
+            })
+        }
+
         return result
     }, [searchFilteredProjects, selectedGroups, filters, getPortsForProject, isProjectRunning])
 
@@ -340,21 +349,9 @@ export function ProjectTable({ projects, ownRepos }) {
             header: "Project",
             cell: ({ row }) => {
                 const name = row.getValue("project_name")
-                const openTaskCount = row.original.openTaskCount || 0
                 return (
-                    <div className="flex items-center gap-1.5 max-w-[140px]">
-                        <span className="capitalize truncate" title={name}>
-                            {name}
-                        </span>
-                        {openTaskCount > 0 && (
-                            <span
-                                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 dark:text-blue-400 flex-shrink-0"
-                                title={`${openTaskCount} open task${openTaskCount === 1 ? '' : 's'}`}
-                            >
-                                <CheckSquare className="h-3 w-3" />
-                                {openTaskCount}
-                            </span>
-                        )}
+                    <div className="capitalize truncate max-w-[140px]" title={name}>
+                        {name}
                     </div>
                 )
             },
@@ -618,6 +615,35 @@ export function ProjectTable({ projects, ownRepos }) {
                 if (cost >= 1000000) return <span className="text-sm whitespace-nowrap">${(cost / 1000000).toFixed(1)}M</span>
                 if (cost >= 1000) return <span className="text-sm whitespace-nowrap">${(cost / 1000).toFixed(0)}k</span>
                 return <span className="text-sm">${cost}</span>
+            },
+        },
+        {
+            accessorKey: "openTaskCount",
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Tasks
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const count = row.original.openTaskCount || 0
+                if (count === 0) return null
+                return (
+                    <span
+                        className="flex items-center gap-1 w-fit text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                        title={`${count} open task${count === 1 ? '' : 's'}`}
+                    >
+                        <CheckSquare className="h-3 w-3" />
+                        {count}
+                    </span>
+                )
             },
         },
         {
@@ -918,6 +944,7 @@ export function ProjectTable({ projects, ownRepos }) {
                         { key: 'hasRemote', label: 'Remote', shortLabel: 'Rem' },
                         { key: 'hasOwnCommits', label: 'My Commits', shortLabel: 'Mine' },
                         { key: 'hasReadme', label: 'README', shortLabel: 'Docs' },
+                        { key: 'hasTasks', label: 'Tasks', shortLabel: 'Task' },
                     ].map(({ key, label, shortLabel }) => {
                         const value = filters[key]
                         return (
