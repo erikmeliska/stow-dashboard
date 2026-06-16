@@ -9,7 +9,7 @@ const client = new Client({ name: 'smoke', version: '0.0.0' }, { capabilities: {
 await client.connect(transport)
 const { tools } = await client.listTools()
 const names = tools.map(t => t.name)
-const required = ['get_status', 'set_status', 'list_scripts', 'run_script', 'list_tasks', 'add_task']
+const required = ['get_status', 'set_status', 'list_scripts', 'run_script', 'list_tasks', 'add_task', 'verify_task', 'completed_tasks', 'dispatch_task', 'generate_changelog']
 const missing = required.filter(n => !names.includes(n))
 await client.close()
 if (missing.length) { console.error('MISSING TOOLS:', missing); process.exit(1) }

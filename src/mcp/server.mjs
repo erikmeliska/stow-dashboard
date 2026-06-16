@@ -18,6 +18,9 @@ import { getProjectProcesses } from '../lib/processes.mjs'
 import { readStatus, writeStatus } from '../lib/status.mjs'
 import { listScripts, runScript } from '../lib/scripts.mjs'
 import { readTasks, addTask, taskPrefix } from '../lib/tasks.mjs'
+import { verifyTask, auditTasks, generateChangelog } from '../lib/history.mjs'
+import { writeBrief, openInClaudeDesktop } from '../lib/dispatch.mjs'
+import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
 
@@ -410,6 +413,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         source: { type: 'string', description: 'Where it came from, e.g. a meeting note path' },
                     },
                     required: ['name', 'text'],
+                },
+            },
+            {
+                name: 'verify_task',
+                description: 'Check whether a task is backed by a git commit referencing its ID (evidence-gated "done"). Returns hasEvidence + the commits.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Project ID, name, or partial path' },
+                        taskId: { type: 'string', description: 'Task ID, e.g. INV-CLM-0042' },
+                    },
+                    required: ['name', 'taskId'],
+                },
+            },
+            {
+                name: 'completed_tasks',
+                description: 'List DONE tasks across all projects with their evidence status. Tasks marked done but with NO referencing commit are flagged hasEvidence:false (suspicious). Optional client filter.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { client: { type: 'string', description: 'Filter to a client/group' } },
+                },
+            },
+            {
+                name: 'dispatch_task',
+                description: 'Dispatch work to a project: write BRIEF.md and point STATUS.md NEXT at it, then open the repo in Claude Desktop. A fresh session reads BRIEF.md to start.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Project ID, name, or partial path' },
+                        text: { type: 'string', description: 'The work brief' },
+                        taskId: { type: 'string', description: 'Optional task ID this brief implements' },
+                        open: { type: 'boolean', description: 'Open in Claude Desktop (default true)' },
+                    },
+                    required: ['name', 'text'],
+                },
+            },
+            {
+                name: 'generate_changelog',
+                description: 'Generate/refresh a project CHANGELOG.md from its task-id commits (human/client-readable history).',
+                inputSchema: {
+                    type: 'object',
+                    properties: { name: { type: 'string', description: 'Project ID, name, or partial path' } },
+                    required: ['name'],
                 },
             },
         ]
@@ -828,6 +874,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const prefix = taskPrefix(project.groupParts, project.project_name)
             const task = await addTask(project.directory, { text: args.text, priority: args.priority || 'P2', source: args.source || null, prefix })
             return { content: [{ type: 'text', text: JSON.stringify(task, null, 2) }] }
+        }
+        case 'verify_task': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const result = await verifyTask(project.directory, args.taskId)
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+        }
+        case 'completed_tasks': {
+            const projects = await loadProjects()
+            const out = []
+            for (const p of projects) {
+                if (!existsSync(path.join(p.directory, 'TASKS.md'))) continue   // skip the ~1000 projects without tasks (avoids a git call each)
+                if (args.client && !(p.groupParts || []).some(g => String(g).toLowerCase() === String(args.client).toLowerCase())) continue
+                let audit = []
+                try { audit = await auditTasks(p.directory) } catch { /* not git / no tasks */ }
+                for (const t of audit) out.push({ ...t, project: p.project_name, directory: p.directory })
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+        }
+        case 'dispatch_task': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const briefPath = await writeBrief(project.directory, { taskId: args.taskId || null, text: args.text })
+            const opened = args.open === false ? false : await openInClaudeDesktop(project.directory)
+            return { content: [{ type: 'text', text: JSON.stringify({ briefPath, opened }, null, 2) }] }
+        }
+        case 'generate_changelog': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const cl = await generateChangelog(project.directory)
+            await fs.writeFile(path.join(project.directory, 'CHANGELOG.md'), cl, 'utf-8')
+            return { content: [{ type: 'text', text: JSON.stringify({ written: 'CHANGELOG.md', preview: cl.slice(0, 500) }, null, 2) }] }
         }
 
         default:
