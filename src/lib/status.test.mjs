@@ -53,3 +53,23 @@ test('writeStatus merges over existing fields, preserving links', async () => {
     assert.equal(back.links.length, 1)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('parseStatus reads the Notes section and writeStatus preserves it', async () => {
+  const s = parseStatus(
+    '---\nstatus: active\nupdated: 2026-06-16\n---\n\nNEXT: x\n\n' +
+    '## Links\n- https://a.test — dev\n\n## Notes\nline one\nline two\n'
+  )
+  assert.equal(s.notes, 'line one\nline two')
+  // read-modify-write must NOT drop notes
+  const { mkdtemp, writeFile, rm } = await import('fs/promises')
+  const os = await import('os'); const path = await import('path')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-notes-'))
+  try {
+    await writeFile(path.join(dir, 'STATUS.md'),
+      '---\nstatus: active\nupdated: 2026-06-16\n---\n\nNEXT: x\n\n## Links\n- https://a.test — dev\n\n## Notes\nkeep me\n')
+    await writeStatus(dir, { next: 'changed', updated: '2026-06-16' })
+    const back = await readStatus(dir)
+    assert.equal(back.notes, 'keep me')
+    assert.equal(back.next, 'changed')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

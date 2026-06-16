@@ -26,6 +26,8 @@ export function parseStatus(content) {
       if (lm) result.links.push({ url: lm[1], label: (lm[2] || '').trim() })
     }
   }
+  const notesM = body.match(/^##\s*Notes\s*\n([\s\S]*)$/m)
+  if (notesM) result.notes = notesM[1].replace(/\s+$/, '')
   return result
 }
 
