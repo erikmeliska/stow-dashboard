@@ -205,3 +205,10 @@ When a directory with sub-projects has only weak indicators (just `.git`), it's 
 ## Hydration Notes
 
 TimeAgo components use `useEffect` to prevent SSR/client hydration mismatches - the server renders a placeholder and client updates with actual relative time.
+
+## Command Center
+
+This project participates in the Command Center. Maintain `STATUS.md` via the `status-keeper`
+skill: read `NEXT:` at the start of a session to resume, and update it (one next step) when
+pausing or ending. `skills.manifest.json` declares the shared skills wired into `.claude/skills/`
+(mode: symlink). The plan set lives in `docs/superpowers/plans/`.

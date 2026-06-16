@@ -43,3 +43,6 @@ data/projects_metadata.jsonl
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Command Center: skill symlinks are regenerable from skills.manifest.json (solo mode)
+.claude/skills/
