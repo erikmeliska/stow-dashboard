@@ -3,7 +3,7 @@ status: active
 updated: 2026-06-16
 ---
 
-NEXT: Remaining Command Center work — Phase 05 (dispatch + evidence-gated done + CHANGELOG + ntfy hooks), Phase 06 (browser tab triage + Obsidian mirror + mobile), and the still-DEFERRED Phase-02 Task E (Innovis vendored rollout, touches client repos). Also: set the Raycast `intakeFile` preference + `npm run dev` the extension, and reconnect the stow MCP to expose the new task tools.
+NEXT: Remaining Command Center work — Phase 06 (browser tab triage + Obsidian Command Center mirror + mobile), the DEFERRED Phase-02 Task E (Innovis vendored rollout, touches client repos), and quick follow-ups (INTAKE→TASKS triage bridge: Raycast `Triage Intake` + `stow task add`; exclude `_Sandbox` from the tasks board). User actions: reconnect stow MCP; `npm run dev` Raycast + set `intakeFile` pref.
 
 ## Links
 - http://localhost:3089 — dev server
