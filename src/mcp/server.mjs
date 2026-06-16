@@ -15,6 +15,8 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { simpleGit } from 'simple-git'
 import { getProjectProcesses } from '../lib/processes.mjs'
+import { readStatus, writeStatus } from '../lib/status.mjs'
+import { listScripts, runScript } from '../lib/scripts.mjs'
 
 const execAsync = promisify(exec)
 
@@ -338,6 +340,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ['type', 'id']
                 }
+            },
+            {
+                name: 'get_status',
+                description: 'Read a project STATUS.md: current NEXT step, status (active/paused/blocked/done), updated date, and working links.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { name: { type: 'string', description: 'Project ID, name, or partial path' } },
+                    required: ['name'],
+                },
+            },
+            {
+                name: 'set_status',
+                description: 'Update a project STATUS.md. Provide any of: next, status, links. Stamps today as updated. Use this to record the single next step when ending work.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Project ID, name, or partial path' },
+                        next: { type: 'string', description: 'The single next action' },
+                        status: { type: 'string', enum: ['active', 'paused', 'blocked', 'done'] },
+                        links: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, label: { type: 'string' } }, required: ['url'] } },
+                    },
+                    required: ['name'],
+                },
+            },
+            {
+                name: 'list_scripts',
+                description: 'List runnable scripts for a project (package.json scripts + root .sh files).',
+                inputSchema: {
+                    type: 'object',
+                    properties: { name: { type: 'string', description: 'Project ID, name, or partial path' } },
+                    required: ['name'],
+                },
+            },
+            {
+                name: 'run_script',
+                description: 'Start a project script (e.g. dev server) detached in the background. Returns pid and log file. Stop it later with stop_process.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        name: { type: 'string', description: 'Project ID, name, or partial path' },
+                        script: { type: 'string', description: 'Script name from list_scripts (e.g. "dev" or "deploy.sh")' },
+                    },
+                    required: ['name', 'script'],
+                },
             }
         ]
     }
@@ -701,6 +747,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [{ type: 'text', text: `Failed to stop: ${error.message}` }]
                 }
             }
+        }
+
+        case 'get_status': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const status = await readStatus(project.directory)
+            return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] }
+        }
+        case 'set_status': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const fields = {}
+            if (args.next !== undefined) fields.next = args.next
+            if (args.status !== undefined) fields.status = args.status
+            if (args.links !== undefined) fields.links = args.links
+            const merged = await writeStatus(project.directory, fields)
+            return { content: [{ type: 'text', text: JSON.stringify(merged, null, 2) }] }
+        }
+        case 'list_scripts': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const scripts = await listScripts(project.directory)
+            return { content: [{ type: 'text', text: JSON.stringify(scripts, null, 2) }] }
+        }
+        case 'run_script': {
+            const project = await getProjectByIdOrName(args.name)
+            if (!project) return { content: [{ type: 'text', text: `Project not found: ${args.name}` }] }
+            const result = await runScript(project.directory, args.script)
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
         }
 
         default:
