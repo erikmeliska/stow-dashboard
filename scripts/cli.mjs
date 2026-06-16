@@ -467,11 +467,69 @@ async function commandQuickScan() {
     console.log()
 }
 
+// Skills commands
+async function commandSkills(subArgs) {
+    const { syncSkills, ejectSkill } = await import('./skills.mjs')
+    const sub = subArgs[0]
+
+    if (sub === 'sync') {
+        const dir = subArgs[1] || process.cwd()
+        let summary
+        try {
+            summary = await syncSkills(dir)
+        } catch (e) {
+            console.error(c.red + 'Error: ' + e.message + c.reset)
+            process.exit(1)
+        }
+        console.log()
+        console.log(`${c.bold}Skills synced${c.reset} ${c.dim}(${summary.mode})${c.reset}`)
+        if (summary.linked.length > 0) {
+            console.log(`  ${c.cyan}linked:${c.reset}  ${summary.linked.join(', ')}`)
+        }
+        if (summary.copied.length > 0) {
+            console.log(`  ${c.cyan}copied:${c.reset}  ${summary.copied.join(', ')}`)
+        }
+        if (summary.custom.length > 0) {
+            console.log(`  ${c.dim}custom (untouched): ${summary.custom.join(', ')}${c.reset}`)
+        }
+        if (summary.linked.length === 0 && summary.copied.length === 0) {
+            console.log(`  ${c.dim}nothing to sync${c.reset}`)
+        }
+        console.log()
+        return
+    }
+
+    if (sub === 'eject') {
+        const name = subArgs[1]
+        const dir = subArgs[2] || process.cwd()
+        if (!name) {
+            console.error(c.red + 'Usage: stow skills eject <name> [dir]' + c.reset)
+            process.exit(1)
+        }
+        let result
+        try {
+            result = await ejectSkill(dir, name)
+        } catch (e) {
+            console.error(c.red + 'Error: ' + e.message + c.reset)
+            process.exit(1)
+        }
+        console.log()
+        console.log(`${c.green}Ejected:${c.reset} ${c.bold}${result.ejected}${c.reset} ${c.dim}(converted to custom, manifest updated)${c.reset}`)
+        console.log()
+        return
+    }
+
+    console.error(c.red + `Unknown skills subcommand: ${sub || '(none)'}` + c.reset)
+    console.error(c.dim + 'Usage: stow skills sync [dir] | stow skills eject <name> [dir]' + c.reset)
+    process.exit(1)
+}
+
 // Argument parsing
 function parseArgs() {
     const args = process.argv.slice(2)
     const opts = {
         command: null,
+        subArgs: [],
         running: false,
         dirty: false,
         behind: false,
@@ -489,6 +547,7 @@ function parseArgs() {
         switch (args[i]) {
             case 'scan': opts.command = 'scan'; break
             case 'quickscan': opts.command = 'quickscan'; break
+            case 'skills': opts.command = 'skills'; opts.subArgs = args.slice(i + 1); i = args.length; break
             case '--running': case '-r': opts.running = true; break
             case '--dirty': case '-d': opts.dirty = true; break
             case '--behind': opts.behind = true; break
@@ -517,6 +576,8 @@ ${c.bold}Usage:${c.reset}
 ${c.bold}Commands:${c.reset}
   ${c.cyan}scan${c.reset}             Full scan of all project directories
   ${c.cyan}quickscan${c.reset}        Refresh git info for running projects only
+  ${c.cyan}skills sync${c.reset} [dir]          Materialize .claude/skills/ from skills.manifest.json
+  ${c.cyan}skills eject${c.reset} <name> [dir]  Convert a shared skill to a local custom copy
 
 ${c.bold}Filters:${c.reset}
   ${c.cyan}--running, -r${c.reset}    Show only projects with running processes
@@ -553,6 +614,11 @@ async function main() {
 
     if (args.command === 'quickscan') {
         await commandQuickScan()
+        return
+    }
+
+    if (args.command === 'skills') {
+        await commandSkills(args.subArgs)
         return
     }
 
