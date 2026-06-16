@@ -462,6 +462,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 directory: project.directory,
                 description: project.description,
                 stack: project.stack,
+                scc: project.scc ?? null,
                 groups: project.groupParts,
                 size: {
                     code: formatBytes(project.content_size_bytes),
