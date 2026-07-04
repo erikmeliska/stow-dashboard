@@ -2,19 +2,56 @@
  * Starts the Next.js standalone server in-process (Deno Node compat) on PORT.
  *
  * The app resolves data/projects_metadata.jsonl and .env.local via
- * process.cwd() (see src/lib/projects.js), and the scan API writes back to
- * cwd. A compiled binary's embedded VFS may be read-only, so on startup we
- * sync writable state to ~/Library/Application Support/StowDashboardDeno.
+ * process.cwd() (see src/lib/projects.js and several src/app/api/* routes),
+ * and the scan API writes back to cwd. A compiled binary's embedded VFS may
+ * be read-only, so on startup we sync writable state to
+ * ~/Library/Application Support/StowDashboardDeno.
  *
- * cwd split does NOT work: Next.js standalone's server.js calls
- * process.chdir(__dirname) itself on startup (baked into the generated
- * output), which overrides any chdir we do beforehand — verified empirically
- * (POST /api/scan wrote to src-deno/standalone/data/... instead of the
- * app-data dir even though we chdir'd there first). So instead we leave cwd
- * alone (Next.js will force it to STANDALONE_DIR regardless) and symlink
- * STANDALONE_DIR/data -> the writable app-data dir's data/, after removing
- * the bundled copy. See docs/deno-vs-tauri.md "Node API compatibility notes"
- * for the record of which variant works.
+ * Two things Next.js standalone's server.js does that we must work around:
+ *
+ * 1. It calls process.chdir(__dirname) itself on startup (baked into the
+ *    generated output). A chdir we do *before* importing server.js gets
+ *    silently reset — verified empirically.
+ * 2. Its top-level `startServer(...)` call is fire-and-forget (not awaited,
+ *    just `.catch()`), so `await import("./server.js")` resolves as soon as
+ *    server.js's synchronous top-level code finishes — before Next has
+ *    bound the port or serviced a single request.
+ *
+ * That ordering means we CAN safely `Deno.chdir()` to the writable app-data
+ * dir *after* the import resolves and *before* any request arrives, and it
+ * sticks: Next's route modules (src/app/api/*) are code-split and lazily
+ * required per-route on first request, not eagerly at boot, so their
+ * module-level `path.join(process.cwd(), ...)` constants (e.g.
+ * src/app/api/scan/route.js's SYNC_FILE) still observe our chdir'd cwd the
+ * first time each route is hit.
+ *
+ * We previously tried leaving cwd alone and symlinking
+ * STANDALONE_DIR/data -> the writable app-data dir instead. That works
+ * under `deno run`, but fails under the *compiled* `deno desktop` app:
+ * STANDALONE_DIR resolves inside deno's self-extracted VFS temp dir
+ * (.../deno-compile-<binary>/src-deno/standalone/), and Deno.symlink()
+ * throws `NotSupported` there — that overlay filesystem doesn't support
+ * creating symlinks. Post-start `Deno.chdir()` avoids touching
+ * STANDALONE_DIR/data entirely, so it works in both `deno run` and the
+ * compiled app. See docs/deno-vs-tauri.md "Node API compatibility notes"
+ * (Task 4 findings) for the full record.
+ *
+ * Port handling: under compiled `deno desktop`, the runtime unconditionally
+ * intercepts server listen() calls (including Node-compat's http.Server,
+ * which Next's standalone server.js uses) and redirects them to its own
+ * auto-assigned address, exposed via the DENO_SERVE_ADDRESS env var
+ * (format "tcp:127.0.0.1:<port>") — set before user code runs. This was
+ * verified empirically: requesting PORT=3087 still results in Next binding
+ * to whatever port DENO_SERVE_ADDRESS names, not 3087. `deno desktop`'s own
+ * docs confirm this is intentional for Deno.serve() ("the webview needs to
+ * navigate to the same port the runtime is listening on, and the runtime is
+ * the source of truth for that value") and our testing shows it applies
+ * transitively to Node-compat's http server too. So PORT/BASE_URL here are
+ * only the *requested* values (used verbatim under plain `deno run`, where
+ * DENO_SERVE_ADDRESS is unset); getActualBaseUrl() below resolves the real
+ * address after the server starts, and main.ts must use that, not the
+ * PORT/BASE_URL constants, when navigating the window or calling back into
+ * the API.
  */
 
 import { copy, exists } from "jsr:@std/fs@1";
@@ -22,6 +59,22 @@ import { join } from "jsr:@std/path@1";
 
 export const PORT = 3087;
 export const BASE_URL = `http://localhost:${PORT}`;
+
+/**
+ * Resolves the actual base URL the server ended up listening on. Under
+ * `deno desktop`, this reads the runtime-assigned DENO_SERVE_ADDRESS
+ * (which always wins over our requested PORT); otherwise falls back to the
+ * fixed BASE_URL requested above (accurate under plain `deno run`).
+ */
+export function getActualBaseUrl(): string {
+  const addr = Deno.env.get("DENO_SERVE_ADDRESS");
+  if (!addr) return BASE_URL;
+  // Format: "tcp:127.0.0.1:56506"
+  const match = addr.match(/^tcp:(.+):(\d+)$/);
+  if (!match) return BASE_URL;
+  const [, host, port] = match;
+  return `http://${host}:${port}`;
+}
 
 const STANDALONE_DIR = new URL("./standalone/", import.meta.url).pathname;
 
@@ -49,10 +102,10 @@ function loadEnvFile(path: string): Record<string, string> {
 }
 
 /**
- * First run: seed writable state (data/, .env.local) into the app-data dir,
- * then symlink STANDALONE_DIR/data -> app-data dir's data/ so Next.js
- * (which forces cwd === STANDALONE_DIR via its own process.chdir(__dirname))
- * still reads/writes the writable copy instead of the bundle.
+ * First run: seed writable state (data/, .env.local) into the app-data dir.
+ * Next.js itself is redirected to this dir via a post-start Deno.chdir() in
+ * startServer() below — see the module doc comment for why that works and
+ * the symlink approach it replaces doesn't (compiled-app VFS limitation).
  */
 async function prepareWritableAppData(): Promise<string> {
   const dir = appDataDir();
@@ -73,17 +126,6 @@ async function prepareWritableAppData(): Promise<string> {
     }
   }
 
-  // Replace the bundled data/ with a symlink to the writable app-data copy,
-  // unless it's already correctly linked (e.g. a prior run set this up).
-  const standaloneData = join(STANDALONE_DIR, "data");
-  const standaloneDataInfo = await Deno.lstat(standaloneData).catch(() => null);
-  if (!standaloneDataInfo?.isSymlink) {
-    if (standaloneDataInfo) {
-      await Deno.remove(standaloneData, { recursive: true });
-    }
-    await Deno.symlink(appDataData, standaloneData, { type: "dir" });
-  }
-
   return dir;
 }
 
@@ -97,11 +139,32 @@ export async function startServer(): Promise<void> {
 
   console.error(`[Stow/Deno] app-data dir=${appData}`);
   console.error(`[Stow/Deno] starting standalone server from ${STANDALONE_DIR}`);
-  console.error(`[Stow/Deno] (Next.js forces cwd=${STANDALONE_DIR} via its own process.chdir(__dirname); data/ is symlinked to app-data dir)`);
+
+  // Next.js standalone's generated server.js calls process.chdir(__dirname)
+  // itself during its synchronous top level (baked into the build output,
+  // not something we control). Left alone, that resets cwd back to
+  // STANDALONE_DIR before any app code runs, and — because
+  // experimental.preloadEntriesOnStart is on — Next also *preloads* route
+  // modules (e.g. src/app/api/scan/route.js, whose SYNC_FILE constant is
+  // `path.join(process.cwd(), ...)` evaluated at module-eval time) during
+  // that same startup window, before our own code regains control. So a
+  // chdir *after* the import resolves is too late for those modules.
+  //
+  // Fix: chdir to the writable app-data dir first, then neutralize
+  // process.chdir to a no-op for the remainder of the process so Next's own
+  // chdir(__dirname) call becomes inert. Next's asset resolution (serving
+  // .next/static, etc.) uses the `dir` it was constructed with, not
+  // process.cwd(), so this doesn't break static asset serving.
+  Deno.chdir(appData);
+  process.chdir = () => {
+    /* no-op: keep cwd pinned to the writable app-data dir (see above) */
+  };
 
   // Next.js standalone entrypoint; runs under Deno's Node compat layer.
-  // It calls process.chdir(__dirname) itself, so we don't chdir beforehand.
   await import(join(STANDALONE_DIR, "server.js"));
+
+  console.error(`[Stow/Deno] cwd pinned to app-data dir; data/.env.local reads+writes go to ${appData}`);
+  console.error(`[Stow/Deno] requested BASE_URL=${BASE_URL}; actual (post-listen) URL=${getActualBaseUrl()}`);
 }
 
 export async function waitForServer(url: string, timeoutMs: number): Promise<boolean> {
@@ -120,6 +183,7 @@ export async function waitForServer(url: string, timeoutMs: number): Promise<boo
 
 if (import.meta.main) {
   await startServer();
-  const ok = await waitForServer(BASE_URL, 15000);
-  console.error(ok ? `[Stow/Deno] server ready at ${BASE_URL}` : "[Stow/Deno] server did not start");
+  const url = getActualBaseUrl();
+  const ok = await waitForServer(url, 15000);
+  console.error(ok ? `[Stow/Deno] server ready at ${url}` : "[Stow/Deno] server did not start");
 }
