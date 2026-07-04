@@ -53,10 +53,17 @@ If any signature differs from the code in Tasks 3–4, edit this plan file now t
 
 ```bash
 npm run build
-deno desktop .
+deno desktop -A .
 ```
 
 Expected: a native window opens showing the dashboard (auto-detected Next.js, own port via `DENO_SERVE_ADDRESS`). If the command errors, capture the full error verbatim.
+
+**Verified in this task's spike:** `-A` is required. Without it, Next.js crashes immediately on
+startup (`NotCapable: Requires env access to "__NEXT_PRIVATE_CPU_PROFILE"`) before binding a port —
+see `docs/deno-vs-tauri.md` for the verbatim error and rationale. Also note: `deno desktop .` (no
+`-o`/`--output`) compiles and codesigns `./<package-name>.app` in the project root and then exits
+without auto-launching it in this environment; launch the produced `.app` (or run its
+`Contents/MacOS/<binary>` directly) to see the window.
 
 - [ ] **Step 4: Exercise the compatibility checklist in the spike window**
 
@@ -228,9 +235,17 @@ In `package.json` scripts, after the `"tauri:build"` line, add:
 
 ```json
     "deno:prepare": "npm run build && node scripts/prepare-deno.mjs",
-    "deno:run": "deno desktop src-deno/main.ts",
-    "deno:build": "npm run deno:prepare && deno desktop --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts",
+    "deno:run": "deno desktop -A src-deno/main.ts",
+    "deno:build": "npm run deno:prepare && deno desktop -A --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts",
 ```
+
+**Verified in Task 1's spike:** `deno desktop` (and the compiled app) run under Deno's permission
+system. Without `-A` (allow-all), Next.js crashes on startup — the first internal module that reads
+`process.env` throws `NotCapable: Requires env access to "__NEXT_PRIVATE_CPU_PROFILE"` before the
+server can bind a port. This app needs unrestricted env/read/write/net/run/sys access anyway (scans
+the filesystem, spawns `scc`/`git`/`lsof`/`docker`/`osascript`, writes JSONL) — the same access it
+already has for free under Tauri + system Node, which has no permission sandbox. See
+`docs/deno-vs-tauri.md` § "Node API compatibility notes" for the verbatim error.
 
 In `.gitignore`, after the `/build` line, add:
 
@@ -540,7 +555,7 @@ Expected: `dist/Stow Dashboard Deno.app` exists. If `--include` doesn't make `sr
 - [ ] **Step 2: Also produce a DMG (for size comparison with Tauri's DMG)**
 
 ```bash
-deno desktop --include src-deno/standalone --include src-deno/icons -o "dist/Stow Dashboard Deno.dmg" src-deno/main.ts
+deno desktop -A --include src-deno/standalone --include src-deno/icons -o "dist/Stow Dashboard Deno.dmg" src-deno/main.ts
 ls -la dist/
 ```
 
