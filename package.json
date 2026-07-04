@@ -28,7 +28,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",
     "deno:prepare": "npm run build && node scripts/prepare-deno.mjs",
-    "deno:run": "deno desktop -A --unstable-detect-cjs src-deno/main.ts",
+    "deno:run": "deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts && open \"dist/Stow Dashboard Deno.app\"",
     "deno:build": "npm run deno:prepare && deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts",
     "lint": "eslint .",
     "test": "node --test",

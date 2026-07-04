@@ -24,14 +24,14 @@ npm run tauri:dev    # Run desktop app in dev mode
 
 # Desktop App (Deno, experimental comparison shell — requires Deno >= 2.9)
 npm run deno:prepare  # Build Next.js + assemble src-deno/standalone
-npm run deno:run      # Run desktop shell from source
+npm run deno:run      # Compile + launch dist/Stow Dashboard Deno.app
 npm run deno:build    # Build dist/Stow Dashboard Deno.app
 
 # Other
 npm run lint         # Run ESLint
 ```
 
-**Ports:** Dev uses `3089`, Production/Tauri uses `3088`, Deno shell uses `3087` for source runs (`deno run`/`deno:run`) — the compiled app instead binds a runtime-assigned port exposed via `DENO_SERVE_ADDRESS` (see docs/deno-vs-tauri.md).
+**Ports:** Dev uses `3089`, Production/Tauri uses `3088`. Deno shell requests `3087`, but both `deno:run` and `deno:build` produce a compiled `deno desktop` app, which binds a runtime-assigned port exposed via `DENO_SERVE_ADDRESS` instead (see docs/deno-vs-tauri.md).
 
 Next.js 16 uses Turbopack by default and separates dev/build outputs (`.next/dev` vs `.next/build`), so `npm run build` won't interfere with a running dev server.
 

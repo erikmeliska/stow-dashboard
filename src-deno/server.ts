@@ -10,20 +10,22 @@
  * Two things Next.js standalone's server.js does that we must work around:
  *
  * 1. It calls process.chdir(__dirname) itself on startup (baked into the
- *    generated output). A chdir we do *before* importing server.js gets
- *    silently reset — verified empirically.
- * 2. Its top-level `startServer(...)` call is fire-and-forget (not awaited,
- *    just `.catch()`), so `await import("./server.js")` resolves as soon as
- *    server.js's synchronous top-level code finishes — before Next has
- *    bound the port or serviced a single request.
+ *    generated output), which would reset cwd back to STANDALONE_DIR.
+ * 2. It also *preloads* route modules (experimental.preloadEntriesOnStart)
+ *    during that same synchronous startup window, so their module-level
+ *    `path.join(process.cwd(), ...)` constants (e.g. src/app/api/scan/
+ *    route.js's SYNC_FILE) are evaluated immediately — before our own code
+ *    can regain control after the import.
  *
- * That ordering means we CAN safely `Deno.chdir()` to the writable app-data
- * dir *after* the import resolves and *before* any request arrives, and it
- * sticks: Next's route modules (src/app/api/*) are code-split and lazily
- * required per-route on first request, not eagerly at boot, so their
- * module-level `path.join(process.cwd(), ...)` constants (e.g.
- * src/app/api/scan/route.js's SYNC_FILE) still observe our chdir'd cwd the
- * first time each route is hit.
+ * Together this means neither "chdir before import" nor "chdir after import
+ * resolves" works on its own: the former is silently undone by Next's own
+ * chdir(__dirname), and the latter is too late for the preloaded route
+ * modules. The fix (see startServer() below): `Deno.chdir()` to the writable
+ * app-data dir *before* importing server.js, and simultaneously neutralize
+ * `process.chdir` to a no-op so Next's own chdir(__dirname) call can't undo
+ * it. Next's asset resolution (serving .next/static, etc.) uses the `dir` it
+ * was constructed with, not process.cwd(), so pinning cwd like this doesn't
+ * break static asset serving.
  *
  * We previously tried leaving cwd alone and symlinking
  * STANDALONE_DIR/data -> the writable app-data dir instead. That works
@@ -31,7 +33,7 @@
  * STANDALONE_DIR resolves inside deno's self-extracted VFS temp dir
  * (.../deno-compile-<binary>/src-deno/standalone/), and Deno.symlink()
  * throws `NotSupported` there — that overlay filesystem doesn't support
- * creating symlinks. Post-start `Deno.chdir()` avoids touching
+ * creating symlinks. Pinning cwd via chdir+no-op patch avoids touching
  * STANDALONE_DIR/data entirely, so it works in both `deno run` and the
  * compiled app. See docs/deno-vs-tauri.md "Node API compatibility notes"
  * (Task 4 findings) for the full record.
@@ -96,7 +98,8 @@ function loadEnvFile(path: string): Record<string, string> {
     if (!line || line.startsWith("#")) continue;
     const pos = line.indexOf("=");
     if (pos === -1) continue;
-    vars[line.slice(0, pos).trim()] = line.slice(pos + 1).trim();
+    const value = line.slice(pos + 1).trim();
+    vars[line.slice(0, pos).trim()] = value.replace(/^(['"])(.*)\1$/, "$2");
   }
   return vars;
 }
