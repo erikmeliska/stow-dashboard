@@ -7,6 +7,8 @@ const nextConfig = {
   outputFileTracingExcludes: {
     '*': [
       'src-tauri/**',
+      'src-deno/standalone/**',
+      'dist/**',
       '.git/**',
       'scripts/**',
       '*.md',
