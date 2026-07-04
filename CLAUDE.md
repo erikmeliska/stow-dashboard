@@ -22,11 +22,16 @@ npm run start        # Start production server (port 3088)
 npm run tauri:build  # Build native macOS app + DMG
 npm run tauri:dev    # Run desktop app in dev mode
 
+# Desktop App (Deno, experimental comparison shell — requires Deno >= 2.9)
+npm run deno:prepare  # Build Next.js + assemble src-deno/standalone
+npm run deno:run      # Run desktop shell from source
+npm run deno:build    # Build dist/Stow Dashboard Deno.app
+
 # Other
 npm run lint         # Run ESLint
 ```
 
-**Ports:** Dev uses `3089`, Production/Tauri uses `3088` (so they don't conflict).
+**Ports:** Dev uses `3089`, Production/Tauri uses `3088`, Deno shell uses `3087` for source runs (`deno run`/`deno:run`) — the compiled app instead binds a runtime-assigned port exposed via `DENO_SERVE_ADDRESS` (see docs/deno-vs-tauri.md).
 
 Next.js 16 uses Turbopack by default and separates dev/build outputs (`.next/dev` vs `.next/build`), so `npm run build` won't interfere with a running dev server.
 
@@ -131,6 +136,15 @@ Build process:
 1. `npm run build` - Creates Next.js standalone in `.next/standalone/`
 2. `prepare-tauri.mjs` - Copies static assets, data, and .env.local
 3. `tauri build` - Compiles Rust and bundles into .app/.dmg
+
+### Deno Desktop App (experimental)
+
+A parallel shell built with `deno desktop` (Deno 2.9+) for comparison with Tauri:
+
+- `src-deno/main.ts` - entrypoint (server start, window, hide-on-close)
+- `src-deno/server.ts` - runs Next.js standalone in-process on port 3087; writable state in `~/Library/Application Support/StowDashboardDeno`
+- `src-deno/tray.ts` - tray menu (Show/Hide/Rescan/Quit)
+- Comparison: `docs/deno-vs-tauri.md`, decision: `docs/adr/0001-desktop-shell-deno-vs-tauri.md`
 
 ### Process Monitoring
 
