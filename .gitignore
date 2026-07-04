@@ -20,6 +20,10 @@ data
 # production
 /build
 
+# Deno desktop shell (generated)
+/src-deno/standalone/
+/dist/
+
 # misc
 .DS_Store
 *.pem

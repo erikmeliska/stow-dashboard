@@ -1,0 +1,15 @@
+{
+  "desktop": {
+    "app": {
+      "name": "Stow Dashboard Deno",
+      "identifier": "com.trisoft.stow-dashboard-deno",
+      "icons": {
+        "macos": "./src-tauri/icons/icon.icns"
+      }
+    },
+    "backend": "webview",
+    "output": {
+      "macos": "./dist/Stow Dashboard Deno.app"
+    }
+  }
+}
