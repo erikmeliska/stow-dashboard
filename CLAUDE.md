@@ -65,8 +65,8 @@ Configure in `.env.local`:
 ```bash
 SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
 BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
-TERMINAL_APP=Terminal                                    # Terminal app (Terminal, Warp, iTerm, etc.)
-IDE_COMMAND=code                                         # IDE command (code, cursor, zed, etc.)
+IDE_COMMANDS=code,cursor,zed        # Comma-separated IDE CLI commands (first = default; legacy IDE_COMMAND still honored)
+TERMINAL_APPS=Terminal,Warp,cmux    # Comma-separated terminal apps (first = default; legacy TERMINAL_APP still honored)
 ```
 
 ## Architecture
@@ -102,7 +102,10 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/app/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters
 - `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status and process info
 - `src/components/ScanControls.js` - Scan buttons with progress indicator
-- `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder
+- `src/app/api/open-with/route.js` - API for opening projects in IDE/Terminal/Finder (GET returns configured app lists; POST validates the app against them)
+- `src/components/SettingsDialog.js` - Header settings dialog (.env.local editor)
+- `src/components/SplitOpenButton.js` - Split button with app picker (IDE/terminal openers)
+- `src/lib/open-with.mjs` - Open-with app lists, legacy fallback, allowlist validation
 - `src/app/api/project-details/route.js` - API for live git status
 - `src/app/api/processes/route.js` - API for detecting running processes and Docker containers
 - `src/app/api/processes/docker/route.js` - API for Docker container operations (stop, restart, kill)
