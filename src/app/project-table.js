@@ -179,7 +179,7 @@ export function ProjectTable({ projects, ownRepos }) {
     }
 
     // Process monitoring
-    const { getPortsForProject, getRunningInfo, isProjectRunning } = useProcesses(30000)
+    const { getPortsForProject, getRunningInfo, isProjectRunning } = useProcesses()
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {

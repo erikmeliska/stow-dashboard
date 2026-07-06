@@ -2,17 +2,17 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
-export function useProcesses(pollInterval = 30000) {
+export function useProcesses() {
     const [processes, setProcesses] = useState({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [lastUpdate, setLastUpdate] = useState(null)
 
+    // One-shot fetch: initial mount + explicit refresh() callers.
     const fetchProcesses = useCallback(async () => {
         try {
             const response = await fetch('/api/processes')
             if (!response.ok) throw new Error('Failed to fetch processes')
-
             const data = await response.json()
             setProcesses(data.projects || {})
             setLastUpdate(data.timestamp)
@@ -24,14 +24,19 @@ export function useProcesses(pollInterval = 30000) {
         }
     }, [])
 
+    // Initial load once; afterwards the refresh cycle (ScanControls) pushes
+    // fresh data via the 'stow:processes' window event — no polling.
     useEffect(() => {
         fetchProcesses()
 
-        if (pollInterval > 0) {
-            const interval = setInterval(fetchProcesses, pollInterval)
-            return () => clearInterval(interval)
+        const onCycle = (e) => {
+            setProcesses(e.detail?.projects || {})
+            setLastUpdate(e.detail?.timestamp || new Date().toISOString())
+            setLoading(false)
         }
-    }, [fetchProcesses, pollInterval])
+        window.addEventListener('stow:processes', onCycle)
+        return () => window.removeEventListener('stow:processes', onCycle)
+    }, [fetchProcesses])
 
     const getProcessesForProject = useCallback((directory) => {
         return processes[directory] || []

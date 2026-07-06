@@ -3,8 +3,14 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { RefreshCw, Zap, CheckCircle, XCircle, Loader2, Activity } from 'lucide-react'
+import { RefreshCw, Zap, CheckCircle, XCircle, Loader2, Activity, MoreHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 function formatDuration(seconds) {
     if (seconds < 60) return `${seconds}s`
@@ -210,12 +216,24 @@ export function ScanControls({ lastSyncTime }) {
             case 'refreshing':
                 setProgress({ message: `Refreshing: ${getShortPath(data.directory)}` })
                 break
+            case 'discovered':
+                setProgress({ message: `Discovered: ${getShortPath(data.directory)}` })
+                setLogs(prev => [...prev.slice(-9), { type: 'discovered', path: getShortPath(data.directory), time: '' }])
+                break
+            case 'discover_error':
+                setLogs(prev => [...prev.slice(-9), { type: 'error', path: getShortPath(data.directory), time: '' }])
+                break
             case 'complete':
                 if (data.success) {
                     const durationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
-                    setProgress({ message: `Done! ${data.projectCount || 0} projects${durationMsg}`, success: true })
+                    const discoveredMsg = data.discovered?.length ? `, +${data.discovered.length} discovered` : ''
+                    setProgress({ message: `Done! ${data.projectCount || 0} projects${discoveredMsg}${durationMsg}`, success: true })
                     setLastSync(new Date().toISOString())
-                    // Refresh data without full page reload
+                    if (data.processes) {
+                        window.dispatchEvent(new CustomEvent('stow:processes', {
+                            detail: { projects: data.processes, timestamp: new Date().toISOString() }
+                        }))
+                    }
                     router.refresh()
                 }
                 break
@@ -283,41 +301,50 @@ export function ScanControls({ lastSyncTime }) {
                         }
                     }}
                     disabled={isScanning && !autoRefresh}
-                    title={autoRefresh ? "Auto-refresh enabled (60s) - click to disable" : "Enable auto-refresh for active projects (60s interval)"}
+                    title={autoRefresh ? "Auto-refresh enabled (60s): processes, discovery, git — click to disable" : "Enable 60s auto-refresh (processes, discovery, git)"}
                 >
                     {isScanning && scanType === 'quick' ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                         <Activity className={`mr-2 h-4 w-4 ${autoRefresh ? 'animate-pulse' : ''}`} />
                     )}
-                    {autoRefresh ? 'Auto' : 'Quick'}
+                    {autoRefresh ? 'Auto' : 'Auto off'}
                 </Button>
                 <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleScan('normal')}
+                    onClick={() => handleScan('quick')}
                     disabled={isScanning}
+                    title="Refresh now: processes, project discovery, git status of active projects"
                 >
-                    {isScanning && scanType === 'normal' ? (
+                    {isScanning && scanType === 'quick' ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                         <RefreshCw className="mr-2 h-4 w-4" />
                     )}
-                    {isScanning && scanType === 'normal' ? 'Scanning...' : 'Scan'}
+                    Refresh
                 </Button>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleScan('force')}
-                    disabled={isScanning}
-                >
-                    {isScanning && scanType === 'force' ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                        <Zap className="mr-2 h-4 w-4" />
-                    )}
-                    {isScanning && scanType === 'force' ? 'Scanning...' : 'Force'}
-                </Button>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" disabled={isScanning} title="Maintenance scans">
+                            {isScanning && (scanType === 'normal' || scanType === 'force') ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <MoreHorizontal className="h-4 w-4" />
+                            )}
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleScan('normal')}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Full scan
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleScan('force')}>
+                            <Zap className="mr-2 h-4 w-4" />
+                            Force rescan
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             </div>
 
             {/* Recent updates log - rendered via portal to table area, right aligned */}
@@ -325,7 +352,9 @@ export function ScanControls({ lastSyncTime }) {
                 <div className="text-xs text-muted-foreground text-right">
                     {logs.slice(-3).map((log, i) => (
                         <div key={i}>
-                            <span className="text-green-600">✓</span> {log.path} ({log.time}s)
+                            <span className={log.type === 'discovered' ? 'text-blue-500' : 'text-green-600'}>
+                                {log.type === 'discovered' ? '+' : '✓'}
+                            </span> {log.path}{log.time ? ` (${log.time}s)` : ''}
                         </div>
                     ))}
                 </div>,
