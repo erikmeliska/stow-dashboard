@@ -42,6 +42,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { SplitOpenButton } from "@/components/SplitOpenButton"
 
 function formatBytes(bytes) {
     if (!bytes) return '-'
@@ -101,6 +102,14 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [scripts, setScripts] = React.useState({})
     const [runningScripts, setRunningScripts] = React.useState([]) // { pid, script, logFile }
     const [scriptRunning, setScriptRunning] = React.useState(null) // currently launching script name
+    const [openWithApps, setOpenWithApps] = React.useState({ ide: [], terminal: [] })
+
+    React.useEffect(() => {
+        fetch('/api/open-with')
+            .then(r => r.json())
+            .then(d => setOpenWithApps({ ide: d.ide || [], terminal: d.terminal || [] }))
+            .catch(() => {})
+    }, [])
 
     React.useEffect(() => {
         if (open && project?.directory) {
@@ -180,20 +189,18 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const gitInfo = project.git_info
     const remotes = gitInfo?.remotes || []
 
-    const openWith = async (action) => {
+    const openWith = async (action, app) => {
         try {
             await fetch('/api/open-with', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ directory: project.directory, action })
+                body: JSON.stringify({ directory: project.directory, action, app })
             })
         } catch (e) {
             console.error(`Failed to open with ${action}:`, e)
         }
     }
 
-    const openInTerminal = () => openWith('terminal')
-    const openInVSCode = () => openWith('vscode')
     const openInFinder = () => openWith('finder')
 
     const runScript = async (scriptName) => {
@@ -247,14 +254,13 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                 <TooltipProvider>
                     <div className="flex gap-1 mt-4">
                         <CopyButton text={project.directory} tooltip="Copy path" />
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInVSCode}>
-                                    <Code className="h-4 w-4" />
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Open in IDE</p></TooltipContent>
-                        </Tooltip>
+                        <SplitOpenButton
+                            icon={Code}
+                            label="Open in IDE"
+                            apps={openWithApps.ide}
+                            storageKey="stow-dashboard-open-ide"
+                            onOpen={(app) => openWith('vscode', app)}
+                        />
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInFinder}>
@@ -263,14 +269,13 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                             </TooltipTrigger>
                             <TooltipContent><p>Open in Finder</p></TooltipContent>
                         </Tooltip>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={openInTerminal}>
-                                    <Terminal className="h-4 w-4" />
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Open in Terminal</p></TooltipContent>
-                        </Tooltip>
+                        <SplitOpenButton
+                            icon={Terminal}
+                            label="Open in Terminal"
+                            apps={openWithApps.terminal}
+                            storageKey="stow-dashboard-open-terminal"
+                            onOpen={(app) => openWith('terminal', app)}
+                        />
 
                         {/* Scripts dropdown */}
                         {Object.keys(scripts).length > 0 && (
