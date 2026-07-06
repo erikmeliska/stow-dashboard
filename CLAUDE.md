@@ -113,6 +113,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/hooks/useProcesses.js` - Hook for process monitoring with polling
 - `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
+- `src/lib/discovery.mjs` - Project auto-discovery from process cwds
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
 - `scripts/scan.mjs` - CLI for running the scanner
@@ -154,7 +155,9 @@ The dashboard detects running processes and Docker containers for each project:
 - Uses `lsof` to find processes with listening ports and their working directories
 - Uses `docker ps` with compose labels to detect containers from `docker compose`
 - Matches processes/containers to projects by comparing cwd with project directories
-- Polls every 30 seconds for updates
+- Refresh cycle (opt-in): the toolbar's Auto toggle runs a combined 60s cycle — process detection, project auto-discovery, git refresh of active projects (`POST /api/scan/quick`); a manual Refresh button runs the same once. With Auto off, the Running column updates only on manual refresh.
+- Auto-discovery: unmatched process cwds under `SCAN_ROOTS` are walked up to the nearest directory with a project indicator and added to the JSONL automatically (bare directories are skipped; 5-min negative cache). Full scan remains the only path that removes deleted projects and refreshes scc/size metrics.
+- Full scan / Force rescan moved into the ⋯ menu next to the refresh controls.
 - Displays process count (green) and container count (blue) in Running column
 - Project details sheet shows full process/container info with Kill/Stop buttons
 - Process entries have Globe button to open localhost port and Terminal button to attach
