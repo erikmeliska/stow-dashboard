@@ -398,3 +398,103 @@ export async function getProjectProcesses(projectDirs) {
 
     return projectProcesses
 }
+
+/**
+ * Group already-collected process sources by project directory.
+ * Returns the per-project map (same shapes the /api/processes response uses)
+ * plus the cwds that matched no known project (input for auto-discovery).
+ */
+export function groupProcessSources(sources, projectDirs) {
+    const { runningProcesses = [], claudeSessions = [], openTerminals = [], dockerContainers = [] } = sources
+    const projects = {}
+    const unmatched = new Set()
+
+    const push = (dir, entry) => {
+        if (!projects[dir]) projects[dir] = []
+        projects[dir].push(entry)
+    }
+
+    for (const proc of runningProcesses) {
+        const dir = matchProcessToProject(proc.cwd, projectDirs)
+        if (dir) {
+            push(dir, {
+                pid: parseInt(proc.pid),
+                command: proc.command,
+                ports: proc.ports,
+                type: 'process',
+                host: proc.host,
+                hostLabel: proc.hostLabel
+            })
+        } else if (proc.cwd) {
+            unmatched.add(proc.cwd)
+        }
+    }
+
+    for (const session of claudeSessions) {
+        const dir = matchProcessToProject(session.cwd, projectDirs)
+        if (dir) {
+            push(dir, {
+                pid: parseInt(session.pid),
+                command: 'claude',
+                cwd: session.cwd,
+                ports: [],
+                type: 'claude',
+                host: session.host,
+                hostLabel: session.hostLabel
+            })
+        } else if (session.cwd) {
+            unmatched.add(session.cwd)
+        }
+    }
+
+    for (const term of openTerminals) {
+        const dir = matchProcessToProject(term.cwd, projectDirs)
+        if (dir) {
+            push(dir, {
+                pid: parseInt(term.pid),
+                command: term.command,
+                cwd: term.cwd,
+                tty: term.tty,
+                ports: [],
+                type: 'terminal',
+                host: term.host,
+                hostLabel: term.hostLabel
+            })
+        } else if (term.cwd) {
+            unmatched.add(term.cwd)
+        }
+    }
+
+    for (const container of dockerContainers) {
+        const dir = matchProcessToProject(container.cwd, projectDirs)
+        if (dir) {
+            push(dir, {
+                id: container.id,
+                name: container.name,
+                image: container.image,
+                ports: container.ports,
+                status: container.status,
+                type: 'docker'
+            })
+        } else if (container.cwd) {
+            unmatched.add(container.cwd)
+        }
+    }
+
+    return { projects, unmatchedCwds: [...unmatched] }
+}
+
+/** One full sweep (lsof/ps/docker) grouped by project. */
+export async function collectProjectProcesses(projectDirs) {
+    const { procTable, childCount } = await getProcTable()
+    const [runningProcesses, dockerContainers, terminalsAndClaude] = await Promise.all([
+        getRunningProcesses(procTable),
+        getDockerContainers(),
+        getClaudeAndTerminalSessions(procTable, childCount),
+    ])
+    const { claudeSessions, openTerminals } = terminalsAndClaude
+    return groupProcessSources(
+        { runningProcesses, claudeSessions, openTerminals, dockerContainers },
+        projectDirs
+    )
+}
