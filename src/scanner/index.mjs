@@ -6,7 +6,7 @@ import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
 import ignore from 'ignore'
 
-const DEFAULT_IGNORE_PATTERNS = [
+export const DEFAULT_IGNORE_PATTERNS = [
     '.git', 'node_modules', 'venv', '.venv',
     '__pycache__', '.pytest_cache', 'build', 'dist',
     'python3.7', 'python3.8', 'python3.9', 'python3.10',
@@ -14,7 +14,7 @@ const DEFAULT_IGNORE_PATTERNS = [
 ]
 
 // Strong indicators: manifest/doc files that define a real project
-const STRONG_PROJECT_INDICATORS = new Set([
+export const STRONG_PROJECT_INDICATORS = new Set([
     'package.json',
     'requirements.txt',
     'pyproject.toml',
@@ -25,7 +25,7 @@ const STRONG_PROJECT_INDICATORS = new Set([
 ])
 
 // Weak indicators: present in projects but also in group/parent directories
-const WEAK_PROJECT_INDICATORS = new Set([
+export const WEAK_PROJECT_INDICATORS = new Set([
     '.git'
 ])
 
