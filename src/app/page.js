@@ -5,6 +5,7 @@ import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
 import { readTasks } from '@/lib/tasks.mjs'
 import { ScanControls } from '@/components/ScanControls'
+import { SettingsDialog } from '@/components/SettingsDialog'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
 
@@ -110,6 +111,7 @@ export default async function DashboardPage() {
                     </div>
                     <div className="flex items-start gap-3">
                         <ScanControls lastSyncTime={lastSyncTime} />
+                        <SettingsDialog />
                         <ThemeToggle />
                     </div>
                 </div>

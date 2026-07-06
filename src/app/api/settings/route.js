@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 
 const ENV_PATH = path.join(process.cwd(), '.env.local')
 
-const SETTINGS_KEYS = ['SCAN_ROOTS', 'BASE_DIR', 'TERMINAL_APP', 'IDE_COMMAND']
+const SETTINGS_KEYS = ['SCAN_ROOTS', 'BASE_DIR', 'TERMINAL_APP', 'IDE_COMMAND', 'TERMINAL_APPS', 'IDE_COMMANDS']
 
 function parseEnvFile(content) {
     const settings = {}
