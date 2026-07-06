@@ -1,59 +1,15 @@
 import path from 'path'
 import fs from 'fs/promises'
 import { simpleGit } from 'simple-git'
-import { getLatestMtime } from '@/scanner/index.mjs'
+import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
+import { collectProjectProcesses } from '@/lib/processes.mjs'
+import { resolveCandidateRoot, NegativeCache } from '@/lib/discovery.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+const SCAN_ROOTS = (process.env.SCAN_ROOTS || '/Users/ericsko/Projekty').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
 
-async function getRunningProjectDirs() {
-    // Import the process detection logic
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
-
-    const runningDirs = new Set()
-
-    try {
-        // Get processes with listening ports
-        const { stdout: lsofOut } = await execAsync('lsof -i -P -n 2>/dev/null | grep LISTEN || true')
-        const pids = new Set()
-
-        for (const line of lsofOut.split('\n').filter(Boolean)) {
-            const parts = line.split(/\s+/)
-            const pid = parts[1]
-            if (pid) pids.add(pid)
-        }
-
-        // Get cwd for these PIDs
-        if (pids.size > 0) {
-            const pidList = Array.from(pids).join(',')
-            const { stdout: cwdOut } = await execAsync(`lsof -a -p ${pidList} -d cwd -F n 2>/dev/null || true`)
-
-            for (const line of cwdOut.split('\n')) {
-                if (line.startsWith('n')) {
-                    runningDirs.add(line.slice(1))
-                }
-            }
-        }
-
-        // Get Docker containers with compose working dirs
-        try {
-            const { stdout: dockerOut } = await execAsync(
-                `docker ps --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null || true`,
-                { timeout: 5000 }
-            )
-            for (const dir of dockerOut.split('\n').filter(Boolean)) {
-                runningDirs.add(dir)
-            }
-        } catch {
-            // Docker not available
-        }
-    } catch {
-        // Ignore errors
-    }
-
-    return runningDirs
-}
+// Module-level: survives across requests within one server process.
+const negativeCache = new NegativeCache()
 
 async function getGitInfo(repoPath) {
     try {
@@ -141,46 +97,77 @@ export async function POST() {
                 const projects = content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
                 const projectMap = new Map(projects.map(p => [p.directory, p]))
 
-                // Get running project directories
-                sendEvent({ type: 'status', message: 'Finding active projects...' })
-                const runningDirs = await getRunningProjectDirs()
+                // One sweep: processes grouped by project + unmatched cwds
+                sendEvent({ type: 'status', message: 'Detecting processes...' })
+                const projectDirs = [...projectMap.keys()]
+                const { projects: processMap, unmatchedCwds } = await collectProjectProcesses(projectDirs)
 
-                // Find which projects have running processes
-                const activeProjects = []
-                for (const project of projects) {
-                    for (const runningDir of runningDirs) {
-                        if (runningDir === project.directory || runningDir.startsWith(project.directory + '/')) {
-                            activeProjects.push(project)
-                            break
+                // Auto-discovery: unmatched cwds under SCAN_ROOTS -> candidate project roots
+                const discovered = []
+                for (const cwd of unmatchedCwds) {
+                    if (negativeCache.has(cwd)) continue
+                    try {
+                        const candidate = await resolveCandidateRoot(cwd, SCAN_ROOTS)
+                        if (!candidate) {
+                            negativeCache.add(cwd)
+                            continue
                         }
+                        if (projectMap.has(candidate)) continue // known via another path
+
+                        sendEvent({ type: 'status', message: `Discovering: ${candidate}` })
+                        const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS })
+                        const meta = await scanner.processProject(candidate)
+                        if (meta) {
+                            projectMap.set(candidate, meta)
+                            discovered.push(candidate)
+                            sendEvent({ type: 'discovered', directory: candidate, project_name: meta.project_name })
+                        } else {
+                            negativeCache.add(cwd)
+                        }
+                    } catch (err) {
+                        sendEvent({ type: 'discover_error', directory: cwd, message: err.message })
+                        negativeCache.add(cwd)
                     }
                 }
 
-                sendEvent({ type: 'status', message: `Found ${activeProjects.length} active projects`, total: activeProjects.length })
+                // Git refresh for projects with a running process + freshly discovered ones
+                const activeDirs = new Set([...Object.keys(processMap), ...discovered])
+                const activeProjects = [...activeDirs].map(d => projectMap.get(d)).filter(Boolean)
 
-                // Update git info for active projects
+                sendEvent({ type: 'status', message: `Refreshing ${activeProjects.length} active projects`, total: activeProjects.length })
+
                 let current = 0
                 for (const project of activeProjects) {
                     current++
                     sendEvent({ type: 'refreshing', directory: project.directory, current, total: activeProjects.length })
-
                     const [gitInfo, lastModified] = await Promise.all([
                         getGitInfo(project.directory),
                         getLatestMtime(project.directory)
                     ])
                     project.git_info = gitInfo
                     project.last_modified = lastModified
-
                     projectMap.set(project.directory, project)
                 }
 
-                // Write back to JSONL
+                // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
                 const lines = Array.from(projectMap.values()).map(p => JSON.stringify(p))
                 await fs.writeFile(DATA_FILE, lines.join('\n') + '\n')
 
+                // Regroup so newly discovered projects claim their processes in the payload
+                const finalProcesses = discovered.length > 0
+                    ? (await collectProjectProcesses([...projectMap.keys()])).projects
+                    : processMap
+
                 const duration = Math.round((Date.now() - startTime) / 1000)
-                sendEvent({ type: 'complete', success: true, projectCount: activeProjects.length, duration })
+                sendEvent({
+                    type: 'complete',
+                    success: true,
+                    projectCount: activeProjects.length,
+                    discovered,
+                    processes: finalProcesses,
+                    duration
+                })
 
             } catch (error) {
                 const duration = Math.round((Date.now() - startTime) / 1000)
@@ -202,7 +189,7 @@ export async function POST() {
 
 export async function GET() {
     return Response.json({
-        message: 'Quick refresh - updates git info only for projects with running processes',
+        message: 'Combined refresh: process detection, project auto-discovery, git refresh for active projects',
         method: 'POST'
     })
 }
