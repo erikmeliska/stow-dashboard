@@ -105,11 +105,12 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [openWithApps, setOpenWithApps] = React.useState({ ide: [], terminal: [] })
 
     React.useEffect(() => {
+        if (!open) return
         fetch('/api/open-with')
             .then(r => r.json())
             .then(d => setOpenWithApps({ ide: d.ide || [], terminal: d.terminal || [] }))
             .catch(() => {})
-    }, [])
+    }, [open])
 
     React.useEffect(() => {
         if (open && project?.directory) {

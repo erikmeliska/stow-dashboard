@@ -20,6 +20,7 @@ import { listScripts, runScript } from '../lib/scripts.mjs'
 import { readTasks, addTask, taskPrefix } from '../lib/tasks.mjs'
 import { verifyTask, auditTasks, generateChangelog } from '../lib/history.mjs'
 import { writeBrief, openInClaudeDesktop } from '../lib/dispatch.mjs'
+import { readOpenWithEnv } from '../lib/open-with.mjs'
 import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
@@ -45,8 +46,7 @@ try {
     // .env.local not found, use defaults
 }
 
-const TERMINAL_APP = process.env.TERMINAL_APP || 'Terminal'
-const IDE_COMMAND = process.env.IDE_COMMAND || 'code'
+const ENV_PATH = envPath
 
 // Helper functions
 async function loadProjects() {
@@ -598,12 +598,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 
             try {
+                const config = await readOpenWithEnv(ENV_PATH)
                 switch (args.app) {
                     case 'ide':
-                        await execAsync(`${IDE_COMMAND} -n "${project.directory}"`)
+                        await execAsync(`${config.ide[0]} -n "${project.directory}"`)
                         break
                     case 'terminal':
-                        await execAsync(`open -a "${TERMINAL_APP}" "${project.directory}"`)
+                        await execAsync(`open -a "${config.terminal[0]}" "${project.directory}"`)
                         break
                     case 'finder':
                         await execAsync(`open "${project.directory}"`)
