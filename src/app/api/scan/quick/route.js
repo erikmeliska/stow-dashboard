@@ -3,7 +3,7 @@ import fs from 'fs/promises'
 import { simpleGit } from 'simple-git'
 import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
 import { collectProjectProcesses } from '@/lib/processes.mjs'
-import { resolveCandidateRoot, NegativeCache } from '@/lib/discovery.mjs'
+import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 const SCAN_ROOTS = (process.env.SCAN_ROOTS || '/Users/ericsko/Projekty').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
@@ -105,7 +105,12 @@ export async function POST() {
                 // Auto-discovery: unmatched cwds under SCAN_ROOTS -> candidate project roots
                 const discovered = []
                 for (const cwd of unmatchedCwds) {
-                    if (negativeCache.has(cwd)) continue
+                    if (negativeCache.has(cwd)) {
+                        // Cheap re-check: did an indicator appear since we cached this cwd
+                        // (e.g. `git init`)? If not, stay skipped; if so, fall through to
+                        // full resolution below so it can appear within this cycle.
+                        if (!(await dirHasProjectIndicator(cwd))) continue
+                    }
                     try {
                         const candidate = await resolveCandidateRoot(cwd, SCAN_ROOTS)
                         if (!candidate) {
@@ -113,6 +118,13 @@ export async function POST() {
                             continue
                         }
                         if (projectMap.has(candidate)) continue // known via another path
+
+                        if (await isWeakOnlyGroup(candidate)) {
+                            // Same rule the full scan uses: a .git-only dir with
+                            // sub-projects is a group, not an aggregate project.
+                            negativeCache.add(cwd)
+                            continue
+                        }
 
                         sendEvent({ type: 'status', message: `Discovering: ${candidate}` })
                         const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS })

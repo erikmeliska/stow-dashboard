@@ -25,6 +25,40 @@ export async function dirHasProjectIndicator(dir) {
     return false
 }
 
+/**
+ * True if `dir` is a "weak-only group" the way the full scanner sees it:
+ * it has no strong indicator, only the weak `.git` indicator, AND at least
+ * one immediate subdirectory itself has a project indicator. The scanner
+ * (discoverProjects in scanner/index.mjs) skips indexing such dirs as an
+ * aggregate project and recurses into the sub-projects instead — this
+ * mirrors that rule (immediate subdirs only, matching classifySubDirs'
+ * one-level check in the scanner).
+ */
+export async function isWeakOnlyGroup(dir) {
+    let entries
+    try {
+        entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+        return false
+    }
+    const names = entries.map(e => e.name)
+    const nameSet = new Set(names)
+    const hasStrong = [...STRONG_PROJECT_INDICATORS].some(i => nameSet.has(i))
+    if (hasStrong) return false
+    const hasWeak = [...WEAK_PROJECT_INDICATORS].some(i => nameSet.has(i))
+    if (!hasWeak) return false
+
+    const ignoreSet = new Set([...DEFAULT_IGNORE_PATTERNS].map(p => p.toLowerCase()))
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.')) continue
+        if (ignoreSet.has(entry.name.toLowerCase())) continue
+        const subPath = path.join(dir, entry.name)
+        if (await dirHasProjectIndicator(subPath)) return true
+    }
+    return false
+}
+
 /** True if any path segment between root and cwd is hidden or ignored. */
 export function isExcludedPath(cwd, root, ignorePatterns = DEFAULT_IGNORE_PATTERNS) {
     const rel = path.relative(root, cwd)

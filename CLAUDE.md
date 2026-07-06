@@ -110,7 +110,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/app/api/scripts/route.js` - API for listing available npm/shell scripts in a project
 - `src/app/api/scripts/run/route.js` - API for running scripts in background with log capture
 - `src/app/api/scripts/attach/route.js` - API for attaching terminal to running script output
-- `src/hooks/useProcesses.js` - Hook for process monitoring with polling
+- `src/hooks/useProcesses.js` - Process state hook (event-driven via the refresh cycle)
 - `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
 - `src/lib/discovery.mjs` - Project auto-discovery from process cwds
@@ -139,14 +139,14 @@ Build process:
 2. `prepare-tauri.mjs` - Copies static assets, data, and .env.local
 3. `tauri build` - Compiles Rust and bundles into .app/.dmg
 
-### Deno Desktop App (experimental)
+### Deno Desktop App (shipped desktop shell)
 
-A parallel shell built with `deno desktop` (Deno 2.9+) for comparison with Tauri:
+The shipped desktop shell built with `deno desktop` (Deno 2.9+); Tauri kept as fallback:
 
 - `src-deno/main.ts` - entrypoint (server start, window, hide-on-close)
 - `src-deno/server.ts` - runs Next.js standalone in-process on port 3087; writable state in `~/Library/Application Support/StowDashboardDeno`
 - `src-deno/tray.ts` - tray menu (Show/Hide/Rescan/Quit)
-- Comparison: `docs/deno-vs-tauri.md`, decision: `docs/adr/0001-desktop-shell-deno-vs-tauri.md`
+- Comparison: `docs/deno-vs-tauri.md`, decision: `docs/adr/0002-switch-desktop-shell-to-deno.md` (supersedes 0001)
 
 ### Process Monitoring
 
@@ -156,7 +156,7 @@ The dashboard detects running processes and Docker containers for each project:
 - Uses `docker ps` with compose labels to detect containers from `docker compose`
 - Matches processes/containers to projects by comparing cwd with project directories
 - Refresh cycle (opt-in): the toolbar's Auto toggle runs a combined 60s cycle — process detection, project auto-discovery, git refresh of active projects (`POST /api/scan/quick`); a manual Refresh button runs the same once. With Auto off, the Running column updates only on manual refresh.
-- Auto-discovery: unmatched process cwds under `SCAN_ROOTS` are walked up to the nearest directory with a project indicator and added to the JSONL automatically (bare directories are skipped; 5-min negative cache). Full scan remains the only path that removes deleted projects and refreshes scc/size metrics.
+- Auto-discovery: unmatched process cwds under `SCAN_ROOTS` are walked up to the nearest directory with a project indicator and added to the JSONL automatically (bare directories are skipped; 5-min negative cache); weak-only group directories (just `.git` with sub-projects) are skipped, same as the full scan. Full scan remains the only path that removes deleted projects and refreshes scc/size metrics.
 - Full scan / Force rescan moved into the ⋯ menu next to the refresh controls.
 - Displays process count (green) and container count (blue) in Running column
 - Project details sheet shows full process/container info with Kill/Stop buttons

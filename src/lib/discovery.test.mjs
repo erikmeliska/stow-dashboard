@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { resolveCandidateRoot, NegativeCache, isExcludedPath } from './discovery.mjs'
+import { resolveCandidateRoot, NegativeCache, isExcludedPath, dirHasProjectIndicator, isWeakOnlyGroup } from './discovery.mjs'
 
 async function makeTree(spec) {
     // spec: { 'relative/dir': ['file1', ...] }
@@ -86,4 +86,40 @@ test('NegativeCache: add/has respects TTL', async () => {
     assert.equal(cache.has('/b'), false)
     await new Promise(r => setTimeout(r, 80))
     assert.equal(cache.has('/a'), false) // expired
+})
+
+test('dirHasProjectIndicator flips false -> true after .git dir is created', async () => {
+    const root = await makeTree({ 'bare': [] })
+    const dir = path.join(root, 'bare')
+    assert.equal(await dirHasProjectIndicator(dir), false)
+    await fs.mkdir(path.join(dir, '.git'))
+    assert.equal(await dirHasProjectIndicator(dir), true)
+    await fs.rm(root, { recursive: true, force: true })
+})
+
+test('isWeakOnlyGroup: true for a weak-only (.git) dir that contains a sub-project', async () => {
+    const root = await makeTree({
+        'group/.git': [],
+        'group/sub': ['package.json'],
+    })
+    assert.equal(await isWeakOnlyGroup(path.join(root, 'group')), true)
+    await fs.rm(root, { recursive: true, force: true })
+})
+
+test('isWeakOnlyGroup: false for a weak-only (.git) dir with no sub-projects (plain repo)', async () => {
+    const root = await makeTree({
+        'repo/.git': [],
+        'repo/src': [],
+    })
+    assert.equal(await isWeakOnlyGroup(path.join(root, 'repo')), false)
+    await fs.rm(root, { recursive: true, force: true })
+})
+
+test('isWeakOnlyGroup: false for a strong-indicator dir even with sub-projects', async () => {
+    const root = await makeTree({
+        'proj': ['package.json'],
+        'proj/sub': ['package.json'],
+    })
+    assert.equal(await isWeakOnlyGroup(path.join(root, 'proj')), false)
+    await fs.rm(root, { recursive: true, force: true })
 })
