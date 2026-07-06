@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Stow Dashboard is a Next.js 16 web application (React 19) that visualizes projects scanned by `stow-agent`. It displays project metadata, Git information, file statistics, and technology stack detection from a JSONL data file.
 
-Available as a web app or native desktop app (Tauri).
+Available as a web app or native desktop app. The shipped desktop app is the Deno shell (`src-deno/`, see ADR 0002); the Tauri shell (`src-tauri/`) is kept as a buildable fallback.
 
 ## Commands
 
@@ -18,14 +18,15 @@ npm run dev          # Start dev server with Turbopack (port 3089)
 npm run build        # Build for production
 npm run start        # Start production server (port 3088)
 
-# Desktop App (requires Rust)
-npm run tauri:build  # Build native macOS app + DMG
-npm run tauri:dev    # Run desktop app in dev mode
-
-# Desktop App (Deno, experimental comparison shell — requires Deno >= 2.9)
+# Desktop App (Deno — shipped shell, requires Deno >= 2.9; see ADR 0002)
 npm run deno:prepare  # Build Next.js + assemble src-deno/standalone
 npm run deno:run      # Compile + launch dist/Stow Dashboard Deno.app
 npm run deno:build    # Build dist/Stow Dashboard Deno.app
+# Install/update: ditto "dist/Stow Dashboard Deno.app" "/Applications/Stow Dashboard Deno.app"
+
+# Desktop App (Tauri — fallback shell, requires Rust)
+npm run tauri:build  # Build native macOS app + DMG
+npm run tauri:dev    # Run desktop app in dev mode
 
 # Other
 npm run lint         # Run ESLint

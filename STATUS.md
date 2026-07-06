@@ -3,11 +3,11 @@ status: active
 updated: 2026-07-05
 ---
 
-NEXT: Deno desktop comparison DONE (ADR 0001: stay on Tauri for shipping, keep Deno shell as a documented experiment — see docs/adr/0001-desktop-shell-deno-vs-tauri.md). Immediate remaining item: 60-second human smoke test of the Deno app tray (tray icon click-toggle, menu Show/Hide/Rescan/Quit, hide-on-close via red X — `dist/Stow Dashboard Deno.app`), since synthetic clicks crashed it 2/2 in automated testing. After that: remaining Command Center work — Phase 06 (browser tab triage [needs live browser], Obsidian Command Center mirror `stow mirror` [buildable], Cowork Dispatcher pattern), and the DEFERRED Phase-02 Task E (Innovis vendored rollout — needs your strategy choice). Triage bridge DONE (stow task add CLI + Raycast Triage Intake; _Sandbox excluded). User actions: reconnect stow MCP; `npm run dev` Raycast + set `intakeFile` pref + subscribe phone to ntfy.ixy.sk/claude.
+NEXT: Design + implement process-based project auto-discovery (unmatched process cwds under SCAN_ROOTS → walk up to project root → targeted scan → auto-add to JSONL; decide whether to merge the 60s quick-refresh cycle into the 30s process poll). Deno desktop switch DONE: smoke test passed after tray fixes (win.hide() quirk → off-screen park), ADR 0002 Accepted (Deno shell shipped, Tauri kept as fallback), Deno app installed in /Applications, Tauri app removed. After that: remaining Command Center work — Phase 06 (browser tab triage [needs live browser], Obsidian Command Center mirror `stow mirror` [buildable], Cowork Dispatcher pattern), and the DEFERRED Phase-02 Task E (Innovis vendored rollout — needs your strategy choice). Triage bridge DONE (stow task add CLI + Raycast Triage Intake; _Sandbox excluded). User actions: reconnect stow MCP; `npm run dev` Raycast + set `intakeFile` pref + subscribe phone to ntfy.ixy.sk/claude.
 
 ## Links
 - http://localhost:3089 — dev server
-- http://localhost:3088 — prod/Tauri
+- http://localhost:3088 — prod web / Tauri fallback (Deno app uses a runtime-assigned port)
 - https://github.com/erikmeliska/stow-dashboard — repo
 - docs/superpowers/plans/2026-06-16-command-center-index.md — Command Center plan set
 

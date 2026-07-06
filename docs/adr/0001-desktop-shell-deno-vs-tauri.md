@@ -1,7 +1,8 @@
 # ADR 0001: Desktop shell — Tauri vs Deno Desktop
 
 Date: 2026-07-05
-Status: Proposed
+Status: Superseded by ADR 0002 (the human smoke test it required led to fixes
+and a reversed decision — see 0002)
 
 ## Context
 
