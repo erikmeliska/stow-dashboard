@@ -12,7 +12,7 @@
  *
  * "Hide" does NOT call win.hide(): hiding the app's only window makes the Deno
  * runtime believe no windows are open and it exits the process. Instead we
- * park the window off-screen (see main.ts's setWindowHidden/restoreWindow),
+ * park the window off-screen (see main.ts's hideWindow/showWindow),
  * which keeps a window "open" so the runtime stays alive.
  */
 
