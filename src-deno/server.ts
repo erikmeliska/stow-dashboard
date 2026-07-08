@@ -163,6 +163,33 @@ export async function startServer(): Promise<void> {
     /* no-op: keep cwd pinned to the writable app-data dir (see above) */
   };
 
+  // Safety net: an async error from the backend (e.g. a `git` child_process
+  // spawn failing with EMFILE while the FS-heavy refresh cycle in
+  // src/app/api/scan/quick/route.js is also in flight — see the
+  // FS_CONCURRENCY comment in src/scanner/index.mjs for the root cause) can
+  // surface as an unhandled rejection/exception *after* its own try/catch
+  // has already run (simple-git's spawn() reports the failure via an async
+  // 'error' event, not always via the awaited promise). Under Deno desktop,
+  // an unhandled rejection/exception at the process level pops a native
+  // error dialog and can take the whole app down with it — for a background
+  // refresh cycle that's much worse than the request simply failing. Log it
+  // and move on instead of crashing; this must be registered BEFORE
+  // importing server.js so it's in place before any request handler runs.
+  // This intentionally does NOT swallow the error silently — it's still
+  // logged to the console so the underlying bug is visible and debuggable.
+  process.on("unhandledRejection", (reason) => {
+    console.error("[Stow/Deno] unhandled rejection (backend):", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[Stow/Deno] uncaught exception (backend):", err);
+  });
+  if (typeof globalThis.addEventListener === "function") {
+    globalThis.addEventListener("unhandledrejection", (e) => {
+      console.error("[Stow/Deno] unhandled rejection (global event):", e.reason);
+      e.preventDefault();
+    });
+  }
+
   // Next.js standalone entrypoint; runs under Deno's Node compat layer.
   await import(join(STANDALONE_DIR, "server.js"));
 

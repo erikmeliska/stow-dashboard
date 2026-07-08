@@ -31,6 +31,49 @@ export const WEAK_PROJECT_INDICATORS = new Set([
 
 const CONCURRENCY = 8
 
+// Bounds concurrent fs.readdir/fs.stat calls made by the recursive tree
+// walkers below (walkFileTree, getLatestMtime). Those walkers recurse with
+// unbounded-concurrency `Promise.all` fan-out: every subdirectory and every
+// file in flight at once, with no cap. Under plain Node this is masked by
+// libuv's own threadpool (which serializes blocking fs syscalls to a handful
+// of worker threads), but the shipped Deno desktop shell runs this code
+// in-process under Deno's Node-compat fs layer, which does NOT throttle it
+// the same way — a large tree (e.g. one with node_modules, which
+// walkFileTree still walks for lib-size) can open hundreds of concurrent
+// file descriptors. GUI-launched macOS apps get a soft RLIMIT_NOFILE of
+// only 256 (vs. ~1e6 in a terminal), so this can blow the cap and crash a
+// concurrent `git` spawn (simple-git) with EMFILE. A tiny semaphore keeps
+// the *actual* fs operation count bounded regardless of tree size; queued
+// (not-yet-acquired) calls just hold a resolver callback, not a file
+// descriptor, so they add no FD pressure while waiting.
+export const FS_CONCURRENCY = 48
+
+export class Semaphore {
+    constructor(max) {
+        this.max = max
+        this.active = 0
+        this.queue = []
+    }
+
+    async run(fn) {
+        if (this.active >= this.max) {
+            await new Promise(resolve => this.queue.push(resolve))
+        }
+        this.active++
+        try {
+            return await fn()
+        } finally {
+            this.active--
+            const next = this.queue.shift()
+            if (next) next()
+        }
+    }
+}
+
+const fsLimiter = new Semaphore(FS_CONCURRENCY)
+const limitedReaddir = (dir, options) => fsLimiter.run(() => fs.readdir(dir, options))
+const limitedStat = (filePath) => fsLimiter.run(() => fs.stat(filePath))
+
 export class ProjectScanner {
     constructor(options = {}) {
         this.scanRoots = options.scanRoots || []
@@ -221,7 +264,7 @@ export class ProjectScanner {
         const scanDir = async (dir, isLibPath = false) => {
             let entries
             try {
-                entries = await fs.readdir(dir, { withFileTypes: true })
+                entries = await limitedReaddir(dir, { withFileTypes: true })
             } catch {
                 return
             }
@@ -243,7 +286,7 @@ export class ProjectScanner {
                     }
                 } else if (entry.isFile()) {
                     promises.push(
-                        fs.stat(fullPath).then(stat => {
+                        limitedStat(fullPath).then(stat => {
                             latestAtime = Math.max(latestAtime, stat.atimeMs)
                             latestMtime = Math.max(latestMtime, stat.mtimeMs)
 
@@ -273,7 +316,7 @@ export class ProjectScanner {
         const scanDir = async (dir) => {
             let entries
             try {
-                entries = await fs.readdir(dir, { withFileTypes: true })
+                entries = await limitedReaddir(dir, { withFileTypes: true })
             } catch {
                 return
             }
@@ -288,7 +331,7 @@ export class ProjectScanner {
                     promises.push(scanDir(fullPath))
                 } else if (entry.isFile()) {
                     promises.push(
-                        fs.stat(fullPath).then(stat => {
+                        limitedStat(fullPath).then(stat => {
                             latestMtime = Math.max(latestMtime, stat.mtimeMs)
                         }).catch(() => {})
                     )
