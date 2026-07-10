@@ -183,14 +183,21 @@ const SHRINK_STEPS = [
 ]
 
 export class ApfelError extends Error {
-  constructor(kind, message) {
+  constructor(kind, message, detail = null) {
     super(message || `apfel: ${kind}`)
     this.kind = kind
+    this.detail = detail
   }
 }
 
 function toApfelError(err) {
-  return new ApfelError(EXIT_KIND[err.code] || 'error', err.stderr?.trim() || err.message)
+  const stderr = err.stderr || ''
+  // Apple's model rejects non-supported-language input (e.g. Slovak) with this
+  // stderr on exit 1 — classify by message, not exit code, so it routes to the
+  // lang-safe retry / Ollama fallback instead of a generic 'error'.
+  const kind = /unsupported language/i.test(stderr) ? 'unsupported-language' : (EXIT_KIND[err.code] || 'error')
+  const detail = stderr.split('\n')[0].trim() || null
+  return new ApfelError(kind, err.stderr?.trim() || err.message, detail)
 }
 
 export async function runApfel({ system, prompt, schemaFile, execImpl = exec, timeout = 60000 }) {
@@ -228,7 +235,9 @@ export async function analyzeProject(project, ctx) {
   // batch's needsAnalysis (which recomputes the full-size hash) matches both
   // success and error records. SHRINK_STEPS[0] equals distillProject's defaults.
   const input_hash = distillProject(project, facts, { ...SHRINK_STEPS[0], baseDir }).hash
-  const errorRecord = (error) => ({ ai_analysis: { error, analyzed_at, input_hash, version: ANALYSIS_VERSION } })
+  const errorRecord = (error, detail = null) => ({
+    ai_analysis: { error, ...(detail ? { error_detail: detail } : {}), analyzed_at, input_hash, version: ANALYSIS_VERSION },
+  })
 
   let distilled = null
   try {
@@ -243,16 +252,30 @@ export async function analyzeProject(project, ctx) {
     // countTokensOk re-throws non-exit-4 ApfelErrors (busy/refused/error/timeout).
     // Same contract as runApfel below: only 'unavailable' aborts the batch.
     if (err.kind === 'unavailable') throw err
-    return errorRecord(err.kind)
+    return errorRecord(err.kind, err.detail)
   }
   if (!distilled) return errorRecord('too-large')
 
   let out
+  let lang_safe = false
   try {
     out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
   } catch (err) {
     if (err.kind === 'unavailable') throw err
-    return errorRecord(err.kind)
+    if (err.kind !== 'unsupported-language') return errorRecord(err.kind, err.detail)
+    // Apple's model rejected the input language. Retry once with a language-safe
+    // distillate: no README/commits and the path leaf masked (the name still
+    // appears once). input_hash stays the full-size hash so the cache key matches.
+    const safe = distillProject(project, { ...facts, readme: null, commits: [] }, { ...SHRINK_STEPS[0], baseDir, maskPathLeaf: true })
+    try {
+      out = await runApfel({ system, prompt: safe.text, schemaFile, execImpl })
+      lang_safe = true
+    } catch (err2) {
+      if (err2.kind === 'unavailable') throw err2
+      if (err2.kind !== 'unsupported-language') return errorRecord(err2.kind, err2.detail)
+      // Still language-rejected — commit 2 wires the Ollama fallback here.
+      return errorRecord('unsupported-language', err2.detail)
+    }
   }
 
   const client = out.category === '_Bizz' ? sanitizeClient(out.client, taxonomy.clients) : ''
@@ -268,6 +291,7 @@ export async function analyzeProject(project, ctx) {
       input_hash,
       version: ANALYSIS_VERSION,
       model: 'apple-foundationmodel/apfel',
+      ...(lang_safe ? { lang_safe: true } : {}),
     },
     derived: {
       status: deriveStatus(project, { now, lastCodeCommit: facts.lastCodeCommit, lastCodeModified: project.last_code_modified }),

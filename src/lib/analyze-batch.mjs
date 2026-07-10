@@ -54,7 +54,7 @@ async function persistAnalysis(dataFile, directory, aiAnalysis, aiDerived) {
   await writeJsonlAtomic(dataFile, records)
 }
 
-export async function runAnalysisBatch({ dataFile, baseDir, force = false, only = null, onProgress = () => {}, execImpl }) {
+export async function runAnalysisBatch({ dataFile, baseDir, force = false, only = null, retryErrors = false, onProgress = () => {}, execImpl }) {
   if (status.running) throw new Error('analysis already running')
   status.running = true
   status.startedAt = new Date().toISOString()
@@ -77,6 +77,9 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
       const set = new Set(only)
       records = records.filter(r => set.has(r.directory))
     }
+    // retryErrors: re-run only records whose last analysis errored (intersected
+    // with `only` above), with force semantics (needsAnalysis skipped below).
+    if (retryErrors) records = records.filter(r => r.ai_analysis?.error)
     const total = records.length
     status.total = total
     onProgress({ type: 'status', message: `Analyzing ${total} project(s)`, total })
@@ -90,7 +93,7 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
       try {
         const facts = await gatherFacts(record)
         const { hash } = distillProject(record, facts, { baseDir })
-        if (!force && !needsAnalysis(record, hash)) {
+        if (!force && !retryErrors && !needsAnalysis(record, hash)) {
           skipped++
           status.skipped = skipped
           onProgress({ type: 'skipped', ...base })
