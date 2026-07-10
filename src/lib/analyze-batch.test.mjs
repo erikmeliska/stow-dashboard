@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, mkdir, rm } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { runAnalysisBatch, isAnalysisRunning } from './analyze-batch.mjs'
+import { runAnalysisBatch, isAnalysisRunning, getAnalysisStatus } from './analyze-batch.mjs'
 import { ANALYSIS_VERSION } from './analyzer.mjs'
 
 const MODEL_OUT = {
@@ -102,5 +102,39 @@ test('runAnalysisBatch refuses concurrent entry', async () => {
     release()
     await first
     assert.equal(isAnalysisRunning(), false)
+  } finally { await rm(base, { recursive: true, force: true }) }
+})
+
+test('getAnalysisStatus tracks a batch lifecycle', async () => {
+  const { base, dataFile } = await makeWorld()
+  try {
+    const before = getAnalysisStatus()
+    assert.equal(before.running, false)
+    await runAnalysisBatch({ dataFile, baseDir: base, execImpl: okExec() })
+    const after = getAnalysisStatus()
+    assert.equal(after.running, false)
+    assert.equal(after.total, 1)
+    assert.equal(after.analyzed, 1)
+    assert.ok(after.startedAt)
+    assert.ok(after.finishedAt)
+    assert.equal(after.lastProject, 'proj1')
+  } finally { await rm(base, { recursive: true, force: true }) }
+})
+
+test('getAnalysisStatus reports running=true mid-batch', async () => {
+  const { base, dataFile } = await makeWorld()
+  try {
+    let release
+    const gate = new Promise(res => { release = res })
+    const slowExec = async (cmd, args) => {
+      if (!args.includes('--count-tokens')) await gate
+      return { stdout: args.includes('--count-tokens') ? 'ok' : JSON.stringify(MODEL_OUT), stderr: '' }
+    }
+    const run = runAnalysisBatch({ dataFile, baseDir: base, execImpl: slowExec, force: true })
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(getAnalysisStatus().running, true)
+    release()
+    await run
+    assert.equal(getAnalysisStatus().running, false)
   } finally { await rm(base, { recursive: true, force: true }) }
 })

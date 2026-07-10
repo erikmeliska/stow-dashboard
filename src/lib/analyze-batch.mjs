@@ -11,10 +11,25 @@ import {
 } from './analyzer.mjs'
 import { gatherFacts, distillProject } from './distill.mjs'
 
-let running = false
+const status = {
+  running: false,
+  startedAt: null,
+  current: 0,
+  total: 0,
+  analyzed: 0,
+  skipped: 0,
+  errors: 0,
+  lastProject: null,
+  finishedAt: null,
+  lastError: null,
+}
 
 export function isAnalysisRunning() {
-  return running
+  return status.running
+}
+
+export function getAnalysisStatus() {
+  return { ...status }
 }
 
 async function readJsonl(file) {
@@ -40,8 +55,17 @@ async function persistAnalysis(dataFile, directory, aiAnalysis, aiDerived) {
 }
 
 export async function runAnalysisBatch({ dataFile, baseDir, force = false, only = null, onProgress = () => {}, execImpl }) {
-  if (running) throw new Error('analysis already running')
-  running = true
+  if (status.running) throw new Error('analysis already running')
+  status.running = true
+  status.startedAt = new Date().toISOString()
+  status.current = 0
+  status.total = 0
+  status.analyzed = 0
+  status.skipped = 0
+  status.errors = 0
+  status.lastProject = null
+  status.finishedAt = null
+  status.lastError = null
   const started = Date.now()
   try {
     const taxonomy = await readTaxonomy(baseDir)
@@ -54,17 +78,21 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
       records = records.filter(r => set.has(r.directory))
     }
     const total = records.length
+    status.total = total
     onProgress({ type: 'status', message: `Analyzing ${total} project(s)`, total })
 
     let analyzed = 0, skipped = 0, errors = 0, current = 0
     for (const record of records) {
       current++
+      status.current = current
+      status.lastProject = record.project_name
       const base = { directory: record.directory, project_name: record.project_name, current, total }
       try {
         const facts = await gatherFacts(record)
         const { hash } = distillProject(record, facts, { baseDir })
         if (!force && !needsAnalysis(record, hash)) {
           skipped++
+          status.skipped = skipped
           onProgress({ type: 'skipped', ...base })
           continue
         }
@@ -72,19 +100,26 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
         await persistAnalysis(dataFile, record.directory, ai_analysis, derived)
         if (ai_analysis.error) {
           errors++
+          status.errors = errors
           onProgress({ type: 'analyze_error', ...base, detail: ai_analysis.error })
         } else {
           analyzed++
+          status.analyzed = analyzed
           onProgress({ type: 'analyzed', ...base, detail: ai_analysis.category })
         }
       } catch (err) {
-        if (err instanceof ApfelError && err.kind === 'unavailable') throw err
+        if (err instanceof ApfelError && err.kind === 'unavailable') {
+          status.lastError = err.message
+          throw err
+        }
         errors++
+        status.errors = errors
         onProgress({ type: 'analyze_error', ...base, detail: err.message })
       }
     }
     return { analyzed, skipped, errors, total, durationMs: Date.now() - started }
   } finally {
-    running = false
+    status.running = false
+    status.finishedAt = new Date().toISOString()
   }
 }
