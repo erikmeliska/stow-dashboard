@@ -163,7 +163,7 @@ test('analyzeProject merges model output with deterministic fields', async () =>
     assert.ok(derived.tech.includes('chai'))       // normalized from tech_extra
     assert.ok(derived.tech.includes('javascript')) // deterministic from file_types
     assert.equal(derived.placement_ok, false)
-    assert.equal(derived.suggested_path, path.join(path.dirname(dir), '_Learning', 'codewars'))
+    assert.equal(derived.suggested_path, path.join(path.dirname(dir), '_Learning', path.basename(dir)))
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
@@ -212,5 +212,30 @@ test('analyzeProject marks too-large when even the smallest distillate overflows
       execImpl: fakeExec({ countExit: 4 }),
     })
     assert.equal(ai_analysis.error, 'too-large')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject returns error record when preflight fails with non-unavailable ApfelError', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ countExit: 6 }), // busy during token-count preflight
+    })
+    assert.equal(ai_analysis.error, 'busy')
+    assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject throws when preflight fails with unavailable (batch must abort)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    await assert.rejects(
+      analyzeProject(pilotProject(dir), {
+        taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+        execImpl: fakeExec({ countExit: 5 }),
+      }),
+      (err) => err instanceof ApfelError && err.kind === 'unavailable'
+    )
   } finally { await rm(dir, { recursive: true, force: true }) }
 })

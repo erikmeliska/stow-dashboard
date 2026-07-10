@@ -184,12 +184,19 @@ export async function analyzeProject(project, ctx) {
   const system = buildSystemPrompt(taxonomy)
 
   let distilled = null
-  for (const readmeChars of README_STEPS) {
-    const candidate = distillProject(project, facts, { readmeChars, baseDir })
-    if (await countTokensOk({ system, prompt: candidate.text, execImpl })) {
-      distilled = candidate
-      break
+  try {
+    for (const readmeChars of README_STEPS) {
+      const candidate = distillProject(project, facts, { readmeChars, baseDir })
+      if (await countTokensOk({ system, prompt: candidate.text, execImpl })) {
+        distilled = candidate
+        break
+      }
     }
+  } catch (err) {
+    // countTokensOk re-throws non-exit-4 ApfelErrors (busy/refused/error/timeout).
+    // Same contract as runApfel below: only 'unavailable' aborts the batch.
+    if (err.kind === 'unavailable') throw err
+    return { ai_analysis: { error: err.kind, analyzed_at } }
   }
   if (!distilled) return { ai_analysis: { error: 'too-large', analyzed_at } }
 
@@ -202,7 +209,9 @@ export async function analyzeProject(project, ctx) {
   }
 
   const client = out.category === '_Bizz' ? out.client : ''
-  const name = project.project_name || path.basename(project.directory)
+  // Leaf must be the real directory name (the mv target); project_name is often
+  // a description-like string from the scanner, unsafe as a path component.
+  const name = path.basename(project.directory)
   const suggested = suggestedPath(baseDir, out.category, client, name)
   return {
     ai_analysis: {

@@ -27,7 +27,7 @@ export async function gatherFacts(project) {
   }
   let topLevel = []
   try {
-    topLevel = (await readdir(dir)).filter(n => n !== 'node_modules' && n !== '.git').slice(0, 40)
+    topLevel = (await readdir(dir)).filter(n => n !== 'node_modules' && n !== '.git').sort().slice(0, 40)
   } catch { /* missing dir */ }
   let commits = []
   let lastCodeCommit = null
