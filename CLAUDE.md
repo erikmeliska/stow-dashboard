@@ -28,6 +28,10 @@ npm run deno:build    # Build dist/Stow Dashboard Deno.app
 npm run tauri:build  # Build native macOS app + DMG
 npm run tauri:dev    # Run desktop app in dev mode
 
+# AI Analysis & Usage
+npm run analyze      # AI project analysis batch (incremental; --force, --retry-errors, --pilot, --data <file>)
+npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
+
 # Other
 npm run lint         # Run ESLint
 npm test             # Run tests (node --test)
@@ -70,6 +74,8 @@ SCAN_ROOTS=/Users/ericsko/Projekty,/Users/ericsko/Work  # Comma-separated
 BASE_DIR=/Users/ericsko/Projekty                         # For relative paths in UI
 IDE_COMMANDS=code,cursor,zed        # Comma-separated IDE CLI commands (first = default; legacy IDE_COMMAND still honored)
 TERMINAL_APPS=Terminal,Warp,cmux    # Comma-separated terminal apps (first = default; legacy TERMINAL_APP still honored)
+OLLAMA_URL=http://localhost:11434   # AI-analysis fallback engine for language-rejected/oversized projects (default)
+OLLAMA_MODEL=llama3                 # Ollama model for the fallback (default)
 ```
 
 ## Architecture
@@ -122,7 +128,19 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/discovery.mjs` - Project auto-discovery from process cwds
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
-- `scripts/scan.mjs` - CLI for running the scanner
+- `src/lib/analyzer.mjs` - AI analysis: taxonomy, schema, apfel wrapper, deterministic derivations
+- `src/lib/distill.mjs` - Builds the per-project distillate fed to the model
+- `src/lib/tech-tags.mjs` - Deterministic tech-tag extraction and merge
+- `src/lib/analyze-batch.mjs` - Incremental batch orchestration (input_hash/version gating)
+- `src/lib/ollama.mjs` - Ollama fallback engine for rejected/oversized projects
+- `src/lib/usage.mjs` - AI usage ledger: transcript tail-parse, aggregation, `data/usage.json`
+- `src/lib/usage-pricing.mjs` - Token → USD pricing tables (Claude + Codex)
+- `src/lib/scan-roots.mjs` - Resolves SCAN_ROOTS / project dirs for scan and usage
+- `scripts/analyze.mjs` - CLI for the AI analysis batch
+- `scripts/usage.mjs` - CLI for rebuilding the usage ledger
+- `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
+- `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
+- `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
 - `scripts/prepare-tauri.mjs` - Prepares standalone build for Tauri bundling
 - `tailwind.config.js` - Custom color scheme with CSS variables
 
@@ -167,6 +185,7 @@ The dashboard detects running processes and Docker containers for each project:
 - Displays process count (green) and container count (blue) in Running column
 - Project details sheet shows full process/container info with Kill/Stop buttons
 - Process entries have Globe button to open localhost port and Terminal button to attach
+- TASKS.md task counts are read live at every page render — a Refresh/reload picks up new tasks, no scan needed
 
 ### Script Runner
 
@@ -188,6 +207,28 @@ The scanner integrates with [scc](https://github.com/boyter/scc) (Sloc Cloc and 
 - Table shows "Lines" and "Value" columns (Value hidden by default)
 - Project details sheet shows full code stats breakdown with language list
 
+### AI Project Analysis
+
+The scanner's data is enriched by an on-device AI pass (`npm run analyze`, `src/lib/analyzer.mjs`):
+
+- Runs Apple's on-device model via the `apfel` CLI with `--schema`-guided JSON output (4k context)
+- Builds a per-project *distillate* (`distill.mjs`) → categorizes into the `_*` folder taxonomy plus facets: `project_type`, `domain`, `maturity`, `tech`, `reusable_assets`, `doc_score`/`doc_gaps`
+- Deterministic derivations happen in Node (not the model): `status` from code activity, `suggested_path`, and a merged `tech` list (`tech-tags.mjs`)
+- Incremental via `input_hash` + `ANALYSIS_VERSION` — only changed/stale projects re-run (`analyze-batch.mjs`)
+- Language-safe retry, then an **Ollama fallback** (`ollama.mjs`) for unsupported-language / too-large / error cases
+- Records gain `ai_analysis` (facets or `{error, error_detail}`) and `ai_derived` (`status`, `tech`, `placement_ok`, `suggested_path`)
+- UI: table columns, AI facet filters, an AI Insights panel, and a Reorg report; runs as a background job with poll/resume (`/api/analyze`, `/api/analyze/status`)
+
+### AI Usage Tracking
+
+Per-project AI token cost is derived from local CLI transcripts (`npm run usage`, `src/lib/usage.mjs`):
+
+- Reads Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`) transcripts — append-only, so parsing is an incremental tail-parse keyed by size/mtime
+- Durable "ghost" ledger entries survive transcript pruning (a deleted transcript stays counted)
+- Tokens-only ledger is priced at aggregation time (`usage-pricing.mjs`); Codex is `costUnverifiedUsd` (no server-side pricing)
+- Output is `data/usage.json`, joined to projects at render time — surfaces an AI `$` column and a details-sheet breakdown (list-price value, not an invoice)
+- Refreshed in every refresh cycle and on demand via `/api/usage/rebuild`
+
 ### Quick Filters
 
 The table includes 3-state toggle filters (any → yes → no → any):
@@ -201,10 +242,13 @@ The project includes an MCP server (`src/mcp/server.mjs`) that exposes project d
 npm run mcp  # Start MCP server on stdio
 ```
 
-Tools:
-- `search_projects`, `get_project_details`, `get_project_readme`, `open_project`
+Tools (21):
+- `search_projects` (supports AI facet params: `category`, `type`, `domain`, `tech`, `maturity`, `misplaced`), `get_project_details` (includes `ai` + `aiUsage`), `get_project_readme`, `open_project`
 - `list_dirty_projects`, `get_project_stats`, `list_recent_projects`
 - `list_running_projects`, `get_project_processes`, `stop_process`
+- `get_status`, `set_status`, `list_scripts`, `run_script`
+- `list_tasks`, `add_task`, `verify_task`, `completed_tasks`, `dispatch_task`, `generate_changelog`
+- `find_reusable_assets` — search AI-discovered harvestable building blocks across all projects
 
 ## Data Requirements
 
@@ -217,6 +261,9 @@ The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON obj
 - `libs_size_bytes` (size of node_modules, venv, etc.)
 - `total_size_bytes` (total directory size)
 - `scc` (code stats: `total_code`, `total_comment`, `total_blank`, `total_lines`, `total_complexity`, `total_files`, `estimated_cost`, `estimated_schedule_months`, `estimated_people`, `languages[]`)
+- `ai_analysis` / `ai_derived` (optional, added by `npm run analyze` — see AI Project Analysis)
+
+The AI usage ledger lives alongside as `data/usage.json` (+ its `data/usage-cache.json`). Both are gitignored and written only by `npm run usage` / the refresh cycle — the scanner never touches them.
 
 ### Project Detection
 
