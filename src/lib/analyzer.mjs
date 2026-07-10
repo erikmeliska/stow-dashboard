@@ -4,6 +4,10 @@
 // deliberately NOT asked of the model (status, paths, tech merge).
 import { readdir } from 'fs/promises'
 import path from 'path'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import { gatherFacts, distillProject } from './distill.mjs'
+import { extractTech, normalizeTech } from './tech-tags.mjs'
 
 export const FACETS = {
   project_type: ['web-app', 'api-service', 'cli-tool', 'library', 'browser-extension', 'desktop-app', 'mobile-app', 'script-collection', 'infra-config', 'template-boilerplate', 'prototype-poc', 'fork', 'content-docs'],
@@ -114,4 +118,89 @@ export function suggestedPath(baseDir, category, client, name) {
 export function isPlacementOk(directory, suggested) {
   const wantParent = path.dirname(suggested)
   return directory === suggested || directory.startsWith(wantParent + path.sep)
+}
+
+// --- apfel subprocess + per-project orchestration ---
+
+const exec = promisify(execFile)
+const EXIT_KIND = { 3: 'refused', 4: 'too-large', 5: 'unavailable', 6: 'busy' }
+const README_STEPS = [1500, 600, 200]
+
+export class ApfelError extends Error {
+  constructor(kind, message) {
+    super(message || `apfel: ${kind}`)
+    this.kind = kind
+  }
+}
+
+function toApfelError(err) {
+  return new ApfelError(EXIT_KIND[err.code] || 'error', err.stderr?.trim() || err.message)
+}
+
+export async function runApfel({ system, prompt, schemaFile, execImpl = exec, timeout = 60000 }) {
+  try {
+    const { stdout } = await execImpl(
+      'apfel',
+      ['--schema', schemaFile, '--temperature', '0', '-q', '--retry=3', '-s', system, '--', prompt],
+      { timeout, maxBuffer: 1024 * 1024 }
+    )
+    return JSON.parse(stdout)
+  } catch (err) {
+    if (err instanceof SyntaxError) throw new ApfelError('error', `unparseable model output: ${err.message}`)
+    throw toApfelError(err)
+  }
+}
+
+export async function countTokensOk({ system, prompt, execImpl = exec }) {
+  try {
+    await execImpl('apfel', ['--count-tokens', '--strict', '-q', '-s', system, '--', prompt], { timeout: 15000 })
+    return true
+  } catch (err) {
+    if (err.code === 4) return false
+    throw toApfelError(err)
+  }
+}
+
+export async function analyzeProject(project, ctx) {
+  const { taxonomy, baseDir, schemaFile, execImpl = exec, now = Date.now() } = ctx
+  const analyzed_at = new Date(now).toISOString()
+  const facts = await gatherFacts(project)
+  const system = buildSystemPrompt(taxonomy)
+
+  let distilled = null
+  for (const readmeChars of README_STEPS) {
+    const candidate = distillProject(project, facts, { readmeChars, baseDir })
+    if (await countTokensOk({ system, prompt: candidate.text, execImpl })) {
+      distilled = candidate
+      break
+    }
+  }
+  if (!distilled) return { ai_analysis: { error: 'too-large', analyzed_at } }
+
+  let out
+  try {
+    out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
+  } catch (err) {
+    if (err.kind === 'unavailable') throw err
+    return { ai_analysis: { error: err.kind, analyzed_at } }
+  }
+
+  const client = out.category === '_Bizz' ? out.client : ''
+  const name = project.project_name || path.basename(project.directory)
+  const suggested = suggestedPath(baseDir, out.category, client, name)
+  return {
+    ai_analysis: {
+      ...out,
+      client,
+      analyzed_at,
+      input_hash: distilled.hash,
+      model: 'apple-foundationmodel/apfel',
+    },
+    derived: {
+      status: deriveStatus(project, { now, lastCodeCommit: facts.lastCodeCommit }),
+      tech: normalizeTech([...extractTech(project, facts.topLevel), ...(out.tech_extra || [])]),
+      placement_ok: isPlacementOk(project.directory, suggested),
+      suggested_path: suggested,
+    },
+  }
 }

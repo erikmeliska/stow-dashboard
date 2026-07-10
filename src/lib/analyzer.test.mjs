@@ -7,6 +7,7 @@ import path from 'path'
 import {
   FACETS, CATEGORY_LEGEND, readTaxonomy, buildSchema, buildSystemPrompt,
   deriveStatus, suggestedPath, isPlacementOk,
+  ApfelError, runApfel, analyzeProject,
 } from './analyzer.mjs'
 
 const NOW = Date.parse('2026-07-10T00:00:00Z')
@@ -80,4 +81,115 @@ test('isPlacementOk compares parent directories', () => {
   assert.equal(isPlacementOk('/p/codewars', '/p/_Learning/codewars'), false)
   // nested deeper under the right client still counts
   assert.equal(isPlacementOk('/p/_Bizz/TriSoft/stow/dashboard', '/p/_Bizz/TriSoft/dashboard'), true)
+})
+
+// --- apfel subprocess + per-project orchestration ---
+
+// Fake promisified-execFile: routes by subcommand flag
+function fakeExec({ result, countExit = 0, runExit = 0 }) {
+  return async (cmd, args) => {
+    assert.equal(cmd, 'apfel')
+    const isCount = args.includes('--count-tokens')
+    const exit = isCount ? countExit : runExit
+    if (exit !== 0) {
+      const err = new Error(`apfel exited ${exit}`)
+      err.code = exit
+      throw err
+    }
+    return { stdout: isCount ? 'ok' : JSON.stringify(result), stderr: '' }
+  }
+}
+
+const MODEL_OUT = {
+  category: '_Learning', client: '', generated_description: 'Kata solutions.',
+  project_type: 'script-collection', domain: 'devtools', maturity: 'prototype',
+  tech_extra: ['Chai'], reusable_assets: [], doc_score: 0, doc_gaps: ['README'],
+  confidence: 'medium',
+}
+
+const TAX = { categories: ['_Bizz', '_Learning'], clients: ['TriSoft'] }
+
+function pilotProject(dir) {
+  return {
+    directory: dir, project_name: 'codewars',
+    created: '2022-08-12T00:00:00Z', last_modified: '2022-08-28T00:00:00Z',
+    stack: ['chai'], file_types: { '.js': 7 },
+    git_info: { git_detected: false }, scc: { total_code: 131, total_files: 8, languages: [] },
+  }
+}
+
+test('runApfel maps exit codes to ApfelError kinds', async () => {
+  for (const [exit, kind] of [[3, 'refused'], [4, 'too-large'], [5, 'unavailable'], [6, 'busy'], [1, 'error']]) {
+    await assert.rejects(
+      runApfel({ system: 's', prompt: 'p', schemaFile: '/tmp/x.json', execImpl: fakeExec({ runExit: exit }) }),
+      (err) => err instanceof ApfelError && err.kind === kind
+    )
+  }
+})
+
+test('analyzeProject merges model output with deterministic fields', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = pilotProject(dir)
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: MODEL_OUT }), now: Date.parse('2026-07-10T00:00:00Z'),
+    })
+    assert.equal(ai_analysis.category, '_Learning')
+    assert.equal(ai_analysis.input_hash.length, 64)
+    assert.ok(ai_analysis.analyzed_at.startsWith('2026-07-10'))
+    assert.equal(derived.status, 'archive-candidate')
+    assert.ok(derived.tech.includes('chai'))       // normalized from tech_extra
+    assert.ok(derived.tech.includes('javascript')) // deterministic from file_types
+    assert.equal(derived.placement_ok, false)
+    assert.equal(derived.suggested_path, path.join(path.dirname(dir), '_Learning', 'codewars'))
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject clears client when category is not _Bizz', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const out = { ...MODEL_OUT, client: 'TriSoft' } // model hallucinated a client
+    const { ai_analysis } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: out }),
+    })
+    assert.equal(ai_analysis.client, '')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject returns error record on refusal, keeps batch alive', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ runExit: 3 }),
+    })
+    assert.equal(ai_analysis.error, 'refused')
+    assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject throws on model unavailable (batch must abort)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    await assert.rejects(
+      analyzeProject(pilotProject(dir), {
+        taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+        execImpl: fakeExec({ runExit: 5 }),
+      }),
+      (err) => err instanceof ApfelError && err.kind === 'unavailable'
+    )
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject marks too-large when even the smallest distillate overflows', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ countExit: 4 }),
+    })
+    assert.equal(ai_analysis.error, 'too-large')
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })
