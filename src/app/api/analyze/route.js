@@ -1,11 +1,10 @@
 import path from 'path'
-import os from 'os'
 import { runAnalysisBatch, isAnalysisRunning } from '@/lib/analyze-batch.mjs'
 import { ApfelError } from '@/lib/analyzer.mjs'
 import { readProjectsData } from '@/lib/projects'
+import { getBaseDir } from '@/lib/scan-roots.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
-const BASE_DIR = process.env.BASE_DIR || path.join(os.homedir(), 'Projekty')
 
 export async function POST(request) {
   const body = await request.json().catch(() => ({}))
@@ -32,7 +31,7 @@ export async function POST(request) {
         }
         send({ type: 'status', message: project ? 'Re-analyzing project…' : 'Starting AI analysis…' })
         const summary = await runAnalysisBatch({
-          dataFile: DATA_FILE, baseDir: BASE_DIR,
+          dataFile: DATA_FILE, baseDir: getBaseDir(),
           force: force || Boolean(project), only,
           onProgress: send,
         })

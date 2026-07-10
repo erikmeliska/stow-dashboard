@@ -8,10 +8,10 @@ import { ScanControls } from '@/components/ScanControls'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
+import { getBaseDir } from '@/lib/scan-roots.mjs'
 
 export const dynamic = 'force-dynamic'
 
-const BASE_DIR = process.env.BASE_DIR || '/Users/ericsko/Projekty'
 const OWN_REPOS = ['boys-from-heaven', 'boysfromheaven', 'erikmeliska', 'intelimail']
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README', 'readme']
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
@@ -54,8 +54,9 @@ export default async function DashboardPage() {
         }
     }))
 
+    const baseDir = getBaseDir()
     const processedProjects = await Promise.all(projects.map(async project => {
-        const relativePath = project.directory.replace(BASE_DIR, '')
+        const relativePath = project.directory.replace(baseDir, '')
         const parts = relativePath.split('/')
         const groupParts = parts.filter(Boolean).slice(0, -1)
         const projectDir = parts[parts.length - 1]

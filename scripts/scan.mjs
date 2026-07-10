@@ -25,6 +25,7 @@ function parseArgs() {
         sync: null,
         force: false,
         cleanup: false,
+        allowShrink: false,
         help: false
     }
 
@@ -48,6 +49,8 @@ function parseArgs() {
             options.force = true
         } else if (arg === '--cleanup') {
             options.cleanup = true
+        } else if (arg === '--allow-shrink') {
+            options.allowShrink = true
         }
     }
 
@@ -66,6 +69,7 @@ Options:
   -s, --sync [path]      Sync all metadata to JSONL file
   -f, --force            Force update all metadata
   --cleanup              Delete all .project_meta.json files
+  --allow-shrink         Allow syncing even if it removes >30% of existing projects
   -h, --help             Show this help message
 
 Environment:
@@ -138,7 +142,7 @@ async function main() {
     const projects = await scanner.scanProjects()
 
     if (options.sync) {
-        await scanner.syncMetadata(projects)
+        await scanner.syncMetadata(projects, { allowShrink: options.allowShrink })
     }
 }
 

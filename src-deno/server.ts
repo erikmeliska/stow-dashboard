@@ -177,6 +177,10 @@ export async function startServer(): Promise<void> {
   // importing server.js so it's in place before any request handler runs.
   // This intentionally does NOT swallow the error silently — it's still
   // logged to the console so the underlying bug is visible and debuggable.
+  // The scanner now also bounds discovery concurrency and retries EMFILE at
+  // the readdir level, and a transient failure no longer deletes projects
+  // from the JSONL (the sync step refuses a large unexplained shrink), so
+  // these fd-exhaustion errors are far less likely to reach this net at all.
   process.on("unhandledRejection", (reason) => {
     console.error("[Stow/Deno] unhandled rejection (backend):", reason);
   });

@@ -4,9 +4,13 @@ import { simpleGit } from 'simple-git'
 import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
 import { collectProjectProcesses } from '@/lib/processes.mjs'
 import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
+import { getScanRoots } from '@/lib/scan-roots.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
-const SCAN_ROOTS = (process.env.SCAN_ROOTS || '/Users/ericsko/Projekty').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
+
+// Read per-request so a SCAN_ROOTS change from the Settings dialog applies
+// without a server restart; strip trailing slashes for path-prefix matching.
+const scanRoots = () => getScanRoots().map(s => s.replace(/\/+$/, ''))
 
 // Module-level: survives across requests within one server process.
 const negativeCache = new NegativeCache()
@@ -92,6 +96,7 @@ export async function POST() {
             const startTime = Date.now()
 
             try {
+                const SCAN_ROOTS = scanRoots()
                 // Load existing projects
                 const content = await fs.readFile(DATA_FILE, 'utf-8')
                 const projects = content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
