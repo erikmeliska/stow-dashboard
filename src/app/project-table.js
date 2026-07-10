@@ -1055,6 +1055,13 @@ export function ProjectTable({ projects, ownRepos }) {
         )
     }
 
+    // Re-derive the open sheet's project from fresh props so router.refresh()
+    // (e.g. after Re-analyze) propagates updated data into the open sheet.
+    // Fall back to the open-time snapshot if the record vanished from props.
+    const openSheetProject = detailsSheet.project
+        ? (projects.find(p => p.id === detailsSheet.project.id) ?? detailsSheet.project)
+        : null
+
     return (
         <>
         <ReadmeDialog
@@ -1066,7 +1073,7 @@ export function ProjectTable({ projects, ownRepos }) {
         <ProjectDetailsSheet
             open={detailsSheet.open}
             onOpenChange={(open) => setDetailsSheet({ open, project: open ? detailsSheet.project : null })}
-            project={detailsSheet.project}
+            project={openSheetProject}
         />
         <div className="h-full flex flex-col min-w-0">
             {/* Filters - fixed */}
