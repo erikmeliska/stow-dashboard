@@ -161,3 +161,49 @@ test('walkFileTree never exceeds FS_CONCURRENCY concurrent fs.stat calls on a wi
         await fs.rm(root, { recursive: true, force: true })
     }
 })
+
+// --- Task 1: last_code_modified + AI-key durability -------------------------
+
+test('walkFileTree computes last_code_modified excluding meta-doc files', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-scan-'))
+    try {
+        const old = new Date('2020-01-05T00:00:00Z')
+        const fresh = new Date('2026-07-01T00:00:00Z')
+        await fs.writeFile(path.join(dir, 'index.js'), 'x')
+        await fs.utimes(path.join(dir, 'index.js'), old, old)
+        await fs.writeFile(path.join(dir, 'README.md'), 'x')
+        await fs.utimes(path.join(dir, 'README.md'), fresh, fresh)
+        await fs.writeFile(path.join(dir, 'package.json'), '{}')
+        await fs.utimes(path.join(dir, 'package.json'), old, old)
+        const scanner = new ProjectScanner({ scanRoots: [dir] })
+        const meta = await scanner.extractProjectMetadata(dir)
+        // last_modified follows the freshest file (README), last_code_modified must not
+        assert.equal(new Date(meta.last_code_modified).getUTCFullYear(), 2020)
+        assert.equal(new Date(meta.last_modified).getUTCFullYear(), 2026)
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+test('last_code_modified is null for a project with only meta-doc files', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-scan-'))
+    try {
+        await fs.writeFile(path.join(dir, 'README.md'), 'only docs')
+        const scanner = new ProjectScanner({ scanRoots: [dir] })
+        const meta = await scanner.extractProjectMetadata(dir)
+        assert.equal(meta.last_code_modified, null)
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+test('processProject carries ai_analysis and ai_derived across re-extraction', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-scan-'))
+    try {
+        await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'x' }))
+        const scanner = new ProjectScanner({ scanRoots: [dir], forceUpdate: true })
+        const ai = { category: '_Learning', input_hash: 'h', version: 2 }
+        const derived = { status: 'dead', tech: [], placement_ok: true, suggested_path: dir }
+        scanner.existingProjectsCache.set(dir, { directory: dir, last_modified: '2000-01-01T00:00:00Z', ai_analysis: ai, ai_derived: derived })
+        const meta = await scanner.processProject(dir)
+        assert.deepEqual(meta.ai_analysis, ai)      // survived forced re-extraction
+        assert.deepEqual(meta.ai_derived, derived)
+        assert.ok(meta.stack !== undefined)          // and it IS a fresh record
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})

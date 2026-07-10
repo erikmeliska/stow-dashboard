@@ -5,6 +5,7 @@ import { execFile } from 'child_process'
 import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
 import ignore from 'ignore'
+import { isMetaDocPath } from '../lib/distill.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
     '.git', 'node_modules', 'venv', '.venv',
@@ -257,6 +258,7 @@ export class ProjectScanner {
     async walkFileTree(directory) {
         let latestAtime = 0
         let latestMtime = 0
+        let latestCodeMtime = 0
         let contentSizeBytes = 0
         let libsSizeBytes = 0
         const fileTypes = {}
@@ -296,6 +298,11 @@ export class ProjectScanner {
                                 contentSizeBytes += stat.size
                                 const ext = path.extname(entry.name) || 'no_extension'
                                 fileTypes[ext] = (fileTypes[ext] || 0) + 1
+                                // Code-activity date: content files only, meta-docs excluded
+                                const relPath = path.relative(directory, fullPath)
+                                if (!isMetaDocPath(relPath)) {
+                                    latestCodeMtime = Math.max(latestCodeMtime, stat.mtimeMs)
+                                }
                             }
                         }).catch(() => {})
                     )
@@ -306,7 +313,7 @@ export class ProjectScanner {
         }
 
         await scanDir(directory)
-        return { latestAtime, latestMtime, contentSizeBytes, libsSizeBytes, fileTypes }
+        return { latestAtime, latestMtime, latestCodeMtime, contentSizeBytes, libsSizeBytes, fileTypes }
     }
 
     // Lightweight: only get latest mtime for cache check (skips ignored dirs entirely)
@@ -346,7 +353,7 @@ export class ProjectScanner {
     }
 
     async extractProjectMetadata(directory, treeData = null) {
-        const { latestAtime, latestMtime, contentSizeBytes, libsSizeBytes, fileTypes } =
+        const { latestAtime, latestMtime, latestCodeMtime, contentSizeBytes, libsSizeBytes, fileTypes } =
             treeData || await this.walkFileTree(directory)
 
         // Get creation time + read project files in parallel
@@ -426,6 +433,7 @@ export class ProjectScanner {
             created: createdTime ? createdTime.toISOString() : null,
             last_accessed: new Date(latestAtime).toISOString(),
             last_modified: new Date(latestMtime).toISOString(),
+            last_code_modified: latestCodeMtime ? new Date(latestCodeMtime).toISOString() : null,
             project_name: projectName || path.basename(directory),
             description,
             stack: [...new Set(stack)],
@@ -506,6 +514,13 @@ export class ProjectScanner {
             let projectMeta
             if (needsUpdate) {
                 projectMeta = await this.extractProjectMetadata(directory)
+                // Carry AI-analysis keys forward: extractProjectMetadata rebuilds a
+                // fixed record literal, so any AI keys added later would be wiped on
+                // rescan. Re-attach them from the cached record (shouldUpdateMetadata
+                // returns cached:null on the update path, so look it up directly).
+                const prior = this.existingProjectsCache.get(directory)
+                if (prior?.ai_analysis) projectMeta.ai_analysis = prior.ai_analysis
+                if (prior?.ai_derived) projectMeta.ai_derived = prior.ai_derived
                 const processingTime = ((Date.now() - startTime) / 1000).toFixed(1)
                 this.onProgress({ type: 'updated', directory, processingTime })
 
