@@ -2,59 +2,55 @@
   {
     "directory": "/Users/ericsko/Projekty/codewars",
     "ai_analysis": {
-      "reusable_assets": [
-        "ready-made Google OAuth flow"
-      ],
-      "domain": "education",
-      "category": "_Learning",
-      "doc_score": 0,
-      "project_type": "script-collection",
-      "generated_description": "A collection of coding exercises and tutorials.",
-      "maturity": "idea",
-      "tech_extra": [
-        "chai"
-      ],
-      "confidence": "low",
-      "doc_gaps": [
-        "README",
-        "setup and usage"
-      ],
       "client": "",
-      "analyzed_at": "2026-07-10T13:16:20.488Z",
+      "tech_extra": [
+        "JavaScript"
+      ],
+      "doc_gaps": [
+        "README"
+      ],
+      "maturity": "idea",
+      "generated_description": "A JavaScript coding exercise.",
+      "category": "_Learning",
+      "confidence": "low",
+      "reusable_assets": [],
+      "doc_score": 0,
+      "domain": "education",
+      "project_type": "script-collection",
+      "analyzed_at": "2026-07-10T14:59:49.899Z",
       "input_hash": "c6b99f668bbd2c31815cb8816f58786b6dcc0ac351a072506d8d402639fd2f07",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "archive-candidate",
       "tech": [
-        "chai",
         "javascript"
       ],
       "placement_ok": false,
       "suggested_path": "/Users/ericsko/Projekty/_Learning/codewars"
     },
-    "ms": 2560
+    "ms": 2895
   },
   {
     "directory": "/Users/ericsko/Projekty/meme",
     "ai_analysis": {
-      "reusable_assets": [],
-      "confidence": "low",
       "tech_extra": [
         "express",
         "nodemon"
       ],
-      "client": "",
-      "maturity": "prototype",
       "generated_description": "A simple web app for creating memes.",
-      "project_type": "web-app",
+      "reusable_assets": [],
+      "confidence": "low",
+      "doc_score": 0,
+      "domain": "other",
+      "maturity": "prototype",
+      "category": "_Personal",
+      "client": "",
       "doc_gaps": [
         "README"
       ],
-      "doc_score": 0,
-      "category": "_Personal",
-      "domain": "other",
-      "analyzed_at": "2026-07-10T13:16:23.048Z",
+      "project_type": "web-app",
+      "analyzed_at": "2026-07-10T14:59:52.794Z",
       "input_hash": "42b22f6a8b6de5181bdbc1580b7eb9b3d48c9dfd923f085d3585380658f1adba",
       "model": "apple-foundationmodel/apfel"
     },
@@ -68,27 +64,30 @@
       "placement_ok": false,
       "suggested_path": "/Users/ericsko/Projekty/_Personal/meme"
     },
-    "ms": 1921
+    "ms": 2085
   },
   {
     "directory": "/Users/ericsko/Projekty/openai",
     "ai_analysis": {
       "doc_gaps": [
-        "README"
+        "README",
+        "setup instructions"
       ],
-      "project_type": "web-app",
-      "domain": "ai-ml",
-      "confidence": "low",
-      "category": "_AI",
+      "project_type": "fork",
       "doc_score": 0,
-      "reusable_assets": [],
-      "tech_extra": [
-        "openai"
-      ],
-      "generated_description": "An AI project.",
-      "maturity": "idea",
       "client": "",
-      "analyzed_at": "2026-07-10T13:16:24.969Z",
+      "domain": "ai-ml",
+      "maturity": "prototype",
+      "reusable_assets": [
+        "AI/ML experiments"
+      ],
+      "confidence": "low",
+      "generated_description": "An AI-related project with JSON and JavaScript files.",
+      "category": "_AI",
+      "tech_extra": [
+        "JavaScript"
+      ],
+      "analyzed_at": "2026-07-10T14:59:54.879Z",
       "input_hash": "a7ef4635e9c7372ac343de19fc38373c0119ecff95d15ba0235b6ab3ce4728cd",
       "model": "apple-foundationmodel/apfel"
     },
@@ -101,27 +100,29 @@
       "placement_ok": false,
       "suggested_path": "/Users/ericsko/Projekty/_AI/openai"
     },
-    "ms": 1932
+    "ms": 2345
   },
   {
     "directory": "/Users/ericsko/Projekty/php",
     "ai_analysis": {
-      "domain": "other",
-      "project_type": "script-collection",
-      "tech_extra": [
+      "category": "_Utilities",
+      "client": "",
+      "generated_description": "A PHP utility script.",
+      "doc_score": 0,
+      "reusable_assets": [
         "php"
       ],
-      "maturity": "abandoned-wip",
-      "reusable_assets": [],
+      "domain": "other",
       "doc_gaps": [
         "README"
       ],
-      "generated_description": "A PHP script repository.",
-      "category": "_Utilities",
+      "project_type": "cli-tool",
+      "tech_extra": [
+        "php"
+      ],
+      "maturity": "idea",
       "confidence": "low",
-      "doc_score": 0,
-      "client": "",
-      "analyzed_at": "2026-07-10T13:16:26.901Z",
+      "analyzed_at": "2026-07-10T14:59:57.224Z",
       "input_hash": "b51e7e93f068d5b81373d04936e4e6027d61cca1131ebb602ba0a62366fdc8c5",
       "model": "apple-foundationmodel/apfel"
     },
@@ -135,31 +136,30 @@
       "placement_ok": false,
       "suggested_path": "/Users/ericsko/Projekty/_Utilities/php"
     },
-    "ms": 2033
+    "ms": 2116
   },
   {
     "directory": "/Users/ericsko/Projekty/camviewer",
     "ai_analysis": {
+      "reusable_assets": [],
+      "generated_description": "A Next.js project for testing and development.",
+      "confidence": "low",
+      "category": "_Testing",
       "doc_gaps": [
-        "no documentation at all",
-        "missing README"
+        "missing README documentation",
+        "missing API documentation"
       ],
       "tech_extra": [
-        "Next.js"
-      ],
-      "generated_description": "A Next.js project for a business application.",
-      "client": "new:<Name>",
-      "category": "_Bizz",
-      "project_type": "web-app",
-      "reusable_assets": [
-        "ready-made Google OAuth flow"
+        "Next.js",
+        "create-next-app"
       ],
       "maturity": "prototype",
-      "domain": "productivity",
-      "confidence": "low",
-      "doc_score": 0,
-      "analyzed_at": "2026-07-10T13:16:28.934Z",
-      "input_hash": "a404a75dd77705870c4c230a1346cfee135f4e83c9c0189b3ed41a51678a53ee",
+      "doc_score": 50,
+      "project_type": "fork",
+      "domain": "devtools",
+      "client": "",
+      "analyzed_at": "2026-07-10T14:59:59.340Z",
+      "input_hash": "58c8b8afc531d334f6c95a0266fa02c7a8502a64db4ed0250d2c3bd0a183068d",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
@@ -170,36 +170,35 @@
         "react"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Bizz/<Name>/camviewer"
+      "suggested_path": "/Users/ericsko/Projekty/_Testing/camviewer"
     },
-    "ms": 2978
+    "ms": 3065
   },
   {
     "directory": "/Users/ericsko/Projekty/gatsby-demo",
     "ai_analysis": {
-      "category": "_Utilities",
-      "project_type": "cli-tool",
       "tech_extra": [
-        "Node.js",
-        "Gatsby CLI"
-      ],
-      "generated_description": "A utility tool for quickly setting up and managing Gatsby projects.",
-      "domain": "devtools",
-      "doc_gaps": [
-        "README lacks detailed setup instructions.",
-        "No mention of how to install dependencies.",
-        "No examples of usage or integration with other tools."
+        "Gatsby CLI",
+        "React"
       ],
       "confidence": "low",
-      "maturity": "prototype",
-      "client": "",
-      "doc_score": 50,
+      "project_type": "template-boilerplate",
       "reusable_assets": [
-        "Gatsby CLI integration.",
-        "Basic configuration templates."
+        "Gatsby CLI setup instructions.",
+        "Basic React and Gatsby configuration files."
       ],
-      "analyzed_at": "2026-07-10T13:16:31.912Z",
-      "input_hash": "2bcc5eeb25814430e8a860a03e7b350a8ef8ed017212ce5d31ec7ccba5f85871",
+      "doc_score": 50,
+      "domain": "devtools",
+      "client": "",
+      "doc_gaps": [
+        "README lacks detailed setup instructions for running the Gatsby CLI.",
+        "No mention of how to deploy the site to a hosting provider."
+      ],
+      "generated_description": "A utility for creating and managing Gatsby sites.",
+      "maturity": "prototype",
+      "category": "_Utilities",
+      "analyzed_at": "2026-07-10T15:00:02.405Z",
+      "input_hash": "ecce4f640d27a14d71ca2ee3b8d8a13d95d1adb1752ab10f48cc5e15fce04b7d",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
@@ -208,79 +207,72 @@
         "gatsby",
         "gatsby-cli",
         "javascript",
-        "node",
         "react",
         "typescript"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Utilities/gatsby-starter-default"
+      "suggested_path": "/Users/ericsko/Projekty/_Utilities/gatsby-demo"
     },
-    "ms": 3824
+    "ms": 4177
   },
   {
     "directory": "/Users/ericsko/Projekty/gitlabreports",
     "ai_analysis": {
-      "client": "new:Cosango",
-      "doc_gaps": [
-        "Missing instructions for deploying the app on a self-hosted GitLab installation.",
-        "No mention of version control integration or CI/CD pipelines."
-      ],
-      "doc_score": 75,
-      "tech_extra": [
-        "GitLab API for data fetching.",
-        "HTML5 Canvas for displaying reports visually."
-      ],
-      "domain": "devtools",
-      "generated_description": "A web application for generating time tracking reports for GitLab projects.",
-      "category": "_Bizz",
       "project_type": "web-app",
-      "confidence": "medium",
-      "reusable_assets": [
-        "GitLab integration for authentication.",
-        "Basic HTML and CSS for the frontend.",
-        "JavaScript for report generation logic."
-      ],
+      "category": "_Testing",
+      "client": "",
+      "domain": "devtools",
       "maturity": "prototype",
-      "analyzed_at": "2026-07-10T13:16:35.736Z",
-      "input_hash": "bd434ae59238fe24eac735760d42901a1e3a9c609ba1da6429bdebf9fbdb7f42",
+      "tech_extra": [
+        "HTML5, JavaScript, GitLab API"
+      ],
+      "doc_score": 50,
+      "generated_description": "A web app for generating time tracking reports for GitLab projects.",
+      "reusable_assets": [
+        "GitLab integration code snippets"
+      ],
+      "confidence": "low",
+      "doc_gaps": [
+        "Missing README sections on authentication, API endpoints, and deployment instructions.",
+        "Lack of detailed usage examples and troubleshooting tips."
+      ],
+      "analyzed_at": "2026-07-10T15:00:06.582Z",
+      "input_hash": "aa2d60ae9eb4495366de4f109ee9a52a2876c6f34b1b83a4c63e275fc19ad830",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "dead",
       "tech": [
-        "gitlab-api-for-data-fetching.",
-        "html5-canvas-for-displaying-reports-visually.",
         "javascript"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Bizz/Cosango/GitLab Reports"
+      "suggested_path": "/Users/ericsko/Projekty/_Testing/gitlabreports"
     },
-    "ms": 4383
+    "ms": 3925
   },
   {
     "directory": "/Users/ericsko/Projekty/face-api",
     "ai_analysis": {
+      "confidence": "low",
+      "client": "",
       "generated_description": "JavaScript API for face detection and face recognition in the browser with tensorflow.js.",
-      "project_type": "api-service",
-      "reusable_assets": [
-        "face-api.js"
-      ],
-      "doc_gaps": [
-        "no README",
-        "no installation instructions",
-        "no usage examples"
-      ],
       "doc_score": 0,
+      "category": "_AI",
+      "project_type": "api-service",
       "tech_extra": [
         "tensorflow.js"
       ],
-      "confidence": "low",
-      "client": "",
-      "maturity": "prototype",
+      "doc_gaps": [
+        "no README",
+        "no installation instructions"
+      ],
       "domain": "ai-ml",
-      "category": "_AI",
-      "analyzed_at": "2026-07-10T13:16:40.119Z",
-      "input_hash": "bd3c9aab9755f2839fceb8d697fe0e5ac941a0765e653a10420fad34c1f4225e",
+      "maturity": "prototype",
+      "reusable_assets": [
+        "face-api.js"
+      ],
+      "analyzed_at": "2026-07-10T15:00:10.507Z",
+      "input_hash": "f49f408fbcecbaf506692c4f79f9ca93d8412227560c63e56cf2f63dfb23bab6",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
@@ -291,32 +283,33 @@
         "typescript"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_AI/face-api.js"
+      "suggested_path": "/Users/ericsko/Projekty/_AI/face-api"
     },
-    "ms": 3558
+    "ms": 3548
   },
   {
     "directory": "/Users/ericsko/Projekty/krestan-bible",
     "ai_analysis": {
-      "tech_extra": [
-        "prisma",
-        "express"
-      ],
-      "client": "",
-      "doc_score": 0,
-      "project_type": "content-docs",
-      "category": "_Archives",
-      "generated_description": "A collection of audio files for the Bible.",
-      "domain": "church-community",
-      "reusable_assets": [],
-      "confidence": "low",
-      "maturity": "abandoned-wip",
+      "generated_description": "An educational project for teaching the Bible.",
+      "category": "_Learning",
+      "project_type": "script-collection",
       "doc_gaps": [
         "README",
         "setup instructions"
       ],
-      "analyzed_at": "2026-07-10T13:16:43.677Z",
-      "input_hash": "f09552e08fefa35f746deac521448761fe8061e07c194d755abaca452bcc72d1",
+      "tech_extra": [
+        "JavaScript"
+      ],
+      "confidence": "low",
+      "doc_score": 0,
+      "client": "",
+      "maturity": "idea",
+      "reusable_assets": [
+        "audio generator"
+      ],
+      "domain": "church-community",
+      "analyzed_at": "2026-07-10T15:00:14.055Z",
+      "input_hash": "0703df1c121d458f76cc8d52cd1634cddfcd43a0de022049449acf9071033274",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
@@ -327,319 +320,320 @@
         "prisma"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Archives/krestan-bible"
+      "suggested_path": "/Users/ericsko/Projekty/_Learning/krestan-bible"
     },
-    "ms": 2187
+    "ms": 2390
   },
   {
     "directory": "/Users/ericsko/Projekty/swagger-ui",
     "ai_analysis": {
       "error": "too-large",
-      "analyzed_at": "2026-07-10T13:16:45.864Z"
+      "analyzed_at": "2026-07-10T15:00:16.445Z"
     },
-    "ms": 16378
+    "ms": 14241
   },
   {
     "directory": "/Users/ericsko/Projekty/bitnami-docker-moodle",
     "ai_analysis": {
-      "confidence": "medium",
-      "generated_description": "A Docker image for running Moodle LMS.",
-      "category": "_Bizz",
-      "client": "new:Bitnami",
       "doc_gaps": [
-        "missing documentation on how to use the Docker image for production"
+        "No client name provided.",
+        "Missing details about the business context or client requirements.",
+        "Lack of information on how the image is being used or integrated into a larger system."
       ],
-      "maturity": "production",
-      "tech_extra": [
-        "Docker"
-      ],
+      "client": "Bitnami",
+      "confidence": "medium",
+      "doc_score": 50,
+      "maturity": "prototype",
+      "generated_description": "A Docker image for Moodle LMS, a popular open-source learning management system.",
       "domain": "education",
-      "doc_score": 100,
-      "reusable_assets": [
-        "docker-compose.yml"
+      "tech_extra": [
+        "Docker",
+        "Moodle LMS",
+        "Open-source software"
       ],
       "project_type": "web-app",
-      "analyzed_at": "2026-07-10T13:17:02.242Z",
-      "input_hash": "1105cd9ca7813a110045580361aeb3f34989ab1f830922985d163793e7785f16",
+      "reusable_assets": [
+        "Docker Compose file for deploying the Moodle LMS image.",
+        "Configuration options for the Moodle LMS image.",
+        "Code snippets for setting up the environment variables."
+      ],
+      "category": "_Bizz",
+      "analyzed_at": "2026-07-10T15:00:30.686Z",
+      "input_hash": "9a832a389380b027da356da84ddce75574bc012be2b327f5f3cd7d53287c8063",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "dead",
       "tech": [
-        "docker"
+        "docker",
+        "moodle-lms"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Bizz/Bitnami/Bitnami Docker Image for Moodle<sup>TM</sup> LMS"
+      "suggested_path": "/Users/ericsko/Projekty/_Bizz/Bitnami/bitnami-docker-moodle"
     },
-    "ms": 3183
+    "ms": 4667
   },
   {
     "directory": "/Users/ericsko/Projekty/osint",
     "ai_analysis": {
-      "domain": "productivity",
-      "client": "new:<Name>",
-      "maturity": "prototype",
-      "confidence": "low",
-      "reusable_assets": [
-        "Next.js setup"
-      ],
-      "generated_description": "A Next.js web application for productivity.",
-      "tech_extra": [
-        "API routes"
-      ],
-      "category": "_Bizz",
-      "doc_score": 50,
+      "project_type": "fork",
+      "category": "_Testing",
       "doc_gaps": [
-        "API documentation",
+        "API routes documentation",
         "Deployment instructions"
       ],
-      "project_type": "web-app",
-      "analyzed_at": "2026-07-10T13:17:05.425Z",
-      "input_hash": "0137a2ee5936a79eab5cdd3eba0f9553efa3f9e05b3daa17c404e5c5c546a00b",
+      "confidence": "low",
+      "domain": "devtools",
+      "doc_score": 50,
+      "maturity": "prototype",
+      "generated_description": "Testing Next.js app.",
+      "tech_extra": [
+        "create-next-app"
+      ],
+      "reusable_assets": [
+        "Next.js API routes"
+      ],
+      "client": "",
+      "analyzed_at": "2026-07-10T15:00:35.353Z",
+      "input_hash": "9de98f7f07a09732a3bd4f25464c224c1d26430b847b8939150fe8a3bb6c1e5c",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "dead",
       "tech": [
-        "api-routes",
         "javascript",
         "nextjs",
         "react"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Bizz/<Name>/osint"
+      "suggested_path": "/Users/ericsko/Projekty/_Testing/osint"
     },
-    "ms": 2888
+    "ms": 3001
   },
   {
     "directory": "/Users/ericsko/Projekty/year-in-search-trends",
     "ai_analysis": {
-      "domain": "ai-ml",
-      "generated_description": "An AI-powered tool for visualizing search interest trends.",
       "doc_score": 50,
-      "project_type": "cli-tool",
-      "confidence": "low",
-      "reusable_assets": [
-        "Code snippets for data source usage.",
-        "Basic structure for machine learning model integration."
-      ],
-      "category": "_AI",
-      "doc_gaps": [
-        "No detailed explanation of the data source usage.",
-        "Lack of a comprehensive explanation of the machine learning model used for trend prediction.",
-        "No documentation on how to fine-tune the model for specific datasets."
-      ],
+      "generated_description": "An AI-powered visualization tool for analyzing search trends.",
+      "project_type": "fork",
       "tech_extra": [
-        "Pytrends API for data retrieval.",
-        "Seaborn for visualization."
+        "Google Trends API usage"
       ],
-      "client": "",
+      "confidence": "low",
+      "doc_gaps": [
+        "No detailed explanation of the AI model used.",
+        "Lack of documentation on how to fine-tune the model for specific industries or datasets."
+      ],
+      "reusable_assets": [
+        "Code style guide (black)",
+        "FacetGrid library integration"
+      ],
+      "domain": "ai-ml",
       "maturity": "prototype",
-      "analyzed_at": "2026-07-10T13:17:08.313Z",
-      "input_hash": "8ac8fc476f1869dd7c1a00396f2dc100b1e2e8a5ade3950ba59da00f31572c24",
+      "category": "_AI",
+      "client": "",
+      "analyzed_at": "2026-07-10T15:00:38.354Z",
+      "input_hash": "20c468de08effe609fc011366bb6c75a4cd4a6444c08b575f57217f2b7c24f7e",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "dead",
       "tech": [
-        "python",
-        "pytrends-api-for-data-retrieval.",
-        "seaborn-for-visualization."
+        "python"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_AI/year-in-search-trends: Visualization of search interest over time"
+      "suggested_path": "/Users/ericsko/Projekty/_AI/year-in-search-trends"
     },
-    "ms": 4344
+    "ms": 4104
   },
   {
     "directory": "/Users/ericsko/Projekty/zoom",
     "ai_analysis": {
-      "project_type": "web-app",
+      "confidence": "low",
+      "client": "",
       "doc_gaps": [
         "README",
-        "setup and usage"
+        "Setup instructions"
       ],
-      "category": "_Bizz",
+      "project_type": "web-app",
       "domain": "communication-email",
-      "generated_description": "A web-based email client.",
-      "doc_score": 0,
-      "maturity": "prototype",
       "tech_extra": [
-        "ejs"
+        "Express for server-side logic"
       ],
-      "client": "new:zoom",
+      "generated_description": "A simple web-based video conferencing application.",
+      "maturity": "prototype",
+      "category": "_Testing",
+      "doc_score": 0,
       "reusable_assets": [
-        "socket.io"
+        "Socket.IO for real-time communication"
       ],
-      "confidence": "low",
-      "analyzed_at": "2026-07-10T13:17:12.657Z",
+      "analyzed_at": "2026-07-10T15:00:42.458Z",
       "input_hash": "efdf119e3d61093370d2a7816adda007c60284b7137e0c0a87d087038d40f25d",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "archive-candidate",
       "tech": [
-        "ejs",
         "express",
         "javascript",
         "websockets"
       ],
       "placement_ok": false,
-      "suggested_path": "/Users/ericsko/Projekty/_Bizz/zoom/zoom"
+      "suggested_path": "/Users/ericsko/Projekty/_Testing/zoom"
     },
-    "ms": 2158
+    "ms": 2507
   },
   {
     "directory": "/Users/ericsko/Projekty/_Bizz/TriSoft/stow-dashboard",
     "ai_analysis": {
-      "doc_score": 75,
-      "client": "TriSoft",
-      "doc_gaps": [
-        "missing README sections on deployment instructions, CI/CD setup, and usage examples for different platforms.",
-        "lack of detailed documentation on advanced features like custom project filters, integration with third-party tools, and troubleshooting common issues."
-      ],
-      "tech_extra": [
-        "Node.js project scanner with real-time progress.",
-        "TanStack Table for interactive data visualization.",
-        "Git integration for automatic repository detection and status tracking."
-      ],
       "project_type": "web-app",
       "confidence": "medium",
-      "reusable_assets": [
-        "ready-made project scanning and metadata extraction functionality.",
-        "interactive project table and filtering capabilities.",
-        "built-in Docker integration for container management and monitoring."
-      ],
-      "maturity": "prototype",
-      "generated_description": "A productivity-focused web dashboard designed to streamline project management and visualization for developers.",
+      "client": "TriSoft",
+      "generated_description": "A productivity dashboard for managing local development projects.",
+      "maturity": "production",
+      "doc_score": 75,
       "domain": "productivity",
       "category": "_Bizz",
-      "analyzed_at": "2026-07-10T13:17:14.815Z",
-      "input_hash": "6489e3e60addcfcf04dc464ea5dcd0e76df9e5282a56418b2a3f13b97569fb10",
+      "doc_gaps": [
+        "Detailed API documentation",
+        "User guide for advanced features"
+      ],
+      "reusable_assets": [
+        "Interactive Project Table",
+        "Git Sync Status"
+      ],
+      "tech_extra": [
+        "TanStack Table",
+        "Node.js project scanner"
+      ],
+      "analyzed_at": "2026-07-10T15:00:44.965Z",
+      "input_hash": "f11b8c945bea8000c485cd4d60c94f8b8c79d5c8e87c92209fdfc456e9bab40f",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "active",
       "tech": [
         "deno",
-        "git-integration-for-automatic-repository-detection-and-status-tracking.",
         "javascript",
         "mcp",
         "nextjs",
-        "node.js-project-scanner-with-real-time-progress.",
         "react",
         "rust",
-        "tanstack-table-for-interactive-data-visualization.",
+        "tanstack-table",
         "typescript"
       ],
       "placement_ok": true,
       "suggested_path": "/Users/ericsko/Projekty/_Bizz/TriSoft/stow-dashboard"
     },
-    "ms": 5564
+    "ms": 3693
   },
   {
     "directory": "/Users/ericsko/Projekty/_Bizz/Intelimail/api-gw",
     "ai_analysis": {
+      "doc_score": 50,
       "generated_description": "Express Gateway Instance Bootstraped from Command Line",
       "reusable_assets": [
         "Express Gateway"
       ],
-      "client": "Intelimail",
-      "project_type": "api-service",
-      "doc_score": 0,
-      "category": "_Bizz",
       "maturity": "prototype",
-      "confidence": "low",
-      "tech_extra": [
-        "Express"
-      ],
+      "category": "_Bizz",
+      "confidence": "medium",
       "doc_gaps": [
         "README",
-        "documentation on stack usage"
+        "Setup instructions"
       ],
+      "client": "Intelimail",
       "domain": "communication-email",
-      "analyzed_at": "2026-07-10T13:17:20.379Z",
+      "project_type": "api-service",
+      "tech_extra": [
+        "Command Line"
+      ],
+      "analyzed_at": "2026-07-10T15:00:48.658Z",
       "input_hash": "8e97d8767b3e92d68bb04ae6aee3e1fd54af46ff557f56953ebe90a5f8e8d48f",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "archive-candidate",
       "tech": [
-        "express",
+        "command-line",
         "javascript"
       ],
       "placement_ok": true,
       "suggested_path": "/Users/ericsko/Projekty/_Bizz/Intelimail/api-gw"
     },
-    "ms": 2056
+    "ms": 2140
   },
   {
     "directory": "/Users/ericsko/Projekty/_Bizz/Intelimail/assistant",
     "ai_analysis": {
-      "project_type": "web-app",
-      "client": "Intelimail",
+      "category": "_Bizz",
+      "domain": "e-commerce",
       "tech_extra": [
-        "Google Gemini API",
-        "shadcn/ui with Lucide icons"
+        "App Router for Next.js.",
+        "React Context for managing state in the chat interface.",
+        "Lucide icons for UI components."
       ],
-      "reusable_assets": [
-        "Next.js 15 with App Router",
-        "React 19 and TypeScript 5",
-        "Tailwind CSS 4",
-        "Meilisearch integration"
+      "client": "Intelimail",
+      "generated_description": "An AI-powered e-commerce assistant for Intelimail.",
+      "doc_score": 75,
+      "doc_gaps": [
+        "API keys for Gemini and Meilisearch are missing.",
+        "Detailed instructions for deploying the app to a production environment.",
+        "Instructions for scaling the app to handle high traffic.",
+        "Documentation on how to integrate the app with existing email systems.",
+        "Instructions for troubleshooting common issues like API rate limits and server errors."
       ],
       "maturity": "prototype",
-      "doc_score": 75,
-      "domain": "e-commerce",
-      "category": "_Bizz",
-      "doc_gaps": [
-        "Missing detailed setup instructions for integrating Gemini API and Meilisearch.",
-        "Lack of documentation on error handling and debugging.",
-        "No clear explanation of how to scale the app for production."
-      ],
-      "generated_description": "An AI-powered e-commerce assistant with conversational interface for intelligent product search and shopping cart management.",
+      "project_type": "web-app",
       "confidence": "medium",
-      "analyzed_at": "2026-07-10T13:17:22.435Z",
-      "input_hash": "6ba19bfe86fa11d8799fcd00509a3eb88a5f849c92d926e4d8e2027f485e137f",
+      "reusable_assets": [
+        "Next.js 15 setup and routing.",
+        "React 19 components for the chat interface.",
+        "Meilisearch integration for product search.",
+        "Google Gemini API for conversational AI.",
+        "Tailwind CSS for styling the UI components."
+      ],
+      "analyzed_at": "2026-07-10T15:00:50.799Z",
+      "input_hash": "5a6504c357af624acab5202f343ef2bc74293a4d2415e3b1af52f26bd82c7f08",
       "model": "apple-foundationmodel/apfel"
     },
     "derived": {
       "status": "dormant",
       "tech": [
-        "google-gemini-api",
         "javascript",
         "nextjs",
         "react",
-        "shadcn/ui-with-lucide-icons",
         "typescript"
       ],
       "placement_ok": true,
       "suggested_path": "/Users/ericsko/Projekty/_Bizz/Intelimail/assistant"
     },
-    "ms": 4228
+    "ms": 5689
   },
   {
     "directory": "/Users/ericsko/Projekty/_Learning/adventofcode",
     "ai_analysis": {
+      "reusable_assets": [
+        "challenge-solving techniques",
+        "problem-solving frameworks"
+      ],
+      "category": "_Learning",
+      "project_type": "script-collection",
+      "generated_description": "A collection of Advent of Code challenges.",
       "client": "",
+      "maturity": "prototype",
+      "confidence": "low",
+      "tech_extra": [
+        "JavaScript",
+        "text-based programming"
+      ],
+      "doc_score": 0,
       "doc_gaps": [
         "README",
         "setup instructions"
       ],
-      "doc_score": 0,
-      "project_type": "script-collection",
       "domain": "education",
-      "reusable_assets": [
-        "javascript"
-      ],
-      "generated_description": "A coding challenge for beginners.",
-      "category": "_Learning",
-      "tech_extra": [
-        "javascript"
-      ],
-      "maturity": "prototype",
-      "confidence": "low",
-      "analyzed_at": "2026-07-10T13:17:26.663Z",
+      "analyzed_at": "2026-07-10T15:00:56.488Z",
       "input_hash": "93b2b98539fdd162a2c5f62546871483ee92fe8bb1e9104767f33b8f399eef2d",
       "model": "apple-foundationmodel/apfel"
     },
@@ -651,35 +645,68 @@
       "placement_ok": true,
       "suggested_path": "/Users/ericsko/Projekty/_Learning/adventofcode"
     },
-    "ms": 2160
+    "ms": 2715
   },
   {
     "directory": "/Users/ericsko/Projekty/_Sandbox/Auralis",
     "ai_analysis": {
-      "error": "too-large",
-      "analyzed_at": "2026-07-10T13:17:28.823Z"
+      "category": "_AI",
+      "maturity": "prototype",
+      "doc_gaps": [
+        "Missing documentation on how to use the TTSRequest class effectively.",
+        "Lack of examples demonstrating how to integrate Auralis with other systems or services."
+      ],
+      "reusable_assets": [
+        "The TTSRequest class itself can be reused for other projects.",
+        "The pre-trained model used for voice generation."
+      ],
+      "confidence": "low",
+      "domain": "ai-ml",
+      "generated_description": "A text-to-speech engine for real-world voice generation.",
+      "client": "",
+      "doc_score": 50,
+      "tech_extra": [
+        "OpenAI compatibility server integration.",
+        "Use of GPT-2 model for text-to-speech conversion."
+      ],
+      "project_type": "fork",
+      "analyzed_at": "2026-07-10T15:00:59.203Z",
+      "input_hash": "30316887574b71d78e184e75f3600c7c7637fd0ff5a99e98452a50e6ef0d916b",
+      "model": "apple-foundationmodel/apfel"
     },
-    "ms": 22352
+    "derived": {
+      "status": "dormant",
+      "tech": [
+        "docker",
+        "python"
+      ],
+      "placement_ok": false,
+      "suggested_path": "/Users/ericsko/Projekty/_AI/Auralis"
+    },
+    "ms": 4618
   },
   {
     "directory": "/Users/ericsko/Projekty/_Utilities/portmonitor",
     "ai_analysis": {
+      "client": "",
+      "domain": "other",
+      "confidence": "low",
+      "generated_description": "A utility tool for monitoring network ports.",
+      "doc_score": 0,
+      "category": "_Utilities",
+      "maturity": "prototype",
+      "project_type": "cli-tool",
+      "doc_gaps": [
+        "README",
+        "installation instructions"
+      ],
+      "reusable_assets": [
+        "port monitoring functionality"
+      ],
       "tech_extra": [
         "PyQt6"
       ],
-      "client": "",
-      "generated_description": "A utility script for monitoring network ports.",
-      "doc_score": 0,
-      "maturity": "idea",
-      "category": "_Utilities",
-      "reusable_assets": [],
-      "domain": "other",
-      "project_type": "cli-tool",
-      "confidence": "low",
-      "doc_gaps": [
-        "README"
-      ],
-      "analyzed_at": "2026-07-10T13:17:51.175Z",
+      "analyzed_at": "2026-07-10T15:01:03.821Z",
       "input_hash": "92f4dba715604e367eb5cc6468e7ae560bea85b8be6c1d254dd247cab1ad9373",
       "model": "apple-foundationmodel/apfel"
     },
@@ -692,6 +719,6 @@
       "placement_ok": true,
       "suggested_path": "/Users/ericsko/Projekty/_Utilities/portmonitor"
     },
-    "ms": 2087
+    "ms": 2279
   }
 ]
