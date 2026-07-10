@@ -1,6 +1,5 @@
 import path from 'path'
 import { runAnalysisBatch, isAnalysisRunning } from '@/lib/analyze-batch.mjs'
-import { ApfelError } from '@/lib/analyzer.mjs'
 import { readProjectsData } from '@/lib/projects'
 import { getBaseDir } from '@/lib/scan-roots.mjs'
 
@@ -10,47 +9,28 @@ export async function POST(request) {
   const body = await request.json().catch(() => ({}))
   const { force = false, project = null } = body
 
-  const encoder = new TextEncoder()
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (data) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
-      const started = Date.now()
-      try {
-        if (isAnalysisRunning()) {
-          send({ type: 'error', message: 'analysis already running' })
-          return
-        }
-        let only = null
-        if (project) {
-          const rec = (await readProjectsData()).find(p => p.id === project)
-          if (!rec) {
-            send({ type: 'error', message: `unknown project id: ${project}` })
-            return
-          }
-          only = [rec.directory]
-        }
-        send({ type: 'status', message: project ? 'Re-analyzing project…' : 'Starting AI analysis…' })
-        const summary = await runAnalysisBatch({
-          dataFile: DATA_FILE, baseDir: getBaseDir(),
-          force: force || Boolean(project), only,
-          onProgress: send,
-        })
-        send({ type: 'complete', success: true, ...summary, duration: Date.now() - started })
-      } catch (err) {
-        const message = err instanceof ApfelError && err.kind === 'unavailable'
-          ? 'Apple model unavailable — is apfel installed and Apple Intelligence enabled?'
-          : err.message
-        send({ type: 'error', message, duration: Date.now() - started })
-      } finally {
-        controller.close()
-      }
-    },
-  })
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  })
+  if (isAnalysisRunning()) {
+    return Response.json({ error: 'analysis already running' }, { status: 409 })
+  }
+
+  let only = null
+  if (project) {
+    const rec = (await readProjectsData()).find(p => p.id === project)
+    if (!rec) {
+      return Response.json({ error: `unknown project id: ${project}` }, { status: 400 })
+    }
+    only = [rec.directory]
+  }
+
+  // Fire-and-forget: the batch maintains its own status snapshot
+  // (getAnalysisStatus / GET /api/analyze/status), so we start it without
+  // awaiting and let the client poll for progress.
+  runAnalysisBatch({
+    dataFile: DATA_FILE,
+    baseDir: getBaseDir(),
+    force: force || Boolean(project),
+    only,
+  }).catch(err => console.error('[analyze]', err))
+
+  return Response.json({ started: true }, { status: 202 })
 }

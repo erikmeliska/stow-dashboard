@@ -2,8 +2,6 @@
 
 import * as React from "react"
 import {
-    Copy,
-    Check,
     Terminal,
     FolderOpen,
     Code,
@@ -19,7 +17,10 @@ import {
     SquareTerminal,
     Globe,
     Sparkles,
+    RefreshCw,
 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { formatTimeAgo, docScoreColor } from "@/lib/utils"
 
 import {
     Sheet,
@@ -43,6 +44,13 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SplitOpenButton } from "@/components/SplitOpenButton"
+import { CopyButton } from "@/components/CopyButton"
+
+const DOC_SCORE_BAR_CLASS = {
+    green: 'bg-green-500',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+}
 
 function formatBytes(bytes) {
     if (!bytes) return '-'
@@ -50,29 +58,6 @@ function formatBytes(bytes) {
     if (mb >= 1) return `${mb.toFixed(2)} MB`
     const kb = bytes / 1024
     return `${kb.toFixed(1)} KB`
-}
-
-function CopyButton({ text, tooltip }) {
-    const [copied, setCopied] = React.useState(false)
-
-    const handleCopy = async () => {
-        await navigator.clipboard.writeText(text)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-    }
-
-    return (
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleCopy}>
-                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-                <p>{copied ? 'Copied!' : tooltip}</p>
-            </TooltipContent>
-        </Tooltip>
-    )
 }
 
 function Section({ title, children }) {
@@ -103,6 +88,9 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [runningScripts, setRunningScripts] = React.useState([]) // { pid, script, logFile }
     const [scriptRunning, setScriptRunning] = React.useState(null) // currently launching script name
     const [openWithApps, setOpenWithApps] = React.useState({ ide: [], terminal: [] })
+    const [reanalyzing, setReanalyzing] = React.useState(false)
+    const [reanalyzeNote, setReanalyzeNote] = React.useState(null)
+    const router = useRouter()
 
     React.useEffect(() => {
         if (!open) return
@@ -160,8 +148,33 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
 
             // Reset running scripts tracking when project changes
             setRunningScripts([])
+            // Reset re-analyze UI state when switching projects
+            setReanalyzing(false)
+            setReanalyzeNote(null)
         }
     }, [open, project?.directory])
+
+    // Poll analysis status while a re-analyze is in flight; refresh on idle
+    React.useEffect(() => {
+        if (!reanalyzing) return
+
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch('/api/analyze/status')
+                const data = await res.json()
+                if (!data.running) {
+                    clearInterval(interval)
+                    setReanalyzing(false)
+                    setReanalyzeNote(null)
+                    router.refresh()
+                }
+            } catch {
+                // Ignore transient errors; keep polling
+            }
+        }, 2000)
+
+        return () => clearInterval(interval)
+    }, [reanalyzing, router])
 
     // Poll to check if running scripts are still alive, clean up finished ones
     React.useEffect(() => {
@@ -203,6 +216,30 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     }
 
     const openInFinder = () => openWith('finder')
+
+    const reanalyze = async () => {
+        setReanalyzeNote(null)
+        setReanalyzing(true)
+        try {
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project: project.id }),
+            })
+            if (res.status === 409) {
+                // Another analysis is already running; keep polling so the
+                // button re-enables once the queue goes idle.
+                setReanalyzeNote('another analysis is running')
+            } else if (!res.ok) {
+                setReanalyzing(false)
+                setReanalyzeNote('failed to start analysis')
+            }
+            // 202: leave reanalyzing = true; the poll effect drives it to idle.
+        } catch {
+            setReanalyzing(false)
+            setReanalyzeNote('failed to start analysis')
+        }
+    }
 
     const runScript = async (scriptName) => {
         setScriptRunning(scriptName)
@@ -644,6 +681,162 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                             <Separator />
                         </>
                     )}
+
+                    {/* AI Insights */}
+                    {(() => {
+                        const ai = project.ai_analysis
+                        const derived = project.ai_derived
+
+                        const header = (
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">AI Insights</h3>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs gap-1"
+                                    onClick={reanalyze}
+                                    disabled={reanalyzing}
+                                >
+                                    {reanalyzing
+                                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                                        : <RefreshCw className="h-3 w-3" />}
+                                    {ai ? 'Re-analyze' : 'Analyze'}
+                                </Button>
+                            </div>
+                        )
+
+                        const note = reanalyzeNote && (
+                            <p className="text-xs text-muted-foreground">{reanalyzeNote}</p>
+                        )
+
+                        let body
+                        if (!ai) {
+                            body = <p className="text-sm text-muted-foreground">Not analyzed yet</p>
+                        } else if (ai.error) {
+                            body = <p className="text-sm text-muted-foreground">Analysis failed: {ai.error}</p>
+                        } else {
+                            const categoryLabel = ai.category
+                                ? ai.category.replace(/^_/, '') + (ai.client ? `/${ai.client}` : '')
+                                : null
+                            const tech = derived?.tech || []
+                            const reusable = ai.reusable_assets || []
+                            const gaps = ai.doc_gaps || []
+                            const hasDocScore = typeof ai.doc_score === 'number'
+
+                            body = (
+                                <div className="space-y-3">
+                                    {/* Generated description */}
+                                    {ai.generated_description && (
+                                        project.description ? (
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">AI description</p>
+                                                <p className="text-sm text-muted-foreground">{ai.generated_description}</p>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm">{ai.generated_description}</p>
+                                        )
+                                    )}
+
+                                    {/* Classification */}
+                                    <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                        {categoryLabel && (
+                                            <StatItem
+                                                label="Category"
+                                                value={
+                                                    <span className="px-1.5 py-0.5 rounded text-xs bg-violet-500/20 text-violet-600 dark:text-violet-400">
+                                                        {categoryLabel}
+                                                    </span>
+                                                }
+                                            />
+                                        )}
+                                        {ai.project_type && <StatItem label="Type" value={ai.project_type} />}
+                                        {ai.domain && <StatItem label="Domain" value={ai.domain} />}
+                                        {ai.maturity && <StatItem label="Maturity" value={ai.maturity} />}
+                                        {ai.confidence && <StatItem label="Confidence" value={ai.confidence} />}
+                                        {ai.analyzed_at && (
+                                            <StatItem label="Analyzed" value={`${formatTimeAgo(ai.analyzed_at)} ago`} />
+                                        )}
+                                    </div>
+
+                                    {/* Doc score + gaps */}
+                                    {hasDocScore && (
+                                        <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm text-muted-foreground flex-1">Doc score</span>
+                                                <span className="text-sm tabular-nums w-6 text-right">{ai.doc_score}</span>
+                                                <div className="h-1.5 w-24 rounded bg-muted">
+                                                    <div
+                                                        className={`h-1.5 rounded ${DOC_SCORE_BAR_CLASS[docScoreColor(ai.doc_score)]}`}
+                                                        style={{ width: `${ai.doc_score}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            {gaps.length > 0 && (
+                                                <ul className="list-disc list-inside space-y-0.5">
+                                                    {gaps.map((gap, i) => (
+                                                        <li key={i} className="text-xs text-muted-foreground">{gap}</li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Tech chips */}
+                                    {tech.length > 0 && (
+                                        <div className="flex flex-wrap gap-2">
+                                            {tech.map((t, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="px-2 py-1 bg-primary/10 text-primary rounded-md text-xs font-medium"
+                                                >
+                                                    {t}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Reusable assets */}
+                                    {reusable.length > 0 && (
+                                        <div>
+                                            <p className="text-xs text-muted-foreground mb-1">Reusable assets</p>
+                                            <ul className="list-disc list-inside space-y-0.5">
+                                                {reusable.map((asset, i) => (
+                                                    <li key={i} className="text-sm">{asset}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {/* Placement suggestion */}
+                                    {derived?.placement_ok === false && derived.suggested_path && (
+                                        <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-xs text-amber-600 dark:text-amber-400">Suggested</p>
+                                                <p className="text-sm font-mono break-all">{derived.suggested_path}</p>
+                                            </div>
+                                            <CopyButton
+                                                text={`mv "${project.directory}" "${derived.suggested_path}"`}
+                                                tooltip="Copy mv command"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        }
+
+                        return (
+                            <>
+                                <TooltipProvider>
+                                    <div className="space-y-3">
+                                        {header}
+                                        {note}
+                                        {body}
+                                    </div>
+                                </TooltipProvider>
+                                <Separator />
+                            </>
+                        )
+                    })()}
 
                     {/* Stack / Technologies */}
                     {project.stack && project.stack.length > 0 && (

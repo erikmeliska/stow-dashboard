@@ -10,6 +10,12 @@ export function formatTimeAgo(date) {
   return formatDistanceToNow(new Date(date), { addSuffix: false })
 }
 
+export function docScoreColor(score) {
+  if (score >= 70) return 'green'
+  if (score >= 40) return 'amber'
+  return 'red'
+}
+
 export function getGitProvider(remoteUrl = '') {
   if (!remoteUrl) return null
   if (remoteUrl.includes('github.com')) return 'github'

@@ -53,10 +53,13 @@ export function ScanControls({ lastSyncTime }) {
     const [elapsedTime, setElapsedTime] = React.useState(0)
     const [autoRefresh, setAutoRefresh] = React.useState(false)
     const [syncAgo, setSyncAgo] = React.useState('')
+    const [analyzeSummary, setAnalyzeSummary] = React.useState(null)
     const startTimeRef = React.useRef(null)
     const timerRef = React.useRef(null)
     const autoRefreshRef = React.useRef(null)
     const syncTimerRef = React.useRef(null)
+    const analyzePollRef = React.useRef(null)
+    const analyzeSummaryTimerRef = React.useRef(null)
 
     React.useEffect(() => {
         setIsMounted(true)
@@ -142,17 +145,126 @@ export function ScanControls({ lastSyncTime }) {
         }
     }, [autoRefresh, isScanning])
 
+    // Resume analyze progress after a view switch: on mount, ask the server
+    // whether a batch is still running and, if so, re-attach the poller.
+    React.useEffect(() => {
+        let cancelled = false
+        fetch('/api/analyze/status')
+            .then(r => r.json())
+            .then(s => { if (!cancelled && s.running) startAnalysisPolling() })
+            .catch(() => {})
+        return () => {
+            cancelled = true
+            if (analyzePollRef.current) {
+                window.clearInterval(analyzePollRef.current)
+                analyzePollRef.current = null
+            }
+            if (analyzeSummaryTimerRef.current) {
+                window.clearTimeout(analyzeSummaryTimerRef.current)
+                analyzeSummaryTimerRef.current = null
+            }
+        }
+    }, [])
+
+    // Show an analyze result line next to the toolbar for a few seconds after
+    // the batch ends (the isScanning-gated progress area hides immediately).
+    const showAnalyzeSummary = (summary, ms = 5000) => {
+        if (analyzeSummaryTimerRef.current) window.clearTimeout(analyzeSummaryTimerRef.current)
+        setAnalyzeSummary(summary)
+        analyzeSummaryTimerRef.current = window.setTimeout(() => {
+            setAnalyzeSummary(null)
+            analyzeSummaryTimerRef.current = null
+        }, ms)
+    }
+
+    // Reflect an /api/analyze/status snapshot into the progress UI; when the
+    // batch is no longer running, stop polling and show the summary.
+    const applyAnalysisStatus = (s) => {
+        setScanStats({ current: s.current, total: s.total })
+        if (s.running) {
+            setProgress({ message: `AI: ${s.lastProject ?? '…'}` })
+            return
+        }
+        if (analyzePollRef.current) {
+            window.clearInterval(analyzePollRef.current)
+            analyzePollRef.current = null
+        }
+        if (s.lastError) {
+            // Batch aborted (e.g. Apple model unavailable) — mirror the scan
+            // error presentation instead of a green success line.
+            showAnalyzeSummary({ message: `AI analysis failed: ${s.lastError}`, error: true }, 10000)
+        } else {
+            showAnalyzeSummary({
+                message: `AI analysis done: ${s.analyzed} analyzed, ${s.skipped} cached, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
+                success: true,
+            })
+            setLastSync(new Date().toISOString())
+        }
+        setIsScanning(false)
+        setScanType(null)
+        router.refresh()
+    }
+
+    // Poll the background analyze job every 2s until it finishes. Idempotent:
+    // used both to attach after a POST and to resume after a view switch.
+    const startAnalysisPolling = () => {
+        setIsScanning(true)
+        setScanType('analyze')
+        if (analyzePollRef.current) return
+        analyzePollRef.current = window.setInterval(async () => {
+            try {
+                const res = await fetch('/api/analyze/status')
+                applyAnalysisStatus(await res.json())
+            } catch (e) {
+                console.error('Analysis poll error:', e)
+            }
+        }, 2000)
+    }
+
     const handleScan = async (type = 'normal') => {
+        if (type === 'analyze' || type === 'analyze-force') {
+            setIsScanning(true)
+            setScanType('analyze')
+            setAnalyzeSummary(null)
+            setProgress({ message: 'Starting AI analysis…' })
+            setLogs([])
+            setScanStats({ current: 0, total: 0 })
+            try {
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(type === 'analyze-force' ? { force: true } : {}),
+                })
+                if (res.status === 202) {
+                    startAnalysisPolling()
+                } else if (res.status === 409) {
+                    // Batch already running (e.g. started elsewhere) — attach to it.
+                    setProgress({ message: 'AI analysis already running' })
+                    startAnalysisPolling()
+                } else {
+                    const data = await res.json().catch(() => ({}))
+                    showAnalyzeSummary({ message: `Error: ${data.error || res.statusText}`, error: true }, 10000)
+                    setIsScanning(false)
+                    setScanType(null)
+                }
+            } catch (error) {
+                console.error('Analyze error:', error)
+                showAnalyzeSummary({ message: `Error: ${error.message}`, error: true }, 10000)
+                setIsScanning(false)
+                setScanType(null)
+            }
+            return
+        }
+
         setIsScanning(true)
         setScanType(type)
+        setAnalyzeSummary(null)
         setProgress({ message: 'Connecting...' })
         setLogs([])
         setScanStats({ current: 0, total: 0 })
 
-        const endpoint = (type === 'analyze' || type === 'analyze-force')
-            ? '/api/analyze'
-            : type === 'quick' ? '/api/scan/quick' : '/api/scan'
-        const body = type === 'force' || type === 'analyze-force'
+        const endpoint = type === 'quick' ? '/api/scan/quick' : '/api/scan'
+        const body = type === 'force'
             ? { force: true }
             : {}
 
@@ -228,27 +340,11 @@ export function ScanControls({ lastSyncTime }) {
             case 'discover_error':
                 setLogs(prev => [...prev.slice(-9), { type: 'error', path: getShortPath(data.directory), time: '' }])
                 break
-            case 'analyzed':
-                setProgress({ message: `Analyzed: ${data.project_name || getShortPath(data.directory)}` })
-                setLogs(prev => [...prev.slice(-9), { type: 'updated', path: data.project_name || getShortPath(data.directory), time: '' }])
-                break
-            case 'skipped':
-                setProgress({ message: `Skipped: ${data.project_name || getShortPath(data.directory)}` })
-                break
-            case 'analyze_error':
-                setProgress({ message: `Analyze error: ${data.project_name || getShortPath(data.directory)}` })
-                setLogs(prev => [...prev.slice(-9), { type: 'error', path: data.project_name || getShortPath(data.directory), time: '' }])
-                break
             case 'complete':
                 if (data.success) {
-                    const durationMsg = data.duration ? ` in ${formatDuration(Math.round(data.duration / 1000))}` : ''
-                    if (data.analyzed !== undefined) {
-                        setProgress({ message: `Analyzed ${data.analyzed}, skipped ${data.skipped}, ${data.errors} error${data.errors === 1 ? '' : 's'}${durationMsg}`, success: true })
-                    } else {
-                        const scanDurationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
-                        const discoveredMsg = data.discovered?.length ? `, +${data.discovered.length} discovered` : ''
-                        setProgress({ message: `Done! ${data.projectCount || 0} projects${discoveredMsg}${scanDurationMsg}`, success: true })
-                    }
+                    const scanDurationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
+                    const discoveredMsg = data.discovered?.length ? `, +${data.discovered.length} discovered` : ''
+                    setProgress({ message: `Done! ${data.projectCount || 0} projects${discoveredMsg}${scanDurationMsg}`, success: true })
                     setLastSync(new Date().toISOString())
                     if (data.processes) {
                         window.dispatchEvent(new CustomEvent('stow:processes', {
@@ -304,8 +400,21 @@ export function ScanControls({ lastSyncTime }) {
                         )}
                     </div>
                 )}
+                {/* Analyze result summary (lingers a few seconds after the batch ends) */}
+                {!isScanning && analyzeSummary && (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                        {analyzeSummary.error ? (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                        ) : (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                        )}
+                        <span className="max-w-[280px] truncate" title={analyzeSummary.message}>
+                            {analyzeSummary.message}
+                        </span>
+                    </div>
+                )}
                 {/* Sync status (when not scanning) */}
-                {!isScanning && isMounted && (
+                {!isScanning && !analyzeSummary && isMounted && (
                     <span className="text-sm text-muted-foreground" title={lastSync ? new Date(lastSync).toLocaleString() : ''}>
                         {lastSync ? `Synced ${syncAgo}` : 'Not synced'}
                     </span>
