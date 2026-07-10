@@ -385,6 +385,101 @@ test('analyzeProject falls back to Ollama when apfel rejects the language twice'
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
+// --- Ollama fallback for too-large + generic error (iter 3) ---
+
+// Ollama reachable + model installed; the /api/chat call returns `result`. A
+// counter object (optional) records every fetch call so a test can assert the
+// fallback was (or was NOT) attempted.
+function ollamaFetch(result = MODEL_OUT, counter = null) {
+  return async (url) => {
+    if (counter) counter.calls++
+    if (url.endsWith('/api/tags')) return { ok: true, status: 200, json: async () => ({ models: [{ name: 'llama3:latest' }] }) }
+    return { ok: true, status: 200, json: async () => ({ message: { content: JSON.stringify(result) } }) }
+  }
+}
+
+test('analyzeProject falls back to Ollama when the preflight exhausts all shrink steps (too-large)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = pilotProject(dir)
+    const baseDir = path.dirname(dir)
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir, schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: ollamaFetch(),
+      execImpl: fakeExec({ countExit: 4 }), // every shrink step overflows apfel's context
+    })
+    assert.equal(ai_analysis.error, undefined)
+    assert.equal(ai_analysis.model, 'ollama/llama3')
+    assert.equal(ai_analysis.category, '_Learning')
+    assert.equal(ai_analysis.lang_safe, undefined)
+    const facts = await gatherFacts(project)
+    assert.equal(ai_analysis.input_hash, distillProject(project, facts, { baseDir }).hash)
+    assert.ok(derived.status) // full result path -> derived present
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject falls back to Ollama when apfel itself reports too-large (runExit 4)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: ollamaFetch(),
+      execImpl: fakeExec({ runExit: 4 }), // preflight passes, the model run overflows
+    })
+    assert.equal(ai_analysis.error, undefined)
+    assert.equal(ai_analysis.model, 'ollama/llama3')
+    assert.equal(ai_analysis.category, '_Learning')
+    assert.equal(ai_analysis.input_hash.length, 64)
+    assert.ok(derived.status)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject falls back to Ollama on a generic apfel error (runExit 1, no language stderr)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: ollamaFetch(),
+      execImpl: fakeExec({ runExit: 1 }), // crash/timeout with no unsupported-language marker
+    })
+    assert.equal(ai_analysis.error, undefined)
+    assert.equal(ai_analysis.model, 'ollama/llama3')
+    assert.equal(ai_analysis.category, '_Learning')
+    assert.ok(derived.status)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject keeps a too-large error record when Ollama is unavailable', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: unreachableFetch,
+      execImpl: fakeExec({ countExit: 4 }),
+    })
+    assert.equal(ai_analysis.error, 'too-large')
+    assert.match(ai_analysis.error_detail, /ollama fallback failed/i)
+    assert.equal(ai_analysis.input_hash.length, 64)
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
+    assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject does NOT attempt an Ollama fallback for busy (queue signal)', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const counter = { calls: 0 }
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: ollamaFetch(MODEL_OUT, counter),
+      execImpl: fakeExec({ runExit: 6 }), // busy
+    })
+    assert.equal(ai_analysis.error, 'busy')
+    assert.equal(counter.calls, 0) // fallback never reached the network
+    assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
 // --- ANALYSIS_VERSION / needsAnalysis / last_code_modified fallback ---
 
 test('needsAnalysis: true when never analyzed, hash changed, or version bumped', () => {
