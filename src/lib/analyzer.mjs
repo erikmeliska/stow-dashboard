@@ -223,9 +223,10 @@ export async function analyzeProject(project, ctx) {
   const facts = await gatherFacts(project)
   const system = buildSystemPrompt(taxonomy)
 
-  // Hash of the full-size distillate is the cache key for this project. Compute
-  // it up front so even error records carry input_hash + version and needsAnalysis
-  // caches a failure like a result until its inputs (or the version) change.
+  // The cache key is ALWAYS the full-size distillate hash — deterministic from
+  // the project's inputs regardless of which shrink step ends up fitting, so the
+  // batch's needsAnalysis (which recomputes the full-size hash) matches both
+  // success and error records. SHRINK_STEPS[0] equals distillProject's defaults.
   const input_hash = distillProject(project, facts, { ...SHRINK_STEPS[0], baseDir }).hash
   const errorRecord = (error) => ({ ai_analysis: { error, analyzed_at, input_hash, version: ANALYSIS_VERSION } })
 
@@ -264,7 +265,7 @@ export async function analyzeProject(project, ctx) {
       ...out,
       client,
       analyzed_at,
-      input_hash: distilled.hash,
+      input_hash,
       version: ANALYSIS_VERSION,
       model: 'apple-foundationmodel/apfel',
     },
