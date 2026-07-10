@@ -225,6 +225,22 @@ export async function countTokensOk({ system, prompt, execImpl = exec }) {
   }
 }
 
+// Local-Ollama fallback for apfel failures another model might still handle
+// (unsupported-language, too-large, generic error). Feeds the FULL-SIZE
+// distillate — Ollama has a larger context and no language guardrail. Returns
+// { out, modelId } on success, or { errorDetail } describing why the fallback
+// itself failed (model unavailable, or a request crash). Never throws.
+async function ollamaFallback({ system, prompt, schema, schemaFile, fetchImpl }) {
+  if (!(await ollamaAvailable({ fetchImpl }))) return { errorDetail: 'model unavailable' }
+  try {
+    const schemaObj = schema || JSON.parse(await readFile(schemaFile, 'utf8'))
+    const out = await runOllama({ system, prompt, schema: schemaObj, fetchImpl })
+    return { out, modelId: `ollama/${getOllamaConfig().model}` }
+  } catch (oerr) {
+    return { errorDetail: oerr.message }
+  }
+}
+
 export async function analyzeProject(project, ctx) {
   const { taxonomy, baseDir, schemaFile, execImpl = exec, now = Date.now(), schema, fetchImpl } = ctx
   const analyzed_at = new Date(now).toISOString()
@@ -235,10 +251,25 @@ export async function analyzeProject(project, ctx) {
   // the project's inputs regardless of which shrink step ends up fitting, so the
   // batch's needsAnalysis (which recomputes the full-size hash) matches both
   // success and error records. SHRINK_STEPS[0] equals distillProject's defaults.
-  const input_hash = distillProject(project, facts, { ...SHRINK_STEPS[0], baseDir }).hash
+  const fullSize = distillProject(project, facts, { ...SHRINK_STEPS[0], baseDir })
+  const input_hash = fullSize.hash
   const errorRecord = (error, detail = null) => ({
     ai_analysis: { error, ...(detail ? { error_detail: detail } : {}), analyzed_at, input_hash, version: ANALYSIS_VERSION },
   })
+
+  // Single fallback seam shared by the language / too-large / generic-error
+  // paths. busy (queue signal) and refused (content guardrail) are terminal —
+  // retrying them on another model is wrong — so they short-circuit to their
+  // original error record. Everything else feeds the FULL-SIZE distillate to
+  // Ollama. On fallback failure the ORIGINAL error record is returned with
+  // error_detail extended by '; ollama fallback failed: <msg>'.
+  const fallbackOrError = async (err) => {
+    if (err.kind === 'busy' || err.kind === 'refused') return { record: errorRecord(err.kind, err.detail) }
+    const fb = await ollamaFallback({ system, prompt: fullSize.text, schema, schemaFile, fetchImpl })
+    if (fb.out) return { out: fb.out, modelId: fb.modelId }
+    const detail = err.detail ? `${err.detail}; ollama fallback failed: ${fb.errorDetail}` : `ollama fallback failed: ${fb.errorDetail}`
+    return { record: errorRecord(err.kind, detail) }
+  }
 
   let distilled = null
   try {
@@ -255,39 +286,51 @@ export async function analyzeProject(project, ctx) {
     if (err.kind === 'unavailable') throw err
     return errorRecord(err.kind, err.detail)
   }
-  if (!distilled) return errorRecord('too-large')
 
-  let out
+  let out = null
   let lang_safe = false
   let modelId = 'apple-foundationmodel/apfel'
-  try {
-    out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
-  } catch (err) {
-    if (err.kind === 'unavailable') throw err
-    if (err.kind !== 'unsupported-language') return errorRecord(err.kind, err.detail)
-    // Apple's model rejected the input language. Retry once with a language-safe
-    // distillate: no README/commits and the path leaf masked (the name still
-    // appears once). input_hash stays the full-size hash so the cache key matches.
-    const safe = distillProject(project, { ...facts, readme: null, commits: [] }, { ...SHRINK_STEPS[0], baseDir, maskPathLeaf: true })
+
+  // Preflight exhausted every shrink step: the distillate is too large for
+  // apfel even at its smallest. Try Ollama with the full-size text (no shrink
+  // accepted here) before giving up with a too-large error record.
+  if (!distilled) {
+    const fb = await fallbackOrError(new ApfelError('too-large'))
+    if (fb.record) return fb.record
+    out = fb.out
+    modelId = fb.modelId
+  }
+
+  if (!out) {
     try {
-      out = await runApfel({ system, prompt: safe.text, schemaFile, execImpl })
-      lang_safe = true
-    } catch (err2) {
-      if (err2.kind === 'unavailable') throw err2
-      if (err2.kind !== 'unsupported-language') return errorRecord(err2.kind, err2.detail)
-      // Both apfel attempts hit the language guardrail. Fall back to a local
-      // Ollama model, which has no language restriction — feed it the ORIGINAL
-      // (Slovak-bearing) distillate. Cache key (input_hash) stays the full-size
-      // hash; lang_safe is NOT set for the Ollama path.
-      if (!(await ollamaAvailable({ fetchImpl }))) {
-        return errorRecord('unsupported-language', `${err2.detail}; ollama fallback failed: model unavailable`)
-      }
-      try {
-        const schemaObj = schema || JSON.parse(await readFile(schemaFile, 'utf8'))
-        out = await runOllama({ system, prompt: distilled.text, schema: schemaObj, fetchImpl })
-        modelId = `ollama/${getOllamaConfig().model}`
-      } catch (oerr) {
-        return errorRecord('unsupported-language', `${err2.detail}; ollama fallback failed: ${oerr.message}`)
+      out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
+    } catch (err) {
+      if (err.kind === 'unavailable') throw err
+      if (err.kind === 'unsupported-language') {
+        // Apple's model rejected the input language. Retry once with a language-safe
+        // distillate: no README/commits and the path leaf masked (the name still
+        // appears once). input_hash stays the full-size hash so the cache key matches.
+        const safe = distillProject(project, { ...facts, readme: null, commits: [] }, { ...SHRINK_STEPS[0], baseDir, maskPathLeaf: true })
+        try {
+          out = await runApfel({ system, prompt: safe.text, schemaFile, execImpl })
+          lang_safe = true
+        } catch (err2) {
+          if (err2.kind === 'unavailable') throw err2
+          // Both apfel attempts failed. Fall back to Ollama (unsupported-language
+          // or a too-large/generic error on the retry); lang_safe is NOT set for
+          // the Ollama path.
+          const fb = await fallbackOrError(err2)
+          if (fb.record) return fb.record
+          out = fb.out
+          modelId = fb.modelId
+        }
+      } else {
+        // too-large / generic error straight from the first apfel run (busy and
+        // refused short-circuit inside fallbackOrError to their error record).
+        const fb = await fallbackOrError(err)
+        if (fb.record) return fb.record
+        out = fb.out
+        modelId = fb.modelId
       }
     }
   }
