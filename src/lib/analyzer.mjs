@@ -1,0 +1,117 @@
+// src/lib/analyzer.mjs
+// Orchestrates AI project analysis: taxonomy from disk, schema + prompt
+// generation, apfel subprocess, and the deterministic derivations that are
+// deliberately NOT asked of the model (status, paths, tech merge).
+import { readdir } from 'fs/promises'
+import path from 'path'
+
+export const FACETS = {
+  project_type: ['web-app', 'api-service', 'cli-tool', 'library', 'browser-extension', 'desktop-app', 'mobile-app', 'script-collection', 'infra-config', 'template-boilerplate', 'prototype-poc', 'fork', 'content-docs'],
+  domain: ['e-commerce', 'communication-email', 'church-community', 'finance', 'education', 'devtools', 'iot-electronics', 'media', 'ai-ml', 'productivity', 'games', 'other'],
+  maturity: ['idea', 'prototype', 'mvp', 'production', 'abandoned-wip'],
+  confidence: ['high', 'medium', 'low'],
+}
+
+// Only _dirs listed here are offered to the model as categories; a new
+// folder taxonomy entry needs a legend line before it becomes classifiable.
+export const CATEGORY_LEGEND = {
+  _Bizz: 'paid client or business work',
+  _AI: 'AI/ML experiments and tools',
+  _Learning: 'tutorials, courses, coding exercises, katas, practice',
+  _Sandbox: 'throwaway experiments and quick tries',
+  _Testing: 'trying out tools/frameworks to evaluate them',
+  _Utilities: 'small personal tools/scripts in real use',
+  _Personal: 'personal non-business projects',
+  _DevOps: 'infrastructure and deployment configs',
+  _Electronics: 'electronics and embedded hardware projects',
+  _3D: '3D modeling and printing',
+  _Security: 'security research and tools',
+  _Archives: 'archived old work kept for reference',
+}
+
+const MONTH_MS = 30.44 * 24 * 3600 * 1000
+
+export async function readTaxonomy(baseDir) {
+  const entries = await readdir(baseDir, { withFileTypes: true })
+  const categories = entries
+    .filter(e => e.isDirectory() && CATEGORY_LEGEND[e.name])
+    .map(e => e.name)
+    .sort()
+  let clients = []
+  try {
+    clients = (await readdir(path.join(baseDir, '_Bizz'), { withFileTypes: true }))
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+      .sort()
+  } catch { /* no _Bizz dir */ }
+  return { categories, clients }
+}
+
+export function buildSchema(taxonomy) {
+  return {
+    type: 'object',
+    properties: {
+      category: { type: 'string', enum: taxonomy.categories },
+      client: {
+        type: 'string',
+        description: `Client name, ONLY when category is _Bizz, else empty string. Known clients: ${taxonomy.clients.join(', ')}. If the client is clearly someone new, answer "new:<Name>".`,
+      },
+      generated_description: { type: 'string', description: 'One short sentence describing what this project is.' },
+      project_type: { type: 'string', enum: FACETS.project_type },
+      domain: { type: 'string', enum: FACETS.domain },
+      maturity: { type: 'string', enum: FACETS.maturity },
+      tech_extra: { type: 'array', items: { type: 'string' }, description: 'Technologies visible in the facts but NOT already listed in the stack line (e.g. mentioned in README). Canonical short names. Empty array if none.' },
+      reusable_assets: { type: 'array', items: { type: 'string' }, description: 'Up to 3 concrete things worth harvesting from this project (e.g. "ready-made Google OAuth flow"). Empty array if nothing stands out.' },
+      doc_score: { type: 'integer', description: 'Documentation quality 0-100.' },
+      doc_gaps: { type: 'array', items: { type: 'string' }, description: 'Missing documentation items.' },
+      confidence: { type: 'string', enum: FACETS.confidence },
+    },
+    required: ['category', 'client', 'generated_description', 'project_type', 'domain', 'maturity', 'tech_extra', 'reusable_assets', 'doc_score', 'doc_gaps', 'confidence'],
+  }
+}
+
+export function buildSystemPrompt(taxonomy) {
+  const legend = taxonomy.categories.map(c => `${c} = ${CATEGORY_LEGEND[c]}`).join('; ')
+  return [
+    "You categorize software projects into the owner's folder taxonomy and classify their facets.",
+    `Category meanings: ${legend}.`,
+    'project_type = what kind of artifact it is. domain = what problem area it is about.',
+    'maturity: idea = barely started sketch; prototype = works partially, exploratory; mvp = minimal but usable end-to-end; production = deployed/used for real; abandoned-wip = substantial work stopped before usable.',
+    'doc_score: 0 = no documentation at all, 50 = README exists but a newcomer could not run the project from it, 100 = excellent README with purpose, setup and usage. doc_gaps: name the most important missing pieces.',
+    'reusable_assets: only concrete, harvestable implementations, not generic praise.',
+    'Answer strictly based on the given facts. Use confidence=low when guessing.',
+  ].join('\n')
+}
+
+export function deriveStatus(project, { now = Date.now(), lastCodeCommit = null } = {}) {
+  // Code activity (meta-doc edits excluded) wins; doc-only repos and non-git
+  // projects fall back to overall activity — by design, see spec.
+  let last
+  if (lastCodeCommit && Number.isFinite(Date.parse(lastCodeCommit))) {
+    last = Date.parse(lastCodeCommit)
+  } else {
+    const candidates = [project.git_info?.last_total_commit_date, project.last_modified]
+      .map(d => Date.parse(d))
+      .filter(Number.isFinite)
+    if (!candidates.length) return 'dead'
+    last = Math.max(...candidates)
+  }
+  const months = (now - last) / MONTH_MS
+  if (months <= 3) return 'active'
+  if (months <= 18) return 'dormant'
+  const noRemote = !(project.git_info?.remotes?.length)
+  const tiny = (project.scc?.total_code ?? 0) < 1000
+  return noRemote && tiny ? 'archive-candidate' : 'dead'
+}
+
+export function suggestedPath(baseDir, category, client, name) {
+  if (category === '_Bizz' && client) {
+    return path.join(baseDir, '_Bizz', client.replace(/^new:/, ''), name)
+  }
+  return path.join(baseDir, category, name)
+}
+
+export function isPlacementOk(directory, suggested) {
+  const wantParent = path.dirname(suggested)
+  return directory === suggested || directory.startsWith(wantParent + path.sep)
+}
