@@ -20,7 +20,7 @@ import {
     RefreshCw,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { formatTimeAgo, docScoreColor } from "@/lib/utils"
+import { formatTimeAgo, docScoreColor, formatUsd } from "@/lib/utils"
 
 import {
     Sheet,
@@ -90,6 +90,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
     const [openWithApps, setOpenWithApps] = React.useState({ ide: [], terminal: [] })
     const [reanalyzing, setReanalyzing] = React.useState(false)
     const [reanalyzeNote, setReanalyzeNote] = React.useState(null)
+    const [showAllSessions, setShowAllSessions] = React.useState(false)
     const router = useRouter()
 
     React.useEffect(() => {
@@ -151,6 +152,8 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
             // Reset re-analyze UI state when switching projects
             setReanalyzing(false)
             setReanalyzeNote(null)
+            // Collapse the recent-sessions list when switching projects
+            setShowAllSessions(false)
         }
     }, [open, project?.directory])
 
@@ -833,6 +836,130 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                         {body}
                                     </div>
                                 </TooltipProvider>
+                                <Separator />
+                            </>
+                        )
+                    })()}
+
+                    {/* AI Usage */}
+                    {project.usage && (() => {
+                        const usage = project.usage
+                        const t = usage.tokens || {}
+                        const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n ?? 0}`
+
+                        const totalCost = (usage.costUsd ?? 0) + (usage.costUnverifiedUsd ?? 0)
+                        const hasUnverified = (usage.costUnverifiedUsd ?? 0) > 0
+                        const activeHours = ((usage.activeMinutes ?? 0) / 60).toFixed(1)
+
+                        const claudeModels = Object.entries(usage.byModel || {})
+                        const unpriced = new Set(usage.unpricedModels || [])
+                        const hasCodex = (t.codexInput ?? 0) + (t.codexOutput ?? 0) > 0
+
+                        const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
+                        const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
+                        const cacheRead = t.cacheRead ?? 0
+                        const cacheWrite = (t.cacheWrite5m ?? 0) + (t.cacheWrite1h ?? 0)
+
+                        const sessions = usage.sessionList || []
+                        const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 5)
+
+                        return (
+                            <>
+                                <Section title="AI Usage">
+                                    <div className="space-y-3">
+                                        {/* Summary */}
+                                        <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                            <StatItem label="Sessions" value={usage.sessions ?? sessions.length} />
+                                            <StatItem label="Active time" value={`${activeHours} h`} />
+                                            <StatItem
+                                                label="Total cost"
+                                                value={`${hasUnverified ? '~' : ''}${formatUsd(totalCost)}`}
+                                                className="font-semibold text-green-600 dark:text-green-400"
+                                            />
+                                        </div>
+
+                                        {/* Per-tool breakdown */}
+                                        {(claudeModels.length > 0 || hasCodex) && (
+                                            <div className="space-y-2 bg-muted/50 rounded-lg p-3">
+                                                {claudeModels.length > 0 && (
+                                                    <div className="space-y-1.5">
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-violet-500/20 text-violet-600 dark:text-violet-400">claude</span>
+                                                        {claudeModels.map(([id, m]) => {
+                                                            const name = id.replace(/^claude-/, '')
+                                                            const modelCacheW = (m.cacheWrite5m ?? 0) + (m.cacheWrite1h ?? 0)
+                                                            const isUnpriced = unpriced.has(id)
+                                                            return (
+                                                                <div key={id} className="flex items-center justify-between gap-2 text-xs">
+                                                                    <span className="font-mono truncate">{name}</span>
+                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cacheRead ?? 0)}/{fmtTokens(modelCacheW)}
+                                                                    </span>
+                                                                    <span className="tabular-nums w-16 text-right">
+                                                                        {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
+                                                                    </span>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                )}
+                                                {hasCodex && (
+                                                    <div className="space-y-1 pt-1">
+                                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-zinc-500/20 text-muted-foreground">codex</span>
+                                                            <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                                                                {fmtTokens(t.codexInput ?? 0)}/{fmtTokens(t.codexOutput ?? 0)}
+                                                            </span>
+                                                            <span className="tabular-nums w-16 text-right">
+                                                                ~{formatUsd(usage.costUnverifiedUsd ?? 0)}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-[10px] text-muted-foreground">⚠️ estimated rates</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Token totals */}
+                                        <div className="flex items-start justify-between gap-2 text-xs bg-muted/50 rounded-lg p-3">
+                                            <span className="text-muted-foreground">Tokens</span>
+                                            <span className="tabular-nums text-right">
+                                                in {fmtTokens(inTokens)} · out {fmtTokens(outTokens)} · cacheR {fmtTokens(cacheRead)} · cacheW {fmtTokens(cacheWrite)}
+                                            </span>
+                                        </div>
+
+                                        {/* Recent sessions */}
+                                        {sessions.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-xs text-muted-foreground">Recent sessions</p>
+                                                <div className="space-y-1">
+                                                    {visibleSessions.map((s, i) => (
+                                                        <div key={s.file || i} className="flex items-center gap-2 text-xs">
+                                                            <span className="text-muted-foreground flex-1 truncate">{formatTimeAgo(s.lastActivity)} ago</span>
+                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${s.tool === 'claude' ? 'bg-violet-500/20 text-violet-600 dark:text-violet-400' : 'bg-zinc-500/20 text-muted-foreground'}`}>
+                                                                {s.tool}
+                                                            </span>
+                                                            <span className="text-muted-foreground tabular-nums w-12 text-right">{(s.activeMinutes ?? 0).toFixed(0)} min</span>
+                                                            <span className="tabular-nums w-12 text-right">{s.tool === 'codex' ? '~' : ''}{formatUsd(s.costUsd ?? 0)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {sessions.length > 5 && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-6 text-xs"
+                                                        onClick={() => setShowAllSessions(v => !v)}
+                                                    >
+                                                        {showAllSessions ? 'Show less' : `+ ${sessions.length - 5} more`}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Disclaimer */}
+                                        <p className="text-xs text-muted-foreground italic">List-price value of consumption — not an invoice.</p>
+                                    </div>
+                                </Section>
                                 <Separator />
                             </>
                         )

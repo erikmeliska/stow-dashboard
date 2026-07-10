@@ -34,6 +34,7 @@
     "test": "node --test",
     "scan": "node scripts/scan.mjs -s data/projects_metadata.jsonl",
     "scan:force": "node scripts/scan.mjs -s data/projects_metadata.jsonl -f",
+    "usage": "node scripts/usage.mjs",
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
     "stow": "node scripts/cli.mjs"

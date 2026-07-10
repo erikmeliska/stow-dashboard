@@ -5,6 +5,7 @@ import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
 import { collectProjectProcesses } from '@/lib/processes.mjs'
 import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
+import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
 
 const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
@@ -175,6 +176,14 @@ export async function POST() {
                 const finalProcesses = discovered.length > 0
                     ? (await collectProjectProcesses([...projectMap.keys()])).projects
                     : processMap
+
+                // AI-usage ledger update (never fatal to the refresh cycle)
+                try {
+                    const usage = await updateUsage({ ...defaultUsagePaths(), projectDirs: [...projectMap.keys()] })
+                    sendEvent({ type: 'usage_updated', ...usage })
+                } catch (usageErr) {
+                    sendEvent({ type: 'usage_error', message: usageErr.message })
+                }
 
                 const duration = Math.round((Date.now() - startTime) / 1000)
                 sendEvent({

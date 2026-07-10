@@ -30,7 +30,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { formatTimeAgo, getGitProvider, docScoreColor } from "@/lib/utils"
+import { formatTimeAgo, getGitProvider, docScoreColor, formatUsd } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -943,6 +943,40 @@ export function ProjectTable({ projects, ownRepos }) {
                         AI_STATUS_PILL_CLASS[status] || 'bg-muted text-muted-foreground'
                     )}>
                         {status}
+                    </span>
+                )
+            },
+        },
+        {
+            id: "ai_cost",
+            accessorFn: row => row.usage ? (row.usage.costUsd ?? 0) + (row.usage.costUnverifiedUsd ?? 0) : -1,
+            sortDescFirst: true,
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        AI $
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const total = row.getValue("ai_cost")
+                if (total < 0) return <span className="text-muted-foreground text-sm">—</span>
+                const usage = row.original.usage
+                const unverifiedOnly = (usage.costUsd ?? 0) === 0 && (usage.costUnverifiedUsd ?? 0) > 0
+                const t = usage.tokens || {}
+                const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
+                const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
+                const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`
+                const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtTokens(inTokens)} out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
+                return (
+                    <span className="text-sm whitespace-nowrap tabular-nums" title={title}>
+                        {unverifiedOnly ? '~' : ''}{formatUsd(total)}
                     </span>
                 )
             },

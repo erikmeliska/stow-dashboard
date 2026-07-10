@@ -54,6 +54,7 @@ export function ScanControls({ lastSyncTime }) {
     const [autoRefresh, setAutoRefresh] = React.useState(false)
     const [syncAgo, setSyncAgo] = React.useState('')
     const [analyzeSummary, setAnalyzeSummary] = React.useState(null)
+    const [isRebuildingUsage, setIsRebuildingUsage] = React.useState(false)
     const startTimeRef = React.useRef(null)
     const timerRef = React.useRef(null)
     const autoRefreshRef = React.useRef(null)
@@ -219,6 +220,27 @@ export function ScanControls({ lastSyncTime }) {
                 console.error('Analysis poll error:', e)
             }
         }, 2000)
+    }
+
+    // Rebuild the AI-usage ledger (full re-parse). Plain JSON, await the result
+    // and surface it through the same summary line the analyze flow uses.
+    const handleRebuildUsage = async () => {
+        if (isRebuildingUsage) return
+        setIsRebuildingUsage(true)
+        setAnalyzeSummary(null)
+        try {
+            const res = await fetch('/api/usage/rebuild', { method: 'POST' })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                showAnalyzeSummary({ message: `Usage rebuild failed: ${data.error || res.statusText}`, error: true }, 10000)
+            } else {
+                showAnalyzeSummary({ message: `Usage rebuilt: ${data.filesParsed} files in ${Math.round((data.durationMs || 0) / 1000)}s`, success: true }, 5000)
+            }
+        } catch (error) {
+            showAnalyzeSummary({ message: `Usage rebuild failed: ${error.message}`, error: true }, 10000)
+        } finally {
+            setIsRebuildingUsage(false)
+        }
     }
 
     const handleScan = async (type = 'normal') => {
@@ -479,6 +501,18 @@ export function ScanControls({ lastSyncTime }) {
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleScan('analyze-force')}>
                             AI analyze (force)
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                            onSelect={(e) => { e.preventDefault(); handleRebuildUsage() }}
+                            disabled={isRebuildingUsage}
+                        >
+                            {isRebuildingUsage ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                            )}
+                            Rebuild AI usage
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
