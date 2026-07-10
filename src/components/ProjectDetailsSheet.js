@@ -686,7 +686,6 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                     {(() => {
                         const ai = project.ai_analysis
                         const derived = project.ai_derived
-                        const analyzed = ai && !ai.error
 
                         const header = (
                             <div className="flex items-center justify-between">

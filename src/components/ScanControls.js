@@ -258,6 +258,7 @@ export function ScanControls({ lastSyncTime }) {
 
         setIsScanning(true)
         setScanType(type)
+        setAnalyzeSummary(null)
         setProgress({ message: 'Connecting...' })
         setLogs([])
         setScanStats({ current: 0, total: 0 })
