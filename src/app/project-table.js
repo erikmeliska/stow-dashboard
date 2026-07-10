@@ -27,7 +27,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { formatTimeAgo, getGitProvider } from "@/lib/utils"
+import { formatTimeAgo, getGitProvider, docScoreColor } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -98,6 +98,22 @@ const defaultColumnVisibility = {
     'git_info.total_commits': false,
     'content_size_bytes': false,
     'scc.estimated_cost': false,
+    'ai_type': false,
+    'ai_status': false,
+}
+
+// Literal Tailwind classes for doc-score bar (interpolated names are stripped by Tailwind)
+const DOC_SCORE_BAR_CLASS = {
+    green: 'bg-green-500',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+}
+
+const AI_STATUS_PILL_CLASS = {
+    active: 'bg-green-500/20 text-green-600 dark:text-green-400',
+    dormant: 'bg-amber-500/20 text-amber-600 dark:text-amber-400',
+    dead: 'bg-muted text-muted-foreground',
+    'archive-candidate': 'bg-red-500/20 text-red-600 dark:text-red-400',
 }
 const defaultSorting = [{ id: 'last_modified', desc: true }]
 
@@ -192,6 +208,10 @@ export function ProjectTable({ projects, ownRepos }) {
         if (project.stack?.some(tech => tech.toLowerCase().includes(search))) return true
         if (project.groupParts?.some(part => part.toLowerCase().includes(search))) return true
         if (project.git_info?.remotes?.some(remote => remote.toLowerCase().includes(search))) return true
+        if (project.ai_analysis?.generated_description?.toLowerCase().includes(search)) return true
+        if (project.ai_analysis?.category?.toLowerCase().includes(search)) return true
+        if (project.ai_analysis?.client?.toLowerCase().includes(search)) return true
+        if (project.ai_derived?.tech?.join(' ').toLowerCase().includes(search)) return true
 
         return false
     }, [])
@@ -321,7 +341,7 @@ export function ProjectTable({ projects, ownRepos }) {
         const settings = loadSettings()
         if (settings) {
             if (settings.sorting) setSorting(settings.sorting)
-            if (settings.columnVisibility) setColumnVisibility(settings.columnVisibility)
+            if (settings.columnVisibility) setColumnVisibility({ ...defaultColumnVisibility, ...settings.columnVisibility })
             if (settings.pageSize) setPagination(prev => ({ ...prev, pageSize: settings.pageSize }))
             if (settings.filters) setFilters(settings.filters)
             if (settings.globalFilter) setGlobalFilter(settings.globalFilter)
@@ -718,6 +738,101 @@ export function ProjectTable({ projects, ownRepos }) {
             },
         },
         {
+            id: "ai_category",
+            accessorFn: row => row.ai_analysis?.category ?? '',
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Category
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const ai = row.original.ai_analysis
+                const category = ai?.category
+                if (!ai || ai.error || !category) {
+                    return <span className="text-muted-foreground text-sm">—</span>
+                }
+                const client = ai.client
+                const label = category.replace(/^_/, '') + (client ? `/${client}` : '')
+                return (
+                    <span
+                        className="px-1.5 py-0.5 rounded text-xs truncate max-w-[130px] inline-block bg-violet-500/20 text-violet-600 dark:text-violet-400"
+                        title={ai.generated_description || label}
+                    >
+                        {label}
+                    </span>
+                )
+            },
+        },
+        {
+            id: "ai_doc_score",
+            accessorFn: row => row.ai_analysis?.doc_score ?? -1,
+            sortDescFirst: true,
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 -ml-2"
+                        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                    >
+                        Docs
+                        <ArrowUpDown className="ml-1 h-3 w-3" />
+                    </Button>
+                )
+            },
+            cell: ({ row }) => {
+                const score = row.getValue("ai_doc_score")
+                if (score < 0) return <span className="text-muted-foreground text-sm">—</span>
+                const color = docScoreColor(score)
+                return (
+                    <div className="flex items-center gap-1.5">
+                        <span className="text-sm tabular-nums w-6">{score}</span>
+                        <div className="h-1.5 w-10 rounded bg-muted">
+                            <div
+                                className={cn('h-1.5 rounded', DOC_SCORE_BAR_CLASS[color])}
+                                style={{ width: `${score}%` }}
+                            />
+                        </div>
+                    </div>
+                )
+            },
+        },
+        {
+            id: "ai_type",
+            accessorFn: row => row.ai_analysis?.project_type ?? '',
+            header: "Type",
+            cell: ({ row }) => {
+                const type = row.getValue("ai_type")
+                if (!type) return <span className="text-muted-foreground text-sm">—</span>
+                return <span className="text-sm whitespace-nowrap">{type}</span>
+            },
+        },
+        {
+            id: "ai_status",
+            accessorFn: row => row.ai_derived?.status ?? '',
+            header: "AI Status",
+            cell: ({ row }) => {
+                const status = row.getValue("ai_status")
+                if (!status) return <span className="text-muted-foreground text-sm">—</span>
+                return (
+                    <span className={cn(
+                        "px-1.5 py-0.5 rounded text-xs whitespace-nowrap",
+                        AI_STATUS_PILL_CLASS[status] || 'bg-muted text-muted-foreground'
+                    )}>
+                        {status}
+                    </span>
+                )
+            },
+        },
+        {
             id: "actions",
             header: "Actions",
             enableHiding: false,
@@ -801,7 +916,14 @@ export function ProjectTable({ projects, ownRepos }) {
             // Vyhľadávanie v git remotes
             const gitRemotes = row.original.git_info?.remotes || []
             if (gitRemotes.some(remote => remote.toLowerCase().includes(searchValue))) return true
-            
+
+            // Vyhľadávanie v AI analýze
+            const ai = row.original.ai_analysis
+            if (ai?.generated_description?.toLowerCase().includes(searchValue)) return true
+            if (ai?.category?.toLowerCase().includes(searchValue)) return true
+            if (ai?.client?.toLowerCase().includes(searchValue)) return true
+            if (row.original.ai_derived?.tech?.join(' ').toLowerCase().includes(searchValue)) return true
+
             return false
         },
     })
