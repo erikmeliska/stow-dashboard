@@ -153,7 +153,9 @@ async function parseFileTail(filePath, tool, startOffset, size, state) {
 }
 
 async function atomicWriteJson(file, value) {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+  // Random fragment: two overlapping updateUsage runs in the same process
+  // (60s auto-refresh + manual rebuild) must not collide on the temp path.
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   await writeFile(tmp, JSON.stringify(value))
   await rename(tmp, file)
 }
