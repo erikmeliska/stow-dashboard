@@ -136,6 +136,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/usage.mjs` - AI usage ledger: transcript tail-parse, aggregation, `data/usage.json`
 - `src/lib/usage-pricing.mjs` - Token → USD pricing tables (Claude + Codex)
 - `src/lib/scan-roots.mjs` - Resolves SCAN_ROOTS / project dirs for scan and usage
+- `scripts/scan.mjs` - CLI for running the scanner
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
