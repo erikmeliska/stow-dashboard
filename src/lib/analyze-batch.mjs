@@ -69,8 +69,12 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
   const started = Date.now()
   try {
     const taxonomy = await readTaxonomy(baseDir)
+    // Build the schema once: written to a temp file for apfel's --schema flag AND
+    // passed as an object to analyzeProject so the Ollama fallback can use it
+    // without re-reading the file.
+    const schema = buildSchema(taxonomy)
     const schemaFile = path.join(os.tmpdir(), `stow-analysis-schema-${process.pid}.json`)
-    await writeFile(schemaFile, JSON.stringify(buildSchema(taxonomy)))
+    await writeFile(schemaFile, JSON.stringify(schema))
 
     let records = await readJsonl(dataFile)
     if (only) {
@@ -99,7 +103,7 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
           onProgress({ type: 'skipped', ...base })
           continue
         }
-        const { ai_analysis, derived } = await analyzeProject(record, { taxonomy, baseDir, schemaFile, execImpl })
+        const { ai_analysis, derived } = await analyzeProject(record, { taxonomy, baseDir, schemaFile, schema, execImpl })
         await persistAnalysis(dataFile, record.directory, ai_analysis, derived)
         if (ai_analysis.error) {
           errors++

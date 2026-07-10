@@ -2,11 +2,12 @@
 // Orchestrates AI project analysis: taxonomy from disk, schema + prompt
 // generation, apfel subprocess, and the deterministic derivations that are
 // deliberately NOT asked of the model (status, paths, tech merge).
-import { readdir } from 'fs/promises'
+import { readdir, readFile } from 'fs/promises'
 import path from 'path'
 import { execFile } from 'child_process'
 import { gatherFacts, distillProject } from './distill.mjs'
 import { extractTech, normalizeTech } from './tech-tags.mjs'
+import { ollamaAvailable, runOllama, getOllamaConfig } from './ollama.mjs'
 
 export const FACETS = {
   project_type: ['web-app', 'api-service', 'cli-tool', 'library', 'browser-extension', 'desktop-app', 'mobile-app', 'script-collection', 'infra-config', 'template-boilerplate', 'prototype-poc', 'fork', 'content-docs'],
@@ -225,7 +226,7 @@ export async function countTokensOk({ system, prompt, execImpl = exec }) {
 }
 
 export async function analyzeProject(project, ctx) {
-  const { taxonomy, baseDir, schemaFile, execImpl = exec, now = Date.now() } = ctx
+  const { taxonomy, baseDir, schemaFile, execImpl = exec, now = Date.now(), schema, fetchImpl } = ctx
   const analyzed_at = new Date(now).toISOString()
   const facts = await gatherFacts(project)
   const system = buildSystemPrompt(taxonomy)
@@ -258,6 +259,7 @@ export async function analyzeProject(project, ctx) {
 
   let out
   let lang_safe = false
+  let modelId = 'apple-foundationmodel/apfel'
   try {
     out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
   } catch (err) {
@@ -273,8 +275,20 @@ export async function analyzeProject(project, ctx) {
     } catch (err2) {
       if (err2.kind === 'unavailable') throw err2
       if (err2.kind !== 'unsupported-language') return errorRecord(err2.kind, err2.detail)
-      // Still language-rejected — commit 2 wires the Ollama fallback here.
-      return errorRecord('unsupported-language', err2.detail)
+      // Both apfel attempts hit the language guardrail. Fall back to a local
+      // Ollama model, which has no language restriction — feed it the ORIGINAL
+      // (Slovak-bearing) distillate. Cache key (input_hash) stays the full-size
+      // hash; lang_safe is NOT set for the Ollama path.
+      if (!(await ollamaAvailable({ fetchImpl }))) {
+        return errorRecord('unsupported-language', `${err2.detail}; ollama fallback failed: model unavailable`)
+      }
+      try {
+        const schemaObj = schema || JSON.parse(await readFile(schemaFile, 'utf8'))
+        out = await runOllama({ system, prompt: distilled.text, schema: schemaObj, fetchImpl })
+        modelId = `ollama/${getOllamaConfig().model}`
+      } catch (oerr) {
+        return errorRecord('unsupported-language', `${err2.detail}; ollama fallback failed: ${oerr.message}`)
+      }
     }
   }
 
@@ -290,7 +304,7 @@ export async function analyzeProject(project, ctx) {
       analyzed_at,
       input_hash,
       version: ANALYSIS_VERSION,
-      model: 'apple-foundationmodel/apfel',
+      model: modelId,
       ...(lang_safe ? { lang_safe: true } : {}),
     },
     derived: {

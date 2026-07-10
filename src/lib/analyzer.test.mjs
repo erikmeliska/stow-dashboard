@@ -339,19 +339,49 @@ test('analyzeProject retries a language-rejected project with a masked prompt an
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
-test('analyzeProject returns an unsupported-language error record when the retry also fails', async () => {
+// Ollama unreachable: fetch rejects so ollamaAvailable is false and no real
+// network call is made. The record stays an unsupported-language error.
+const unreachableFetch = async () => { throw new Error('ECONNREFUSED') }
+
+test('analyzeProject returns an unsupported-language error record when retry fails and Ollama is unavailable', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
   try {
     const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
       taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: unreachableFetch,
       execImpl: fakeExec({ runExits: [1, 1], runStderr: LANG_STDERR }),
     })
     assert.equal(ai_analysis.error, 'unsupported-language')
-    assert.equal(ai_analysis.error_detail, LANG_STDERR)
+    assert.ok(ai_analysis.error_detail.startsWith(LANG_STDERR))
+    assert.match(ai_analysis.error_detail, /ollama fallback failed/i)
     assert.equal(ai_analysis.input_hash.length, 64)
     assert.equal(ai_analysis.version, ANALYSIS_VERSION)
     assert.equal(ai_analysis.lang_safe, undefined)
     assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject falls back to Ollama when apfel rejects the language twice', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = pilotProject(dir)
+    const baseDir = path.dirname(dir)
+    const fetchImpl = async (url) => {
+      if (url.endsWith('/api/tags')) return { ok: true, status: 200, json: async () => ({ models: [{ name: 'llama3:latest' }] }) }
+      return { ok: true, status: 200, json: async () => ({ message: { content: JSON.stringify(MODEL_OUT) } }) }
+    }
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir, schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl,
+      execImpl: fakeExec({ runExits: [1, 1], runStderr: LANG_STDERR }),
+    })
+    assert.equal(ai_analysis.error, undefined)
+    assert.equal(ai_analysis.model, 'ollama/llama3')
+    assert.equal(ai_analysis.category, '_Learning')       // classified by ollama
+    assert.equal(ai_analysis.lang_safe, undefined)        // ollama path does not set lang_safe
+    const facts = await gatherFacts(project)
+    assert.equal(ai_analysis.input_hash, distillProject(project, facts, { baseDir }).hash)
+    assert.ok(derived.status)                             // full result path -> derived present
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
