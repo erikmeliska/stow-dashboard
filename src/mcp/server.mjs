@@ -21,6 +21,7 @@ import { readTasks, addTask, taskPrefix } from '../lib/tasks.mjs'
 import { verifyTask, auditTasks, generateChangelog } from '../lib/history.mjs'
 import { writeBrief, openInClaudeDesktop } from '../lib/dispatch.mjs'
 import { readOpenWithEnv } from '../lib/open-with.mjs'
+import { defaultUsagePaths } from '../lib/usage.mjs'
 import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
@@ -59,6 +60,41 @@ async function loadProjects() {
             .map(line => JSON.parse(line))
     } catch {
         return []
+    }
+}
+
+// Load the AI usage ledger (data/usage.json); tolerate missing/broken file.
+async function loadUsage() {
+    try {
+        const { outFile } = defaultUsagePaths()
+        const raw = JSON.parse(await fs.readFile(outFile, 'utf-8'))
+        return raw && typeof raw.projects === 'object' && raw.projects !== null ? raw : { projects: {} }
+    } catch {
+        return { projects: {} }
+    }
+}
+
+// Shape a project's ai_analysis + ai_derived into the `ai` detail block.
+function aiBlock(project) {
+    const a = project.ai_analysis
+    if (!a) return null
+    if (a.error) return { error: a.error, errorDetail: a.error_detail }
+    const d = project.ai_derived
+    return {
+        category: a.category,
+        client: a.client,
+        type: a.project_type,
+        domain: a.domain,
+        maturity: a.maturity,
+        docScore: a.doc_score,
+        docGaps: a.doc_gaps,
+        description: a.generated_description,
+        reusableAssets: a.reusable_assets,
+        confidence: a.confidence,
+        status: d?.status,
+        tech: d?.tech,
+        placementOk: d?.placement_ok,
+        suggestedPath: d?.suggested_path,
     }
 }
 
@@ -110,7 +146,7 @@ function formatBytes(bytes) {
 const server = new Server(
     {
         name: 'stow-dashboard',
-        version: '1.0.0',
+        version: '1.1.0',
     },
     {
         capabilities: {
@@ -194,7 +230,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: 'search_projects',
-                description: 'Search projects by name, stack, or group. Returns matching projects with basic info including unique project IDs.',
+                description: 'Search projects by name, stack, or group. Also filters on AI-analysis facets (category, project type, domain, tech, maturity, misplaced). Returns matching projects with basic info including unique project IDs, AI category, and AI cost.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -209,6 +245,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         group: {
                             type: 'string',
                             description: 'Filter by group/folder (e.g., "_Bizz", "TriSoft")'
+                        },
+                        category: {
+                            type: 'string',
+                            description: 'AI facet: filter by categorized folder taxonomy (e.g., "_Bizz", "_Learning")'
+                        },
+                        type: {
+                            type: 'string',
+                            description: 'AI facet: filter by project_type (e.g., "web-app", "script-collection")'
+                        },
+                        domain: {
+                            type: 'string',
+                            description: 'AI facet: filter by domain (e.g., "education", "ecommerce")'
+                        },
+                        tech: {
+                            type: 'string',
+                            description: 'AI facet: filter by derived tech tag (exact, lowercase, e.g. "react")'
+                        },
+                        maturity: {
+                            type: 'string',
+                            description: 'AI facet: filter by maturity (e.g., "idea", "prototype", "production")'
+                        },
+                        misplaced: {
+                            type: 'boolean',
+                            description: 'AI facet: when true, only projects the AI flagged as placed in the wrong folder (placement_ok === false)'
                         },
                         limit: {
                             type: 'number',
@@ -458,6 +518,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     required: ['name'],
                 },
             },
+            {
+                name: 'find_reusable_assets',
+                description: 'Search harvestable building blocks (auth flows, scrapers, integrations) that the AI analysis found across all projects.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        query: { type: 'string', description: 'Case-insensitive substring to match against asset text (omit for all)' },
+                        limit: { type: 'number', description: 'Maximum number of results (default: 20)' },
+                    },
+                },
+            },
         ]
     }
 })
@@ -469,9 +540,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
         case 'search_projects': {
             const projects = await loadProjects()
+            const usage = await loadUsage()
             const query = (args.query || '').toLowerCase()
             const stackFilter = (args.stack || '').toLowerCase()
             const groupFilter = (args.group || '').toLowerCase()
+            const categoryFilter = (args.category || '').toLowerCase()
+            const typeFilter = (args.type || '').toLowerCase()
+            const domainFilter = (args.domain || '').toLowerCase()
+            const techFilter = (args.tech || '').toLowerCase()
+            const maturityFilter = (args.maturity || '').toLowerCase()
+            const misplacedFilter = args.misplaced === true
             const limit = args.limit || 10
 
             let results = projects.filter(p => {
@@ -490,19 +568,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (groupFilter && !p.groupParts?.some(g => g.toLowerCase().includes(groupFilter))) {
                     return false
                 }
+                // AI facets — a record without a successful ai_analysis never matches an AI filter.
+                const ai = p.ai_analysis && !p.ai_analysis.error ? p.ai_analysis : null
+                if (categoryFilter && ai?.category?.toLowerCase() !== categoryFilter) return false
+                if (typeFilter && ai?.project_type?.toLowerCase() !== typeFilter) return false
+                if (domainFilter && ai?.domain?.toLowerCase() !== domainFilter) return false
+                if (maturityFilter && ai?.maturity?.toLowerCase() !== maturityFilter) return false
+                if (techFilter && !p.ai_derived?.tech?.some(t => t.toLowerCase() === techFilter)) return false
+                if (misplacedFilter && p.ai_derived?.placement_ok !== false) return false
                 return true
             })
 
-            results = results.slice(0, limit).map(p => ({
-                id: p.id,
-                name: p.project_name,
-                directory: p.directory,
-                stack: p.stack?.slice(0, 5),
-                groups: p.groupParts,
-                size: formatBytes(p.content_size_bytes),
-                hasGit: p.git_info?.git_detected || false,
-                uncommitted: p.git_info?.uncommitted_changes || 0
-            }))
+            results = results.slice(0, limit).map(p => {
+                const cost = usage.projects?.[p.directory]?.costUsd
+                return {
+                    id: p.id,
+                    name: p.project_name,
+                    directory: p.directory,
+                    stack: p.stack?.slice(0, 5),
+                    groups: p.groupParts,
+                    size: formatBytes(p.content_size_bytes),
+                    hasGit: p.git_info?.git_detected || false,
+                    uncommitted: p.git_info?.uncommitted_changes || 0,
+                    aiCategory: p.ai_analysis?.category ?? null,
+                    aiCostUsd: typeof cost === 'number' ? Math.round(cost) : null,
+                }
+            })
 
             return {
                 content: [{
@@ -522,12 +613,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
-            const [liveGit, projectProcesses] = await Promise.all([
+            const [liveGit, projectProcesses, usage] = await Promise.all([
                 getLiveGitStatus(project.directory),
-                getProjectProcesses()
+                getProjectProcesses(),
+                loadUsage(),
             ])
 
             const runningInfo = projectProcesses[project.directory]
+            const u = usage.projects?.[project.directory]
+            const aiUsage = u ? {
+                sessions: u.sessions,
+                activeHours: +((u.activeMinutes || 0) / 60).toFixed(1),
+                costUsd: u.costUsd,
+                costUnverifiedUsd: u.costUnverifiedUsd,
+                note: 'list-price value, not an invoice',
+            } : null
 
             const details = {
                 id: project.id,
@@ -554,6 +654,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     docker: runningInfo.docker,
                     ports: runningInfo.ports
                 } : null,
+                ai: aiBlock(project),
+                aiUsage,
                 hasReadme: project.hasReadme,
                 lastModified: project.last_modified
             }
@@ -907,6 +1009,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const cl = await generateChangelog(project.directory)
             await fs.writeFile(path.join(project.directory, 'CHANGELOG.md'), cl, 'utf-8')
             return { content: [{ type: 'text', text: JSON.stringify({ written: 'CHANGELOG.md', preview: cl.slice(0, 500) }, null, 2) }] }
+        }
+        case 'find_reusable_assets': {
+            const projects = await loadProjects()
+            const q = (args.query || '').toLowerCase()
+            const limit = args.limit || 20
+            const out = []
+            for (const p of projects) {
+                const a = p.ai_analysis
+                if (!a || a.error || !Array.isArray(a.reusable_assets)) continue
+                for (const asset of a.reusable_assets) {
+                    if (q && !String(asset).toLowerCase().includes(q)) continue
+                    out.push({ asset, project: p.project_name, directory: p.directory })
+                    if (out.length >= limit) break
+                }
+                if (out.length >= limit) break
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
         }
 
         default:
