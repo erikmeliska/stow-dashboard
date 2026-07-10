@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { ProjectScanner, getLatestMtime, Semaphore, FS_CONCURRENCY } from './index.mjs'
+import { ProjectScanner, getLatestMtime, Semaphore, FS_CONCURRENCY, withFdRetry } from './index.mjs'
 
 // No setTimeout/setImmediate here (not in this project's eslint globals) —
 // a few chained microtask ticks are enough to let queued Promise callbacks run.
@@ -286,4 +286,62 @@ test('syncMetadata allows a large shrink when existing file is at/under the 20-r
         const written = (await fs.readFile(file, 'utf-8')).trim().split('\n').filter(Boolean)
         assert.equal(written.length, 1)
     } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+// --- Fix 3: bounded discovery concurrency + EMFILE retry --------------------
+
+test('withFdRetry retries a retryable error then succeeds', async () => {
+    let attempts = 0
+    const result = await withFdRetry(async () => {
+        attempts++
+        if (attempts < 3) {
+            const err = new Error('too many open files')
+            err.code = 'EMFILE'
+            throw err
+        }
+        return 'ok'
+    })
+    assert.equal(result, 'ok')
+    assert.equal(attempts, 3) // 2 failures + 1 success
+})
+
+test('withFdRetry gives up after the retry budget and rethrows', async () => {
+    let attempts = 0
+    await assert.rejects(() => withFdRetry(async () => {
+        attempts++
+        const err = new Error('nope')
+        err.code = 'EMFILE'
+        throw err
+    }, 3), /nope/)
+    assert.equal(attempts, 4) // initial + 3 retries
+})
+
+test('withFdRetry does not retry a non-retryable error', async () => {
+    let attempts = 0
+    await assert.rejects(() => withFdRetry(async () => {
+        attempts++
+        const err = new Error('boom')
+        err.code = 'EACCES'
+        throw err
+    }), /boom/)
+    assert.equal(attempts, 1) // no retries for a non-fd error
+})
+
+test('discoverProjects still finds nested projects (semaphore wrapping is result-preserving)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-discover-'))
+    try {
+        // A top-level group (only .git) with two real sub-projects.
+        await fs.mkdir(path.join(root, '.git'), { recursive: true })
+        await fs.mkdir(path.join(root, 'app-a'), { recursive: true })
+        await fs.writeFile(path.join(root, 'app-a', 'package.json'), '{"name":"a"}')
+        await fs.mkdir(path.join(root, 'app-b'), { recursive: true })
+        await fs.writeFile(path.join(root, 'app-b', 'requirements.txt'), 'flask')
+
+        const scanner = new ProjectScanner({ scanRoots: [root] })
+        const results = []
+        await scanner.discoverProjects(root, results, null)
+
+        assert.ok(results.includes(path.join(root, 'app-a')), 'found app-a')
+        assert.ok(results.includes(path.join(root, 'app-b')), 'found app-b')
+    } finally { await fs.rm(root, { recursive: true, force: true }) }
 })

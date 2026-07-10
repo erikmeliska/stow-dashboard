@@ -1,6 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
+import { setTimeout } from 'node:timers'
 import { execFile } from 'child_process'
 import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
@@ -74,6 +75,30 @@ export class Semaphore {
 const fsLimiter = new Semaphore(FS_CONCURRENCY)
 const limitedReaddir = (dir, options) => fsLimiter.run(() => fs.readdir(dir, options))
 const limitedStat = (filePath) => fsLimiter.run(() => fs.stat(filePath))
+
+// File-descriptor exhaustion (EMFILE/ENFILE) and transient EAGAIN are the
+// failures the desktop shell's 256-fd cap produces under scan load. They are
+// recoverable: retry with exponential backoff so a momentarily-full fd table
+// does not silently drop a whole subtree from discovery.
+const RETRYABLE = new Set(['EMFILE', 'ENFILE', 'EAGAIN'])
+
+export async function withFdRetry(fn, retries = 3) {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await fn()
+        } catch (err) {
+            if (!RETRYABLE.has(err?.code) || attempt >= retries) throw err
+            await new Promise(r => setTimeout(r, 50 * 2 ** attempt))
+        }
+    }
+}
+
+// Bounded + fd-retrying readdir for the discovery walk (discoverProjects /
+// classifySubDirs). Only the readdir I/O is wrapped — the recursive fan-out
+// happens outside the semaphore, so no slot is ever held across recursion
+// (which would risk deadlock).
+const discoverReaddir = (dir) =>
+    fsLimiter.run(() => withFdRetry(() => fs.readdir(dir, { withFileTypes: true })))
 
 export class ProjectScanner {
     constructor(options = {}) {
@@ -576,10 +601,13 @@ export class ProjectScanner {
         return Promise.all(
             subDirs.map(async (subPath) => {
                 try {
-                    const subEntries = await fs.readdir(subPath, { withFileTypes: true })
+                    const subEntries = await discoverReaddir(subPath)
                     const subNames = subEntries.map(e => e.name)
                     return { path: subPath, ...this.classifyDirectory(subNames), entries: subEntries }
-                } catch {
+                } catch (err) {
+                    // After fd retries: keep the non-project fallback (so the walk
+                    // continues) but make the loss visible.
+                    this.onProgress({ type: 'discover_error', directory: subPath, error: err.message })
                     return { path: subPath, isProject: false, isStrong: false, hasGit: false, entries: [] }
                 }
             })
@@ -593,8 +621,11 @@ export class ProjectScanner {
 
         let entries
         try {
-            entries = await fs.readdir(directory, { withFileTypes: true })
-        } catch {
+            entries = await discoverReaddir(directory)
+        } catch (err) {
+            // Last resort after fd retries: surface the loss instead of dropping
+            // the subtree silently (which previously shrank the dataset).
+            this.onProgress({ type: 'discover_error', directory, error: err.message })
             return
         }
 
