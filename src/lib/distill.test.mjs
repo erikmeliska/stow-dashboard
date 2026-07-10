@@ -44,6 +44,30 @@ test('formatDistillate truncates README to readmeChars', () => {
   assert.ok(!text.includes('A'.repeat(101)))
 })
 
+test('formatDistillate flags a clone when there are no own commits', () => {
+  const p = { ...SAMPLE, git_info: { git_detected: true, total_commits: 500, user_commits: 0, remotes: ['https://github.com/foo/bar'] } }
+  const text = formatDistillate(p, { readme: null, topLevel: [], commits: [] }, {})
+  assert.match(text, /own commits: 0 of 500/)
+  assert.match(text, /no own commits/)
+  assert.match(text, /clone of third-party/)
+})
+
+test('formatDistillate shows own-commit ratio without clone note when owner contributed', () => {
+  const p = { ...SAMPLE, git_info: { git_detected: true, total_commits: 20, user_commits: 12, remotes: [] } }
+  const text = formatDistillate(p, { readme: null, topLevel: [], commits: [] }, {})
+  assert.match(text, /own commits: 12 of 20/)
+  assert.doesNotMatch(text, /clone of third-party/)
+})
+
+test('formatDistillate caps topLevel, commits and stack via opts', () => {
+  const facts = { readme: null, topLevel: ['a', 'b', 'c', 'd'], commits: ['c1', 'c2', 'c3', 'c4'] }
+  const p = { ...SAMPLE, stack: ['s1', 's2', 's3', 's4'] }
+  const text = formatDistillate(p, facts, { topLevelMax: 2, commitsMax: 2, stackMax: 2 })
+  assert.match(text, /top-level entries: a, b\n/)
+  assert.match(text, /recent commits: c1 \| c2\n/)
+  assert.match(text, /stack: s1, s2 \(\+2 more\)/)
+})
+
 test('distillProject hash changes when facts change', () => {
   const a = distillProject(SAMPLE, { readme: null, topLevel: [], commits: [] }, {})
   const b = distillProject(SAMPLE, { readme: 'hello', topLevel: [], commits: [] }, {})

@@ -6,7 +6,7 @@ import os from 'os'
 import path from 'path'
 import {
   FACETS, CATEGORY_LEGEND, readTaxonomy, buildSchema, buildSystemPrompt,
-  deriveStatus, suggestedPath, isPlacementOk,
+  deriveStatus, suggestedPath, isPlacementOk, sanitizeClient,
   ApfelError, runApfel, analyzeProject, execClosedStdin,
 } from './analyzer.mjs'
 
@@ -40,6 +40,37 @@ test('buildSystemPrompt contains legend lines for given categories only', () => 
   assert.match(prompt, /_Learning = /)
   assert.doesNotMatch(prompt, /_Bizz = /)
   assert.match(prompt, /doc_score/i)
+})
+
+test('buildSchema client description forbids placeholders and explains new: prefix', () => {
+  const schema = buildSchema({ categories: ['_Bizz'], clients: ['TriSoft'] })
+  assert.match(schema.properties.client.description, /Never answer a placeholder/)
+  assert.match(schema.properties.client.description, /new:/)
+})
+
+test('buildSystemPrompt carries the _Bizz over-pull guard rule', () => {
+  const prompt = buildSystemPrompt({ categories: ['_Bizz', '_Learning'], clients: [] })
+  assert.match(prompt, /NOT _Bizz/)
+})
+
+test('buildSystemPrompt carries the fork/clone rule', () => {
+  const prompt = buildSystemPrompt({ categories: ['_Bizz', '_Testing'], clients: [] })
+  assert.match(prompt, /fork/)
+})
+
+test('sanitizeClient blanks falsy, placeholder and angle-bracket inputs', () => {
+  assert.equal(sanitizeClient('', ['TriSoft']), '')
+  assert.equal(sanitizeClient(null, ['TriSoft']), '')
+  assert.equal(sanitizeClient('   ', ['TriSoft']), '')
+  assert.equal(sanitizeClient('<Name>', ['TriSoft']), '')
+  assert.equal(sanitizeClient('new:<Name>', ['TriSoft']), '')
+})
+
+test('sanitizeClient keeps real names and new: prefix with a real name', () => {
+  assert.equal(sanitizeClient('new:Acme', ['TriSoft']), 'new:Acme')
+  assert.equal(sanitizeClient('TriSoft', ['TriSoft']), 'TriSoft')
+  assert.equal(sanitizeClient('  TriSoft  ', ['TriSoft']), 'TriSoft')
+  assert.equal(sanitizeClient('new:', ['TriSoft']), '')
 })
 
 test('deriveStatus: active / dormant / dead by last activity', () => {
@@ -171,6 +202,18 @@ test('analyzeProject clears client when category is not _Bizz', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
   try {
     const out = { ...MODEL_OUT, client: 'TriSoft' } // model hallucinated a client
+    const { ai_analysis } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: out }),
+    })
+    assert.equal(ai_analysis.client, '')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject sanitizes a placeholder client under _Bizz to empty', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const out = { ...MODEL_OUT, category: '_Bizz', client: 'new:<Name>' }
     const { ai_analysis } = await analyzeProject(pilotProject(dir), {
       taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
       execImpl: fakeExec({ result: out }),

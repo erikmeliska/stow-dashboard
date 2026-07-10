@@ -57,7 +57,7 @@ export function buildSchema(taxonomy) {
       category: { type: 'string', enum: taxonomy.categories },
       client: {
         type: 'string',
-        description: `Client name, ONLY when category is _Bizz, else empty string. Known clients: ${taxonomy.clients.join(', ')}. If the client is clearly someone new, answer "new:<Name>".`,
+        description: `Exact client name, ONLY when category is _Bizz, else empty string. Known clients: ${taxonomy.clients.join(', ')}. If the client is a real company not in the list, answer with "new:" followed by the actual company name (e.g. "new:Acme"). Never answer a placeholder.`,
       },
       generated_description: { type: 'string', description: 'One short sentence describing what this project is.' },
       project_type: { type: 'string', enum: FACETS.project_type },
@@ -82,8 +82,25 @@ export function buildSystemPrompt(taxonomy) {
     'maturity: idea = barely started sketch; prototype = works partially, exploratory; mvp = minimal but usable end-to-end; production = deployed/used for real; abandoned-wip = substantial work stopped before usable.',
     'doc_score: 0 = no documentation at all, 50 = README exists but a newcomer could not run the project from it, 100 = excellent README with purpose, setup and usage. doc_gaps: name the most important missing pieces.',
     'reusable_assets: only concrete, harvestable implementations, not generic praise.',
+    '_Bizz is ONLY for paid client or own-business work where the facts let you name the client. If you cannot confidently name a client from the facts, the project is NOT _Bizz — choose the category matching its purpose instead.',
+    'If the facts indicate a clone/fork of third-party code (no own commits, or the remote clearly belongs to someone else), set project_type = "fork" and pick the category by WHY it was cloned (_Testing for evaluation, _AI for AI experiments, etc.) — never _Bizz for someone else\'s open-source project.',
     'Answer strictly based on the given facts. Use confidence=low when guessing.',
   ].join('\n')
+}
+
+// Guards against the model echoing the schema's placeholder (`<Name>`,
+// `new:<Name>`) or returning whitespace. Keeps a `new:` prefix only when a real
+// company name follows it. knownClients is accepted for symmetry with the schema
+// but membership is not required — an unknown real name is still a valid client.
+export function sanitizeClient(client, knownClients = []) { // eslint-disable-line no-unused-vars
+  if (!client || typeof client !== 'string') return ''
+  const trimmed = client.trim()
+  if (!trimmed || trimmed.includes('<') || trimmed.includes('>')) return ''
+  if (trimmed.startsWith('new:')) {
+    const name = trimmed.slice(4).trim()
+    return name ? `new:${name}` : ''
+  }
+  return trimmed
 }
 
 export function deriveStatus(project, { now = Date.now(), lastCodeCommit = null } = {}) {
@@ -140,7 +157,13 @@ export function execClosedStdin(cmd, args, opts) {
 
 const exec = execClosedStdin
 const EXIT_KIND = { 3: 'refused', 4: 'too-large', 5: 'unavailable', 6: 'busy' }
-const README_STEPS = [1500, 600, 200]
+// Progressive shrink for over-4096-token distillates: cap the README first, then
+// the other big contributors (top-level listing, commit subjects, stack).
+const SHRINK_STEPS = [
+  { readmeChars: 1500 },
+  { readmeChars: 600, topLevelMax: 20, commitsMax: 5 },
+  { readmeChars: 200, topLevelMax: 10, commitsMax: 3, stackMax: 8 },
+]
 
 export class ApfelError extends Error {
   constructor(kind, message) {
@@ -185,8 +208,8 @@ export async function analyzeProject(project, ctx) {
 
   let distilled = null
   try {
-    for (const readmeChars of README_STEPS) {
-      const candidate = distillProject(project, facts, { readmeChars, baseDir })
+    for (const step of SHRINK_STEPS) {
+      const candidate = distillProject(project, facts, { ...step, baseDir })
       if (await countTokensOk({ system, prompt: candidate.text, execImpl })) {
         distilled = candidate
         break
@@ -208,7 +231,7 @@ export async function analyzeProject(project, ctx) {
     return { ai_analysis: { error: err.kind, analyzed_at } }
   }
 
-  const client = out.category === '_Bizz' ? out.client : ''
+  const client = out.category === '_Bizz' ? sanitizeClient(out.client, taxonomy.clients) : ''
   // Leaf must be the real directory name (the mv target); project_name is often
   // a description-like string from the scanner, unsafe as a path component.
   const name = path.basename(project.directory)

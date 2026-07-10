@@ -64,15 +64,15 @@ function placementNote(directory, baseDir) {
   return ` (currently under ${first}/)`
 }
 
-export function formatDistillate(project, facts, { readmeChars = 1500, baseDir = '' } = {}) {
+export function formatDistillate(project, facts, { readmeChars = 1500, baseDir = '', topLevelMax = 40, commitsMax = 10, stackMax = 15 } = {}) {
   const lines = ['Project facts:']
   lines.push(`- name: ${project.project_name || path.basename(project.directory)}`)
   lines.push(`- path: ${project.directory}${placementNote(project.directory, baseDir)}`)
   const idle = monthsSince(project.git_info?.last_total_commit_date || project.last_modified)
   lines.push(`- created: ${day(project.created)}, last modified: ${day(project.last_modified)}${idle !== null ? ` (~${idle} months since last activity)` : ''}`)
   if (project.description) lines.push(`- existing description: ${project.description}`)
-  const stack = (project.stack || []).slice(0, 15)
-  lines.push(`- stack: ${stack.length ? stack.join(', ') : 'none detected'}${(project.stack || []).length > 15 ? ` (+${project.stack.length - 15} more)` : ''}`)
+  const stack = (project.stack || []).slice(0, stackMax)
+  lines.push(`- stack: ${stack.length ? stack.join(', ') : 'none detected'}${(project.stack || []).length > stackMax ? ` (+${project.stack.length - stackMax} more)` : ''}`)
   const types = Object.entries(project.file_types || {}).sort((a, b) => b[1] - a[1]).slice(0, 10)
   if (types.length) lines.push(`- file types: ${types.map(([e, n]) => `${e}×${n}`).join(', ')}`)
   if (project.scc) {
@@ -83,12 +83,17 @@ export function formatDistillate(project, facts, { readmeChars = 1500, baseDir =
   const gi = project.git_info || {}
   if (gi.git_detected) {
     const remotes = (gi.remotes || []).join(', ')
-    lines.push(`- git: ${gi.total_commits ?? '?'} commits, branch ${gi.current_branch || '?'}${remotes ? `, remote: ${remotes}` : ', no remote'}`)
+    let git = `- git: ${gi.total_commits ?? '?'} commits, branch ${gi.current_branch || '?'}${remotes ? `, remote: ${remotes}` : ', no remote'}`
+    if (typeof gi.user_commits === 'number' && typeof gi.total_commits === 'number') {
+      git += `, own commits: ${gi.user_commits} of ${gi.total_commits}`
+      if (gi.user_commits === 0 && gi.total_commits > 0) git += ' (no own commits — likely a clone of third-party code)'
+    }
+    lines.push(git)
   } else {
     lines.push('- git: none')
   }
-  if (facts.topLevel.length) lines.push(`- top-level entries: ${facts.topLevel.join(', ')}`)
-  if (facts.commits.length) lines.push(`- recent commits: ${facts.commits.join(' | ')}`)
+  if (facts.topLevel.length) lines.push(`- top-level entries: ${facts.topLevel.slice(0, topLevelMax).join(', ')}`)
+  if (facts.commits.length) lines.push(`- recent commits: ${facts.commits.slice(0, commitsMax).join(' | ')}`)
   if (facts.readme) {
     lines.push(`README (first ${readmeChars} chars):`)
     lines.push(facts.readme.slice(0, readmeChars))

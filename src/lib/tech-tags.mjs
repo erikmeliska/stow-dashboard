@@ -128,6 +128,16 @@ export function normalizeTech(tags) {
     if (typeof raw !== 'string') continue
     let tag = raw.trim().toLowerCase().replace(/\s+/g, '-')
     if (!tag) continue
+    // Reject prose the model sometimes emits as a "tech" (e.g.
+    // "gitlab-api-for-data-fetching."): strip trailing punctuation, then drop
+    // anything with stray characters or too many hyphen segments. Real techs
+    // like react-native, socket.io, c++, c#, esp32 have <=2 segments and only
+    // [a-z0-9.+#-]. (Brief prose said ">3 segments"; its own required cases
+    // — seaborn-for-visualization, 3 segments — need the >2 threshold used here.)
+    tag = tag.replace(/[.,;:]+$/, '')
+    if (!tag) continue
+    if (/[^a-z0-9.+#-]/.test(tag)) continue
+    if (tag.split('-').length > 2) continue
     tag = SYNONYMS[tag] || tag
     out.add(tag)
   }

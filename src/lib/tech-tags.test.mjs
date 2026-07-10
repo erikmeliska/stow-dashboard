@@ -18,6 +18,21 @@ test('normalizeTech drops empty and non-string entries', () => {
   assert.deepEqual(normalizeTech(['', null, undefined, 'react']), ['react'])
 })
 
+test('normalizeTech drops prose-like junk candidates', () => {
+  assert.deepEqual(normalizeTech(['gitlab-api-for-data-fetching.']), [])
+  assert.deepEqual(normalizeTech(['seaborn-for-visualization.']), [])
+  assert.deepEqual(normalizeTech(['Pytrends API for data retrieval.']), [])
+})
+
+test('normalizeTech keeps real tech names with punctuation and short slugs', () => {
+  assert.deepEqual(normalizeTech(['React Native']), ['react-native'])
+  assert.deepEqual(normalizeTech(['Node.js']), ['node'])
+  assert.deepEqual(normalizeTech(['C++']), ['c++'])
+  assert.deepEqual(normalizeTech(['C#']), ['c#'])
+  assert.deepEqual(normalizeTech(['socket.io']), ['websockets'])
+  assert.deepEqual(normalizeTech(['esp32']), ['esp32'])
+})
+
 test('extractTech maps known deps and ignores unknown dep noise', () => {
   const project = { stack: ['next', 'react', 'react-dom', 'ansi-styles', 'chalk'], file_types: {} }
   assert.deepEqual(extractTech(project), ['nextjs', 'react'])
