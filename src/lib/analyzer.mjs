@@ -5,7 +5,6 @@
 import { readdir } from 'fs/promises'
 import path from 'path'
 import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { gatherFacts, distillProject } from './distill.mjs'
 import { extractTech, normalizeTech } from './tech-tags.mjs'
 
@@ -122,7 +121,24 @@ export function isPlacementOk(directory, suggested) {
 
 // --- apfel subprocess + per-project orchestration ---
 
-const exec = promisify(execFile)
+// apfel reads stdin and waits for EOF even when the prompt is passed via argv.
+// Node's promisified execFile leaves the child's stdin pipe open, so apfel blocks
+// until the timeout kills it (SIGTERM). This wrapper mirrors promisified execFile's
+// contract (resolves { stdout, stderr }; rejects with err.code = exit code, honors
+// opts.timeout / opts.maxBuffer) but ends the child's stdin immediately so apfel
+// sees EOF and runs. It is the library's DEFAULT exec — the injectable execImpl
+// seam still overrides it for tests.
+export function execClosedStdin(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(cmd, args, opts, (err, stdout, stderr) => {
+      if (err) { err.stdout = stdout; err.stderr = stderr; reject(err) }
+      else resolve({ stdout, stderr })
+    })
+    child.stdin?.end()
+  })
+}
+
+const exec = execClosedStdin
 const EXIT_KIND = { 3: 'refused', 4: 'too-large', 5: 'unavailable', 6: 'busy' }
 const README_STEPS = [1500, 600, 200]
 

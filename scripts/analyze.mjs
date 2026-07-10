@@ -5,32 +5,16 @@ import path from 'path'
 import os from 'os'
 import { fileURLToPath } from 'url'
 import { readFile, writeFile, mkdir } from 'fs/promises'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { config } from 'dotenv'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 config({ path: path.join(__dirname, '..', '.env.local'), debug: false })
 
-const { readTaxonomy, buildSchema, analyzeProject, ApfelError } = await import('../src/lib/analyzer.mjs')
+const { readTaxonomy, buildSchema, analyzeProject, ApfelError, execClosedStdin } = await import('../src/lib/analyzer.mjs')
 
-const exec = promisify(execFile)
-
-// apfel reads stdin and waits for EOF even when the prompt is passed via argv.
-// Node's execFile leaves the child's stdin pipe open, so apfel blocks until the
-// timeout kills it (SIGTERM). This wrapper mirrors execFile's contract but ends
-// the child's stdin immediately so apfel sees EOF and runs. Passed to the
-// analyzer via its execImpl seam. (The library's default exec has this latent
-// bug — see task-5 report; phase 1's /api/analyze must apply the same fix.)
-function execClosedStdin(file, args, options) {
-  return new Promise((resolve, reject) => {
-    const child = execFile(file, args, options, (err, stdout, stderr) => {
-      if (err) { err.stdout = stdout; err.stderr = stderr; reject(err) }
-      else resolve({ stdout, stderr })
-    })
-    child.stdin?.end()
-  })
-}
+// apfel waits for stdin EOF even with an argv prompt; the library's default exec
+// (execClosedStdin) closes it so the child runs. Reuse it here for the preflight.
+const exec = execClosedStdin
 
 const DATA_FILE = path.join(__dirname, '..', 'data', 'projects_metadata.jsonl')
 const RESULTS_FILE = path.join(__dirname, '..', 'test', 'fixtures', 'pilot-results.json')
@@ -69,7 +53,7 @@ for (const dir of targets) {
   }
   const started = Date.now()
   try {
-    const { ai_analysis, derived } = await analyzeProject(project, { taxonomy, baseDir: BASE_DIR, schemaFile, execImpl: execClosedStdin })
+    const { ai_analysis, derived } = await analyzeProject(project, { taxonomy, baseDir: BASE_DIR, schemaFile })
     results.push({ directory: dir, ai_analysis, derived, ms: Date.now() - started })
     const a = ai_analysis
     if (a.error) {

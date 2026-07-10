@@ -7,7 +7,7 @@ import path from 'path'
 import {
   FACETS, CATEGORY_LEGEND, readTaxonomy, buildSchema, buildSystemPrompt,
   deriveStatus, suggestedPath, isPlacementOk,
-  ApfelError, runApfel, analyzeProject,
+  ApfelError, runApfel, analyzeProject, execClosedStdin,
 } from './analyzer.mjs'
 
 const NOW = Date.parse('2026-07-10T00:00:00Z')
@@ -81,6 +81,27 @@ test('isPlacementOk compares parent directories', () => {
   assert.equal(isPlacementOk('/p/codewars', '/p/_Learning/codewars'), false)
   // nested deeper under the right client still counts
   assert.equal(isPlacementOk('/p/_Bizz/TriSoft/stow/dashboard', '/p/_Bizz/TriSoft/dashboard'), true)
+})
+
+// --- execClosedStdin (library default exec) ---
+
+test('execClosedStdin closes child stdin so a stdin-waiting child reaches EOF', async () => {
+  // This child resumes stdin and only prints/exits once stdin ends. If stdin were
+  // left open (the old promisified-execFile bug), it would hang until the timeout
+  // and this call would reject instead of resolving — mirrors apfel's behavior.
+  const { stdout } = await execClosedStdin(
+    process.execPath,
+    ['-e', 'process.stdin.resume(); process.stdin.on("end", () => { console.log("eof"); process.exit(0) })'],
+    { timeout: 5000 }
+  )
+  assert.match(stdout, /eof/)
+})
+
+test('execClosedStdin rejects with err.code set to the child exit code', async () => {
+  await assert.rejects(
+    execClosedStdin(process.execPath, ['-e', 'process.exit(4)'], { timeout: 5000 }),
+    (err) => err.code === 4
+  )
 })
 
 // --- apfel subprocess + per-project orchestration ---
