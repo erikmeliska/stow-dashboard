@@ -2,8 +2,6 @@
 
 import * as React from "react"
 import {
-    Copy,
-    Check,
     Terminal,
     FolderOpen,
     Code,
@@ -46,6 +44,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { SplitOpenButton } from "@/components/SplitOpenButton"
+import { CopyButton } from "@/components/CopyButton"
 
 const DOC_SCORE_BAR_CLASS = {
     green: 'bg-green-500',
@@ -59,29 +58,6 @@ function formatBytes(bytes) {
     if (mb >= 1) return `${mb.toFixed(2)} MB`
     const kb = bytes / 1024
     return `${kb.toFixed(1)} KB`
-}
-
-function CopyButton({ text, tooltip }) {
-    const [copied, setCopied] = React.useState(false)
-
-    const handleCopy = async () => {
-        await navigator.clipboard.writeText(text)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-    }
-
-    return (
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleCopy}>
-                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-                <p>{copied ? 'Copied!' : tooltip}</p>
-            </TooltipContent>
-        </Tooltip>
-    )
 }
 
 function Section({ title, children }) {

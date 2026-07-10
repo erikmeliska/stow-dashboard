@@ -9,7 +9,7 @@ import {
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal, CheckSquare } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal, CheckSquare, FolderTree } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/tooltip"
 import { ReadmeDialog } from "@/components/ReadmeDialog"
 import { ProjectDetailsSheet } from "@/components/ProjectDetailsSheet"
+import { ReorgReportDialog } from "@/components/ReorgReportDialog"
 import { useProcesses } from "@/hooks/useProcesses"
 
 const STORAGE_KEY = 'stow-dashboard-table-settings'
@@ -166,6 +167,7 @@ export function ProjectTable({ projects, ownRepos }) {
     const [aiFacets, setAiFacets] = React.useState(emptyAiFacets)
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
+    const [reorgOpen, setReorgOpen] = React.useState(false)
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
     // Quick filters (null = any, true = yes, false = no)
@@ -1075,6 +1077,12 @@ export function ProjectTable({ projects, ownRepos }) {
             onOpenChange={(open) => setDetailsSheet({ open, project: open ? detailsSheet.project : null })}
             project={openSheetProject}
         />
+        <ReorgReportDialog
+            open={reorgOpen}
+            onOpenChange={setReorgOpen}
+            projects={projects}
+            onOpenProject={(p) => setDetailsSheet({ open: true, project: p })}
+        />
         <div className="h-full flex flex-col min-w-0">
             {/* Filters - fixed */}
             <div className="flex-none flex flex-col gap-2 py-2">
@@ -1215,6 +1223,15 @@ export function ProjectTable({ projects, ownRepos }) {
                                 })}
                         </DropdownMenuContent>
                     </DropdownMenu>
+
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReorgOpen(true)}
+                    >
+                        <FolderTree className="sm:mr-1.5 h-4 w-4" />
+                        <span className="hidden sm:inline">Reorg</span>
+                    </Button>
 
                     <TooltipProvider delayDuration={300}>
                         <Tooltip>
