@@ -1,8 +1,8 @@
 import path from 'path'
 import fs from 'fs/promises'
 import { ProjectScanner } from '@/scanner/index.mjs'
+import { getScanRoots } from '@/lib/scan-roots.mjs'
 
-const SCAN_ROOTS = (process.env.SCAN_ROOTS || '/Users/ericsko/Projekty').split(',').map(s => s.trim())
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
 async function getExistingProjectCount() {
@@ -17,6 +17,10 @@ async function getExistingProjectCount() {
 export async function POST(request) {
     const body = await request.json().catch(() => ({}))
     const { force = false, cleanup = false } = body
+
+    // Read per-request so a SCAN_ROOTS change from the Settings dialog applies
+    // without restarting the (never-restarted) desktop server process.
+    const SCAN_ROOTS = getScanRoots()
 
     // Create a readable stream for SSE
     const encoder = new TextEncoder()

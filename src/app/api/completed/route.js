@@ -2,11 +2,10 @@ import { existsSync } from 'fs'
 import path from 'path'
 import { readProjectsData } from '@/lib/projects'
 import { auditTasks } from '@/lib/history.mjs'
-
-const BASE_DIR = process.env.BASE_DIR || '/Users/ericsko/Projekty'
+import { getBaseDir } from '@/lib/scan-roots.mjs'
 
 function computeGroupParts(directory) {
-  const relativePath = directory.replace(BASE_DIR, '')
+  const relativePath = directory.replace(getBaseDir(), '')
   const parts = relativePath.split('/').filter(Boolean)
   return parts.slice(0, -1)
 }
