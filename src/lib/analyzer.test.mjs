@@ -8,6 +8,7 @@ import {
   FACETS, CATEGORY_LEGEND, readTaxonomy, buildSchema, buildSystemPrompt,
   deriveStatus, suggestedPath, isPlacementOk, sanitizeClient,
   ApfelError, runApfel, analyzeProject, execClosedStdin,
+  ANALYSIS_VERSION, needsAnalysis,
 } from './analyzer.mjs'
 
 const NOW = Date.parse('2026-07-10T00:00:00Z')
@@ -230,6 +231,8 @@ test('analyzeProject returns error record on refusal, keeps batch alive', async 
       execImpl: fakeExec({ runExit: 3 }),
     })
     assert.equal(ai_analysis.error, 'refused')
+    assert.equal(ai_analysis.input_hash.length, 64) // stamped so needsAnalysis caches the error
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
     assert.equal(derived, undefined)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
@@ -255,6 +258,8 @@ test('analyzeProject marks too-large when even the smallest distillate overflows
       execImpl: fakeExec({ countExit: 4 }),
     })
     assert.equal(ai_analysis.error, 'too-large')
+    assert.equal(ai_analysis.input_hash.length, 64) // stamped so needsAnalysis caches the error
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
@@ -280,5 +285,39 @@ test('analyzeProject throws when preflight fails with unavailable (batch must ab
       }),
       (err) => err instanceof ApfelError && err.kind === 'unavailable'
     )
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+// --- ANALYSIS_VERSION / needsAnalysis / last_code_modified fallback ---
+
+test('needsAnalysis: true when never analyzed, hash changed, or version bumped', () => {
+  assert.equal(needsAnalysis({}, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h0', version: ANALYSIS_VERSION } }, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h1', version: ANALYSIS_VERSION - 1 } }, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h1', version: ANALYSIS_VERSION } }, 'h1'), false)
+})
+
+test('needsAnalysis: error records are cached like results for the same hash+version', () => {
+  assert.equal(needsAnalysis({ ai_analysis: { error: 'too-large', input_hash: 'h1', version: ANALYSIS_VERSION } }, 'h1'), false)
+})
+
+test('deriveStatus uses last_code_modified when no git code commit', () => {
+  const p = { last_modified: '2026-07-01T00:00:00Z', git_info: {} }
+  const NOW = Date.parse('2026-07-10T00:00:00Z')
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeModified: '2022-01-01T00:00:00Z' }), 'archive-candidate')
+  // git lastCodeCommit still wins over lastCodeModified
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeCommit: '2026-06-20T00:00:00Z', lastCodeModified: '2022-01-01T00:00:00Z' }), 'active')
+})
+
+test('analyzeProject stamps version and consumes last_code_modified', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = { ...pilotProject(dir), last_code_modified: '2026-07-01T00:00:00Z' }
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: MODEL_OUT }), now: Date.parse('2026-07-10T00:00:00Z'),
+    })
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
+    assert.equal(derived.status, 'active') // last_code_modified wins over the stale last_modified/dates
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
