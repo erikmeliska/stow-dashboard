@@ -84,6 +84,10 @@ const FILE_TECH = {
 
 // file extension (from file_types keys) -> tag
 const EXT_TECH = {
+  '.js': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.jsx': 'javascript',
   '.py': 'python',
   '.php': 'php',
   '.rs': 'rust',
