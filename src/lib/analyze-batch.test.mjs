@@ -66,6 +66,38 @@ test('runAnalysisBatch force re-analyzes and only-filter restricts', async () =>
   } finally { await rm(base, { recursive: true, force: true }) }
 })
 
+test('runAnalysisBatch retryErrors re-analyzes error records and skips healthy ones', async () => {
+  const { base, dataFile } = await makeWorld()
+  try {
+    // Seed a second project so we have one errored + one healthy record.
+    const good = path.join(base, 'proj2')
+    await mkdir(good)
+    await writeFile(path.join(good, 'index.js'), '1')
+    const errored = {
+      id: 'r1', directory: path.join(base, 'proj1'), project_name: 'proj1',
+      created: '2020-01-01T00:00:00Z', last_modified: '2020-02-01T00:00:00Z',
+      stack: [], file_types: { '.js': 1 }, git_info: { git_detected: false },
+      ai_analysis: { error: 'unsupported-language', input_hash: 'stale', version: ANALYSIS_VERSION },
+    }
+    const healthy = {
+      id: 'r2', directory: good, project_name: 'proj2',
+      created: '2020-01-01T00:00:00Z', last_modified: '2020-02-01T00:00:00Z',
+      stack: [], file_types: { '.js': 1 }, git_info: { git_detected: false },
+      ai_analysis: { category: '_Learning', input_hash: 'stale2', version: ANALYSIS_VERSION },
+    }
+    await writeFile(dataFile, JSON.stringify(errored) + '\n' + JSON.stringify(healthy) + '\n')
+    const r = await runAnalysisBatch({ dataFile, baseDir: base, execImpl: okExec(), retryErrors: true })
+    assert.equal(r.total, 1)      // only the errored record is in scope
+    assert.equal(r.analyzed, 1)
+    const recs = (await readFile(dataFile, 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l))
+    const p1 = recs.find(r => r.project_name === 'proj1')
+    const p2 = recs.find(r => r.project_name === 'proj2')
+    assert.equal(p1.ai_analysis.error, undefined)         // retried into a real result
+    assert.equal(p1.ai_analysis.category, '_Learning')
+    assert.equal(p2.ai_analysis.input_hash, 'stale2')     // healthy record untouched
+  } finally { await rm(base, { recursive: true, force: true }) }
+})
+
 test('runAnalysisBatch merges into a file changed mid-batch instead of clobbering it', async () => {
   const { base, dataFile } = await makeWorld()
   try {

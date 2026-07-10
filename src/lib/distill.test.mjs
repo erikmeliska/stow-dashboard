@@ -68,6 +68,15 @@ test('formatDistillate caps topLevel, commits and stack via opts', () => {
   assert.match(text, /stack: s1, s2 \(\+2 more\)/)
 })
 
+test('formatDistillate masks the path leaf when maskPathLeaf is set', () => {
+  const p = { ...SAMPLE, directory: '/Users/x/Projekty/_Learning/nazov-slovo' }
+  const text = formatDistillate(p, { readme: null, topLevel: [], commits: [] }, { baseDir: '/Users/x/Projekty', maskPathLeaf: true })
+  assert.match(text, /- path: \/Users\/x\/Projekty\/_Learning\/…/)
+  assert.doesNotMatch(text, /nazov-slovo/)              // Slovak leaf hidden from the path line
+  assert.match(text, /name: codewars/)                  // name line intact
+  assert.match(text, /currently filed under _Learning/) // placement note computed from the real path
+})
+
 test('distillProject hash changes when facts change', () => {
   const a = distillProject(SAMPLE, { readme: null, topLevel: [], commits: [] }, {})
   const b = distillProject(SAMPLE, { readme: 'hello', topLevel: [], commits: [] }, {})

@@ -142,21 +142,35 @@ test('execClosedStdin rejects with err.code set to the child exit code', async (
 // Fake promisified-execFile: routes by subcommand flag.
 // countExitOnce fails only the FIRST --count-tokens call (models a first shrink
 // step that overflows while a smaller one fits).
-function fakeExec({ result, countExit = 0, runExit = 0, countExitOnce = 0 }) {
+// runExits (array) sets the exit code per model run (index 0 = first run, etc.),
+// enabling the language-retry tests; runStderr is attached to any failing run so
+// toApfelError can classify it. prompts (array) captures each run's prompt.
+function fakeExec({ result, countExit = 0, runExit = 0, countExitOnce = 0, runExits = null, runStderr = '', prompts = null }) {
   let countCalls = 0
+  let runCalls = 0
   return async (cmd, args) => {
     assert.equal(cmd, 'apfel')
     const isCount = args.includes('--count-tokens')
     if (isCount) countCalls++
-    const exit = isCount && countExitOnce && countCalls === 1 ? countExitOnce : isCount ? countExit : runExit
+    let exit
+    if (isCount) {
+      exit = countExitOnce && countCalls === 1 ? countExitOnce : countExit
+    } else {
+      runCalls++
+      if (prompts) prompts.push(args[args.length - 1])
+      exit = runExits ? (runExits[runCalls - 1] ?? 0) : runExit
+    }
     if (exit !== 0) {
       const err = new Error(`apfel exited ${exit}`)
       err.code = exit
+      if (runStderr && !isCount) err.stderr = runStderr
       throw err
     }
     return { stdout: isCount ? 'ok' : JSON.stringify(result), stderr: '' }
   }
 }
+
+const LANG_STDERR = 'error: [unsupported language] Unsupported language: An unsupported language or locale was used'
 
 const MODEL_OUT = {
   category: '_Learning', client: '', generated_description: 'Kata solutions.',
@@ -290,6 +304,84 @@ test('analyzeProject throws when preflight fails with unavailable (batch must ab
       }),
       (err) => err instanceof ApfelError && err.kind === 'unavailable'
     )
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+// --- unsupported-language classification + lang-safe retry (iter 2) ---
+
+test('runApfel classifies unsupported-language from stderr regardless of exit code', async () => {
+  await assert.rejects(
+    runApfel({ system: 's', prompt: 'p', schemaFile: '/tmp/x.json', execImpl: fakeExec({ runExit: 1, runStderr: LANG_STDERR }) }),
+    (err) => err instanceof ApfelError && err.kind === 'unsupported-language' && err.detail === LANG_STDERR
+  )
+})
+
+test('analyzeProject retries a language-rejected project with a masked prompt and stamps lang_safe', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = pilotProject(dir)
+    const baseDir = path.dirname(dir)
+    const prompts = []
+    const { ai_analysis } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir, schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: MODEL_OUT, runExits: [1, 0], runStderr: LANG_STDERR, prompts }),
+    })
+    assert.equal(ai_analysis.error, undefined)      // retry succeeded
+    assert.equal(ai_analysis.lang_safe, true)
+    // input_hash stays the deterministic full-size hash (the batch's cache key)
+    const facts = await gatherFacts(project)
+    assert.equal(ai_analysis.input_hash, distillProject(project, facts, { baseDir }).hash)
+    // the second (retry) prompt masks the full path but keeps the name once
+    const retryPrompt = prompts[1]
+    assert.ok(!retryPrompt.includes(dir))                       // full directory path gone
+    assert.ok(retryPrompt.includes(path.dirname(dir) + '/…'))   // leaf masked
+    assert.equal(retryPrompt.split('codewars').length - 1, 1)   // name appears exactly once
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+// Ollama unreachable: fetch rejects so ollamaAvailable is false and no real
+// network call is made. The record stays an unsupported-language error.
+const unreachableFetch = async () => { throw new Error('ECONNREFUSED') }
+
+test('analyzeProject returns an unsupported-language error record when retry fails and Ollama is unavailable', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const { ai_analysis, derived } = await analyzeProject(pilotProject(dir), {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl: unreachableFetch,
+      execImpl: fakeExec({ runExits: [1, 1], runStderr: LANG_STDERR }),
+    })
+    assert.equal(ai_analysis.error, 'unsupported-language')
+    assert.ok(ai_analysis.error_detail.startsWith(LANG_STDERR))
+    assert.match(ai_analysis.error_detail, /ollama fallback failed/i)
+    assert.equal(ai_analysis.input_hash.length, 64)
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
+    assert.equal(ai_analysis.lang_safe, undefined)
+    assert.equal(derived, undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject falls back to Ollama when apfel rejects the language twice', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = pilotProject(dir)
+    const baseDir = path.dirname(dir)
+    const fetchImpl = async (url) => {
+      if (url.endsWith('/api/tags')) return { ok: true, status: 200, json: async () => ({ models: [{ name: 'llama3:latest' }] }) }
+      return { ok: true, status: 200, json: async () => ({ message: { content: JSON.stringify(MODEL_OUT) } }) }
+    }
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir, schemaFile: '/tmp/x.json',
+      schema: buildSchema(TAX), fetchImpl,
+      execImpl: fakeExec({ runExits: [1, 1], runStderr: LANG_STDERR }),
+    })
+    assert.equal(ai_analysis.error, undefined)
+    assert.equal(ai_analysis.model, 'ollama/llama3')
+    assert.equal(ai_analysis.category, '_Learning')       // classified by ollama
+    assert.equal(ai_analysis.lang_safe, undefined)        // ollama path does not set lang_safe
+    const facts = await gatherFacts(project)
+    assert.equal(ai_analysis.input_hash, distillProject(project, facts, { baseDir }).hash)
+    assert.ok(derived.status)                             // full result path -> derived present
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 

@@ -3,6 +3,8 @@
 // Usage:
 //   node scripts/analyze.mjs                     # full incremental batch
 //   node scripts/analyze.mjs --force             # re-analyze everything
+//   node scripts/analyze.mjs --retry-errors      # re-analyze only errored records
+//   node scripts/analyze.mjs --data <file>       # override DATA_FILE
 //   node scripts/analyze.mjs --pilot <dir>...    # restrict to given projects
 import path from 'path'
 import os from 'os'
@@ -26,12 +28,17 @@ const BASE_DIR = process.env.BASE_DIR || path.join(os.homedir(), 'Projekty')
 
 const args = process.argv.slice(2)
 const force = args.includes('--force')
+const retryErrors = args.includes('--retry-errors')
+const dataIdx = args.indexOf('--data')
+const dataFile = dataIdx !== -1 && args[dataIdx + 1]
+  ? path.resolve(args[dataIdx + 1].replace(/^~/, os.homedir()))
+  : DATA_FILE
 const pilotIdx = args.indexOf('--pilot')
 const only = pilotIdx !== -1
   ? args.slice(pilotIdx + 1).filter(a => !a.startsWith('--')).map(p => path.resolve(p.replace(/^~/, os.homedir())))
   : null
 if (pilotIdx !== -1 && (!only || only.length === 0)) {
-  console.error('Usage: node scripts/analyze.mjs [--force] [--pilot <dir>...]')
+  console.error('Usage: node scripts/analyze.mjs [--force] [--retry-errors] [--data <file>] [--pilot <dir>...]')
   process.exit(2)
 }
 
@@ -52,7 +59,7 @@ const onProgress = (e) => {
 
 let summary
 try {
-  summary = await runAnalysisBatch({ dataFile: DATA_FILE, baseDir: BASE_DIR, force, only, onProgress })
+  summary = await runAnalysisBatch({ dataFile, baseDir: BASE_DIR, force, retryErrors, only, onProgress })
   console.log(`\nDone: ${summary.analyzed} analyzed, ${summary.skipped} cached, ${summary.errors} errors in ${Math.round(summary.durationMs / 1000)}s`)
 } catch (err) {
   if (err instanceof ApfelError && err.kind === 'unavailable') {
@@ -65,7 +72,7 @@ try {
 // fixture the gate comparisons consume.
 if (only) {
   const set = new Set(only)
-  const records = (await readFile(DATA_FILE, 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l))
+  const records = (await readFile(dataFile, 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l))
   const results = records
     .filter(r => set.has(r.directory))
     .map(r => ({ directory: r.directory, ai_analysis: r.ai_analysis, derived: r.ai_derived }))

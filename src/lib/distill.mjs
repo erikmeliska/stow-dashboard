@@ -83,10 +83,14 @@ function placementNote(directory, baseDir) {
   return ` (currently under ${first}/)`
 }
 
-export function formatDistillate(project, facts, { readmeChars = 1500, baseDir = '', topLevelMax = 40, commitsMax = 10, stackMax = 15 } = {}) {
+export function formatDistillate(project, facts, { readmeChars = 1500, baseDir = '', topLevelMax = 40, commitsMax = 10, stackMax = 15, maskPathLeaf = false } = {}) {
   const lines = ['Project facts:']
   lines.push(`- name: ${project.project_name || path.basename(project.directory)}`)
-  lines.push(`- path: ${project.directory}${placementNote(project.directory, baseDir)}`)
+  // maskPathLeaf hides the directory's last segment (used on the lang-safe retry:
+  // a Slovak leaf appearing on both the name and path lines trips Apple's language
+  // detector). The placement note is computed from the REAL directory, unmasked.
+  const shownPath = maskPathLeaf ? `${path.dirname(project.directory)}/…` : project.directory
+  lines.push(`- path: ${shownPath}${placementNote(project.directory, baseDir)}`)
   const idle = monthsSince(project.git_info?.last_total_commit_date || project.last_modified)
   lines.push(`- created: ${day(project.created)}, last modified: ${day(project.last_modified)}${idle !== null ? ` (~${idle} months since last activity)` : ''}`)
   if (project.description) lines.push(`- existing description: ${project.description}`)

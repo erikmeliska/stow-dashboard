@@ -54,7 +54,7 @@ async function persistAnalysis(dataFile, directory, aiAnalysis, aiDerived) {
   await writeJsonlAtomic(dataFile, records)
 }
 
-export async function runAnalysisBatch({ dataFile, baseDir, force = false, only = null, onProgress = () => {}, execImpl }) {
+export async function runAnalysisBatch({ dataFile, baseDir, force = false, only = null, retryErrors = false, onProgress = () => {}, execImpl }) {
   if (status.running) throw new Error('analysis already running')
   status.running = true
   status.startedAt = new Date().toISOString()
@@ -69,14 +69,21 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
   const started = Date.now()
   try {
     const taxonomy = await readTaxonomy(baseDir)
+    // Build the schema once: written to a temp file for apfel's --schema flag AND
+    // passed as an object to analyzeProject so the Ollama fallback can use it
+    // without re-reading the file.
+    const schema = buildSchema(taxonomy)
     const schemaFile = path.join(os.tmpdir(), `stow-analysis-schema-${process.pid}.json`)
-    await writeFile(schemaFile, JSON.stringify(buildSchema(taxonomy)))
+    await writeFile(schemaFile, JSON.stringify(schema))
 
     let records = await readJsonl(dataFile)
     if (only) {
       const set = new Set(only)
       records = records.filter(r => set.has(r.directory))
     }
+    // retryErrors: re-run only records whose last analysis errored (intersected
+    // with `only` above), with force semantics (needsAnalysis skipped below).
+    if (retryErrors) records = records.filter(r => r.ai_analysis?.error)
     const total = records.length
     status.total = total
     onProgress({ type: 'status', message: `Analyzing ${total} project(s)`, total })
@@ -90,13 +97,13 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
       try {
         const facts = await gatherFacts(record)
         const { hash } = distillProject(record, facts, { baseDir })
-        if (!force && !needsAnalysis(record, hash)) {
+        if (!force && !retryErrors && !needsAnalysis(record, hash)) {
           skipped++
           status.skipped = skipped
           onProgress({ type: 'skipped', ...base })
           continue
         }
-        const { ai_analysis, derived } = await analyzeProject(record, { taxonomy, baseDir, schemaFile, execImpl })
+        const { ai_analysis, derived } = await analyzeProject(record, { taxonomy, baseDir, schemaFile, schema, execImpl })
         await persistAnalysis(dataFile, record.directory, ai_analysis, derived)
         if (ai_analysis.error) {
           errors++
