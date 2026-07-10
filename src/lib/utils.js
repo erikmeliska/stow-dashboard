@@ -16,6 +16,13 @@ export function docScoreColor(score) {
   return 'red'
 }
 
+export function formatUsd(v) {
+  if (v == null) return '—'
+  if (v === 0) return '$0'
+  if (v < 0.01) return '<1¢'
+  return '$' + (v >= 100 ? Math.round(v) : v.toFixed(2))
+}
+
 export function getGitProvider(remoteUrl = '') {
   if (!remoteUrl) return null
   if (remoteUrl.includes('github.com')) return 'github'

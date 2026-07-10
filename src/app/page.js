@@ -15,6 +15,15 @@ export const dynamic = 'force-dynamic'
 const OWN_REPOS = ['boys-from-heaven', 'boysfromheaven', 'erikmeliska', 'intelimail']
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README', 'readme']
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+const USAGE_FILE = path.join(process.cwd(), 'data', 'usage.json')
+
+async function readUsageData() {
+    try {
+        return JSON.parse(await fs.readFile(USAGE_FILE, 'utf8'))
+    } catch {
+        return { projects: {} }
+    }
+}
 
 async function checkReadmeExists(directory) {
     for (const name of README_NAMES) {
@@ -38,9 +47,10 @@ async function getLastSyncTime() {
 }
 
 export default async function DashboardPage() {
-    const [projects, lastSyncTime] = await Promise.all([
+    const [projects, lastSyncTime, usageData] = await Promise.all([
         readProjectsData(),
-        getLastSyncTime()
+        getLastSyncTime(),
+        readUsageData()
     ])
 
     // Build a directory → open-task-count map once. Resilient: any failure → 0.
@@ -67,7 +77,8 @@ export default async function DashboardPage() {
             groupParts,
             projectDir,
             hasReadme,
-            openTaskCount: openTaskCounts.get(project.directory) || 0
+            openTaskCount: openTaskCounts.get(project.directory) || 0,
+            usage: usageData.projects?.[project.directory]
         }
     }))
     
