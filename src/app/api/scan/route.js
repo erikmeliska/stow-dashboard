@@ -2,6 +2,7 @@ import path from 'path'
 import fs from 'fs/promises'
 import { ProjectScanner } from '@/scanner/index.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
+import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
 
 const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
 
@@ -62,6 +63,14 @@ export async function POST(request) {
 
                     sendEvent({ type: 'status', message: 'Syncing metadata...' })
                     await scanner.syncMetadata(projects)
+
+                    // AI-usage ledger update (never fatal to the scan)
+                    try {
+                        const usage = await updateUsage({ ...defaultUsagePaths(), projectDirs: projects.map(p => p.directory).filter(Boolean) })
+                        sendEvent({ type: 'usage_updated', ...usage })
+                    } catch (usageErr) {
+                        sendEvent({ type: 'usage_error', message: usageErr.message })
+                    }
 
                     const duration = Math.round((Date.now() - startTime) / 1000)
                     sendEvent({ type: 'complete', success: true, projectCount: projects.length, duration })
