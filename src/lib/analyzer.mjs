@@ -34,6 +34,20 @@ export const CATEGORY_LEGEND = {
 
 const MONTH_MS = 30.44 * 24 * 3600 * 1000
 
+// Bump when the distillate shape, prompt, or schema change enough that cached
+// analyses (keyed by input_hash) should be recomputed regardless of hash match.
+export const ANALYSIS_VERSION = 2
+
+// Incremental-skip rule for the batch: re-analyze only when a project has no
+// prior analysis, its distillate hash changed, or the analyzer version moved.
+// Error records carry input_hash + version too, so a failure is cached like a
+// result until its inputs (or the version) change.
+export function needsAnalysis(record, currentHash) {
+  const a = record?.ai_analysis
+  if (!a) return true
+  return a.input_hash !== currentHash || a.version !== ANALYSIS_VERSION
+}
+
 export async function readTaxonomy(baseDir) {
   const entries = await readdir(baseDir, { withFileTypes: true })
   const categories = entries
@@ -103,12 +117,15 @@ export function sanitizeClient(client, knownClients = []) { // eslint-disable-li
   return trimmed
 }
 
-export function deriveStatus(project, { now = Date.now(), lastCodeCommit = null } = {}) {
-  // Code activity (meta-doc edits excluded) wins; doc-only repos and non-git
-  // projects fall back to overall activity — by design, see spec.
+export function deriveStatus(project, { now = Date.now(), lastCodeCommit = null, lastCodeModified = null } = {}) {
+  // Code activity (meta-doc edits excluded) wins. Precedence: git code commit →
+  // filesystem code mtime (last_code_modified) → overall activity fallback.
+  // Doc-only repos and non-git projects fall through — by design, see spec.
   let last
   if (lastCodeCommit && Number.isFinite(Date.parse(lastCodeCommit))) {
     last = Date.parse(lastCodeCommit)
+  } else if (lastCodeModified && Number.isFinite(Date.parse(lastCodeModified))) {
+    last = Date.parse(lastCodeModified)
   } else {
     const candidates = [project.git_info?.last_total_commit_date, project.last_modified]
       .map(d => Date.parse(d))
@@ -206,6 +223,13 @@ export async function analyzeProject(project, ctx) {
   const facts = await gatherFacts(project)
   const system = buildSystemPrompt(taxonomy)
 
+  // The cache key is ALWAYS the full-size distillate hash — deterministic from
+  // the project's inputs regardless of which shrink step ends up fitting, so the
+  // batch's needsAnalysis (which recomputes the full-size hash) matches both
+  // success and error records. SHRINK_STEPS[0] equals distillProject's defaults.
+  const input_hash = distillProject(project, facts, { ...SHRINK_STEPS[0], baseDir }).hash
+  const errorRecord = (error) => ({ ai_analysis: { error, analyzed_at, input_hash, version: ANALYSIS_VERSION } })
+
   let distilled = null
   try {
     for (const step of SHRINK_STEPS) {
@@ -219,16 +243,16 @@ export async function analyzeProject(project, ctx) {
     // countTokensOk re-throws non-exit-4 ApfelErrors (busy/refused/error/timeout).
     // Same contract as runApfel below: only 'unavailable' aborts the batch.
     if (err.kind === 'unavailable') throw err
-    return { ai_analysis: { error: err.kind, analyzed_at } }
+    return errorRecord(err.kind)
   }
-  if (!distilled) return { ai_analysis: { error: 'too-large', analyzed_at } }
+  if (!distilled) return errorRecord('too-large')
 
   let out
   try {
     out = await runApfel({ system, prompt: distilled.text, schemaFile, execImpl })
   } catch (err) {
     if (err.kind === 'unavailable') throw err
-    return { ai_analysis: { error: err.kind, analyzed_at } }
+    return errorRecord(err.kind)
   }
 
   const client = out.category === '_Bizz' ? sanitizeClient(out.client, taxonomy.clients) : ''
@@ -241,11 +265,12 @@ export async function analyzeProject(project, ctx) {
       ...out,
       client,
       analyzed_at,
-      input_hash: distilled.hash,
+      input_hash,
+      version: ANALYSIS_VERSION,
       model: 'apple-foundationmodel/apfel',
     },
     derived: {
-      status: deriveStatus(project, { now, lastCodeCommit: facts.lastCodeCommit }),
+      status: deriveStatus(project, { now, lastCodeCommit: facts.lastCodeCommit, lastCodeModified: project.last_code_modified }),
       tech: normalizeTech([...extractTech(project, facts.topLevel), ...(out.tech_extra || [])]),
       placement_ok: isPlacementOk(project.directory, suggested),
       suggested_path: suggested,

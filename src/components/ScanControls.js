@@ -9,6 +9,7 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
@@ -148,8 +149,12 @@ export function ScanControls({ lastSyncTime }) {
         setLogs([])
         setScanStats({ current: 0, total: 0 })
 
-        const endpoint = type === 'quick' ? '/api/scan/quick' : '/api/scan'
-        const body = type === 'force' ? { force: true } : {}
+        const endpoint = (type === 'analyze' || type === 'analyze-force')
+            ? '/api/analyze'
+            : type === 'quick' ? '/api/scan/quick' : '/api/scan'
+        const body = type === 'force' || type === 'analyze-force'
+            ? { force: true }
+            : {}
 
         try {
             const response = await fetch(endpoint, {
@@ -223,11 +228,27 @@ export function ScanControls({ lastSyncTime }) {
             case 'discover_error':
                 setLogs(prev => [...prev.slice(-9), { type: 'error', path: getShortPath(data.directory), time: '' }])
                 break
+            case 'analyzed':
+                setProgress({ message: `Analyzed: ${data.project_name || getShortPath(data.directory)}` })
+                setLogs(prev => [...prev.slice(-9), { type: 'updated', path: data.project_name || getShortPath(data.directory), time: '' }])
+                break
+            case 'skipped':
+                setProgress({ message: `Skipped: ${data.project_name || getShortPath(data.directory)}` })
+                break
+            case 'analyze_error':
+                setProgress({ message: `Analyze error: ${data.project_name || getShortPath(data.directory)}` })
+                setLogs(prev => [...prev.slice(-9), { type: 'error', path: data.project_name || getShortPath(data.directory), time: '' }])
+                break
             case 'complete':
                 if (data.success) {
-                    const durationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
-                    const discoveredMsg = data.discovered?.length ? `, +${data.discovered.length} discovered` : ''
-                    setProgress({ message: `Done! ${data.projectCount || 0} projects${discoveredMsg}${durationMsg}`, success: true })
+                    const durationMsg = data.duration ? ` in ${formatDuration(Math.round(data.duration / 1000))}` : ''
+                    if (data.analyzed !== undefined) {
+                        setProgress({ message: `Analyzed ${data.analyzed}, skipped ${data.skipped}, ${data.errors} error${data.errors === 1 ? '' : 's'}${durationMsg}`, success: true })
+                    } else {
+                        const scanDurationMsg = data.duration ? ` in ${formatDuration(data.duration)}` : ''
+                        const discoveredMsg = data.discovered?.length ? `, +${data.discovered.length} discovered` : ''
+                        setProgress({ message: `Done! ${data.projectCount || 0} projects${discoveredMsg}${scanDurationMsg}`, success: true })
+                    }
                     setLastSync(new Date().toISOString())
                     if (data.processes) {
                         window.dispatchEvent(new CustomEvent('stow:processes', {
@@ -342,6 +363,13 @@ export function ScanControls({ lastSyncTime }) {
                         <DropdownMenuItem onClick={() => handleScan('force')}>
                             <Zap className="mr-2 h-4 w-4" />
                             Force rescan
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleScan('analyze')}>
+                            AI analyze
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleScan('analyze-force')}>
+                            AI analyze (force)
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>

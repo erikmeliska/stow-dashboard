@@ -1,14 +1,16 @@
 // src/lib/analyzer.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm } from 'fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import {
   FACETS, CATEGORY_LEGEND, readTaxonomy, buildSchema, buildSystemPrompt,
   deriveStatus, suggestedPath, isPlacementOk, sanitizeClient,
   ApfelError, runApfel, analyzeProject, execClosedStdin,
+  ANALYSIS_VERSION, needsAnalysis,
 } from './analyzer.mjs'
+import { gatherFacts, distillProject } from './distill.mjs'
 
 const NOW = Date.parse('2026-07-10T00:00:00Z')
 
@@ -137,12 +139,16 @@ test('execClosedStdin rejects with err.code set to the child exit code', async (
 
 // --- apfel subprocess + per-project orchestration ---
 
-// Fake promisified-execFile: routes by subcommand flag
-function fakeExec({ result, countExit = 0, runExit = 0 }) {
+// Fake promisified-execFile: routes by subcommand flag.
+// countExitOnce fails only the FIRST --count-tokens call (models a first shrink
+// step that overflows while a smaller one fits).
+function fakeExec({ result, countExit = 0, runExit = 0, countExitOnce = 0 }) {
+  let countCalls = 0
   return async (cmd, args) => {
     assert.equal(cmd, 'apfel')
     const isCount = args.includes('--count-tokens')
-    const exit = isCount ? countExit : runExit
+    if (isCount) countCalls++
+    const exit = isCount && countExitOnce && countCalls === 1 ? countExitOnce : isCount ? countExit : runExit
     if (exit !== 0) {
       const err = new Error(`apfel exited ${exit}`)
       err.code = exit
@@ -230,6 +236,8 @@ test('analyzeProject returns error record on refusal, keeps batch alive', async 
       execImpl: fakeExec({ runExit: 3 }),
     })
     assert.equal(ai_analysis.error, 'refused')
+    assert.equal(ai_analysis.input_hash.length, 64) // stamped so needsAnalysis caches the error
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
     assert.equal(derived, undefined)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
@@ -255,6 +263,8 @@ test('analyzeProject marks too-large when even the smallest distillate overflows
       execImpl: fakeExec({ countExit: 4 }),
     })
     assert.equal(ai_analysis.error, 'too-large')
+    assert.equal(ai_analysis.input_hash.length, 64) // stamped so needsAnalysis caches the error
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
@@ -280,5 +290,64 @@ test('analyzeProject throws when preflight fails with unavailable (batch must ab
       }),
       (err) => err instanceof ApfelError && err.kind === 'unavailable'
     )
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+// --- ANALYSIS_VERSION / needsAnalysis / last_code_modified fallback ---
+
+test('needsAnalysis: true when never analyzed, hash changed, or version bumped', () => {
+  assert.equal(needsAnalysis({}, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h0', version: ANALYSIS_VERSION } }, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h1', version: ANALYSIS_VERSION - 1 } }, 'h1'), true)
+  assert.equal(needsAnalysis({ ai_analysis: { input_hash: 'h1', version: ANALYSIS_VERSION } }, 'h1'), false)
+})
+
+test('needsAnalysis: error records are cached like results for the same hash+version', () => {
+  assert.equal(needsAnalysis({ ai_analysis: { error: 'too-large', input_hash: 'h1', version: ANALYSIS_VERSION } }, 'h1'), false)
+})
+
+test('deriveStatus uses last_code_modified when no git code commit', () => {
+  const p = { last_modified: '2026-07-01T00:00:00Z', git_info: {} }
+  const NOW = Date.parse('2026-07-10T00:00:00Z')
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeModified: '2022-01-01T00:00:00Z' }), 'archive-candidate')
+  // git lastCodeCommit still wins over lastCodeModified
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeCommit: '2026-06-20T00:00:00Z', lastCodeModified: '2022-01-01T00:00:00Z' }), 'active')
+})
+
+test('analyzeProject stamps version and consumes last_code_modified', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    const project = { ...pilotProject(dir), last_code_modified: '2026-07-01T00:00:00Z' }
+    const { ai_analysis, derived } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir: path.dirname(dir), schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: MODEL_OUT }), now: Date.parse('2026-07-10T00:00:00Z'),
+    })
+    assert.equal(ai_analysis.version, ANALYSIS_VERSION)
+    assert.equal(derived.status, 'active') // last_code_modified wins over the stale last_modified/dates
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('analyzeProject stamps the full-size distillate hash even when a shrink step was needed', async () => {
+  // First --count-tokens call overflows (exit 4), second fits: the model sees the
+  // SHRUNK distillate but input_hash must stay the deterministic full-size hash —
+  // it is the cache key the batch's needsAnalysis compares against.
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-an-'))
+  try {
+    // README longer than the step-1 cap (600 chars) so the shrunk distillate
+    // genuinely differs from the full-size one — otherwise the hashes coincide
+    // and the test cannot distinguish which hash was stamped.
+    await writeFile(path.join(dir, 'README.md'), 'x'.repeat(1000))
+    const project = pilotProject(dir)
+    const baseDir = path.dirname(dir)
+    const facts = await gatherFacts(project)
+    const fullSize = distillProject(project, facts, { baseDir })
+    const shrunk = distillProject(project, facts, { readmeChars: 600, topLevelMax: 20, commitsMax: 5, baseDir })
+    assert.notEqual(fullSize.hash, shrunk.hash) // fixture sanity: steps differ
+    const { ai_analysis } = await analyzeProject(project, {
+      taxonomy: TAX, baseDir, schemaFile: '/tmp/x.json',
+      execImpl: fakeExec({ result: MODEL_OUT, countExitOnce: 4 }),
+    })
+    assert.equal(ai_analysis.error, undefined) // shrink succeeded, real result
+    assert.equal(ai_analysis.input_hash, fullSize.hash)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })

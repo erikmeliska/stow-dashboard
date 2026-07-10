@@ -5,7 +5,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import os from 'os'
 import path from 'path'
-import { gatherFacts, formatDistillate, distillProject } from './distill.mjs'
+import { gatherFacts, formatDistillate, distillProject, CODE_ACTIVITY_EXCLUDES, isMetaDocPath } from './distill.mjs'
 
 const exec = promisify(execFile)
 
@@ -116,4 +116,18 @@ test('gatherFacts returns null lastCodeCommit for doc-only repos', async () => {
 test('gatherFacts survives a missing directory', async () => {
   const facts = await gatherFacts({ directory: '/nonexistent/nope', git_info: {} })
   assert.deepEqual(facts, { readme: null, topLevel: [], commits: [], lastCodeCommit: null })
+})
+
+test('isMetaDocPath matches meta-doc files and dirs, case-insensitively for prefixes', () => {
+  assert.equal(isMetaDocPath('README.md'), true)
+  assert.equal(isMetaDocPath('readme.txt'), true)
+  assert.equal(isMetaDocPath('CHANGELOG-2024.md'), true)
+  assert.equal(isMetaDocPath('LICENSE'), true)
+  assert.equal(isMetaDocPath('docs/setup.md'), true)
+  assert.equal(isMetaDocPath('.github/workflows/ci.yml'), true)
+  assert.equal(isMetaDocPath('CLAUDE.md'), true)
+  assert.equal(isMetaDocPath('src/index.js'), false)
+  assert.equal(isMetaDocPath('my-docs-notes.md'), false)   // only the docs/ DIR is excluded
+  assert.equal(isMetaDocPath('src/README.md'), true)        // nested README is still a meta-doc
+  assert.ok(Array.isArray(CODE_ACTIVITY_EXCLUDES))
 })

@@ -14,10 +14,29 @@ const MONTH_MS = 30.44 * 24 * 3600 * 1000
 // Meta-doc files excluded from the code-activity date, so README/doc edits
 // don't "revive" a project. Curated on purpose — NOT all *.md, because some
 // projects' markdown IS the content (books, doc sites).
-const CODE_ACTIVITY_EXCLUDES = [
+export const CODE_ACTIVITY_EXCLUDES = [
   'README*', 'readme*', 'CHANGELOG*', 'LICENSE*', 'docs', '.github',
   'CLAUDE.md', 'STATUS.md', 'TASKS.md', 'AGENTS.md',
 ]
+
+// Is this repo-relative path a meta-doc (excluded from code-activity)?
+// Prefix entries ('README*') match any path whose BASENAME starts with the
+// prefix, case-insensitively. Bare entries match the exact basename ('CLAUDE.md')
+// or a leading directory segment ('docs', '.github') — checking both covers
+// file-like and dir-like entries, including dotted dir names like '.github'.
+export function isMetaDocPath(relPath) {
+  const segments = relPath.split('/').filter(Boolean)
+  const base = segments[segments.length - 1] || ''
+  for (const entry of CODE_ACTIVITY_EXCLUDES) {
+    if (entry.endsWith('*')) {
+      const prefix = entry.slice(0, -1).toLowerCase()
+      if (base.toLowerCase().startsWith(prefix)) return true
+    } else if (base === entry || segments[0] === entry) {
+      return true
+    }
+  }
+  return false
+}
 
 export async function gatherFacts(project) {
   const dir = project.directory
