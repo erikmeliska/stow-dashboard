@@ -140,3 +140,16 @@ test('isMetaDocPath matches meta-doc files and dirs, case-insensitively for pref
   assert.equal(isMetaDocPath('src/README.md'), true)        // nested README is still a meta-doc
   assert.ok(Array.isArray(CODE_ACTIVITY_EXCLUDES))
 })
+
+
+test('formatDistillate strips control characters from binary-ish inputs', () => {
+  const p = { ...SAMPLE, stack: ['\ufeff\ufffda\u0000i\u0000o\u0000f\u0000i\u0000l\u0000e\u0000s'] }
+  const text = formatDistillate(p, { readme: 'ok\u0007ay\ttab kept\nline kept', topLevel: [], commits: [] }, {})
+  assert.ok(!text.includes('\u0000'))
+  assert.ok(!text.includes('\u0007'))
+  assert.ok(!text.includes('\ufffd'))
+  assert.match(text, /aiofiles/)
+  assert.match(text, /okay/)
+  assert.match(text, /tab kept/)
+  assert.match(text, /line kept/)
+})

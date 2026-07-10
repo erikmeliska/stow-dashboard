@@ -123,7 +123,12 @@ export function formatDistillate(project, facts, { readmeChars = 1500, baseDir =
   } else {
     lines.push('- README: none')
   }
-  return lines.join('\n')
+  // Strip control chars (keep \n and \t) plus BOM/replacement chars: binary-ish
+  // inputs (e.g. a UTF-16 requirements.txt read as UTF-8 puts NULs into `stack`)
+  // would otherwise make the text invalid as a subprocess argv element
+  // (ERR_INVALID_ARG_VALUE) before any model ever sees it.
+  // eslint-disable-next-line no-control-regex
+  return lines.join('\n').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F�﻿]/g, '')
 }
 
 export function distillProject(project, facts, opts = {}) {
