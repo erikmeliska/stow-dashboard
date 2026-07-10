@@ -140,6 +140,22 @@ const FACET_LABELS = {
 const TECH_FACET_CAP = 30
 const emptyAiFacets = () => ({ category: [], type: [], domain: [], maturity: [], tech: [] })
 
+// Quick filter defaults (null = any) — single source for init, clear and settings restore
+const defaultFilters = () => ({
+    running: null,
+    hasGit: null,
+    hasRemote: null,
+    uncommitted: null,
+    behind: null,
+    ahead: null,
+    hasOwnCommits: null,
+    hasReadme: null,
+    hasTasks: null,
+    analyzed: null,
+    misplaced: null,
+    poorDocs: null,
+})
+
 export function ProjectTable({ projects, ownRepos }) {
     const [isHydrated, setIsHydrated] = React.useState(false)
     const [sorting, setSorting] = React.useState(defaultSorting)
@@ -153,20 +169,7 @@ export function ProjectTable({ projects, ownRepos }) {
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
     // Quick filters (null = any, true = yes, false = no)
-    const [filters, setFilters] = React.useState({
-        running: null,
-        hasGit: null,
-        hasRemote: null,
-        uncommitted: null,
-        behind: null,
-        ahead: null,
-        hasOwnCommits: null,
-        hasReadme: null,
-        hasTasks: null,
-        analyzed: null,
-        misplaced: null,
-        poorDocs: null,
-    })
+    const [filters, setFilters] = React.useState(defaultFilters)
 
     // Cycle through: null -> true -> false -> null
     const cycleFilter = (key) => {
@@ -181,20 +184,7 @@ export function ProjectTable({ projects, ownRepos }) {
     const activeFiltersCount = Object.values(filters).filter(v => v !== null).length
 
     const clearAllFilters = () => {
-        setFilters({
-            running: null,
-            hasGit: null,
-            hasRemote: null,
-            uncommitted: null,
-            behind: null,
-            ahead: null,
-            hasOwnCommits: null,
-            hasReadme: null,
-            hasTasks: null,
-            analyzed: null,
-            misplaced: null,
-            poorDocs: null,
-        })
+        setFilters(defaultFilters())
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
 
@@ -464,7 +454,7 @@ export function ProjectTable({ projects, ownRepos }) {
             if (settings.sorting) setSorting(settings.sorting)
             if (settings.columnVisibility) setColumnVisibility({ ...defaultColumnVisibility, ...settings.columnVisibility })
             if (settings.pageSize) setPagination(prev => ({ ...prev, pageSize: settings.pageSize }))
-            if (settings.filters) setFilters(settings.filters)
+            if (settings.filters) setFilters({ ...defaultFilters(), ...settings.filters })
             if (settings.globalFilter) setGlobalFilter(settings.globalFilter)
             if (settings.selectedGroups) setSelectedGroups(settings.selectedGroups)
             if (settings.aiFacets) setAiFacets({ ...emptyAiFacets(), ...settings.aiFacets })
