@@ -31,6 +31,7 @@ Verified working on this machine (macOS 26.5.1, model available, ~1.4 s per stru
 - **Trigger:** separate batch (`npm run analyze` / dashboard ⋯ menu), incremental via input hash; plus per-project Re-analyze in the details sheet. Not part of the scan.
 - **Stack:** Node `.mjs` end-to-end, same as the rest of stow. No Swift — `apfel` is the driver, called as a subprocess exactly like `scc`. All logic (distillate, prompt, schema, hashing, batching, retry) lives in Node; swapping engines later means calling a different command with the same contract.
 - **Approach:** phased with a pilot gate (A), not all-in.
+- **Code activity vs docs activity:** `status` derives from *code* activity, not raw `last_modified` — otherwise updating a README (a direct outcome of the doc audit) would "revive" a dead project and reshuffle the table. Code activity = last change excluding a **curated meta-doc list** (`README*`, `CHANGELOG*`, `LICENSE*`, `docs/`, `.github/`, `CLAUDE.md`, `STATUS.md`, `TASKS.md`, `AGENTS.md`) — deliberately *not* all `*.md`, because some projects' markdown IS the content (books, doc sites). Git projects: `git log -1 --format=%cI` with `:(exclude)` pathspecs (phase 0, computed in `gatherFacts`). Non-git projects: phase 1 adds scanner-computed `last_code_modified` (max mtime sans excludes, gathered during the existing size walk — zero extra I/O); until then they fall back to `last_modified`. Fallback when nothing non-doc exists (pure-doc projects): `last_modified`, so `content-docs` projects don't go falsely dead. `last_modified` itself stays untouched in JSONL and the UI "Modified" column, and the incremental-scan cache and `input_hash` still react to README changes — a README edit *should* trigger re-analysis (doc_score must update), it just must not change `status`.
 
 ## Architecture
 
@@ -81,7 +82,7 @@ Deterministic fields computed in Node, stored alongside (not model output):
 
 ```json
 {
-  "status": "dead",                  // active ≤3mo | dormant ≤18mo | dead | archive-candidate
+  "status": "dead",                  // active ≤3mo | dormant ≤18mo | dead | archive-candidate — from CODE activity (meta-doc edits excluded)
   "placement_ok": false,
   "suggested_path": "/Users/ericsko/Projekty/_Learning/codewars",
   "tech": ["javascript", "chai"]     // merged: deterministic extraction ∪ normalized tech_extra
@@ -113,7 +114,7 @@ The folder category is only one axis; the analysis fills independent facets so t
 ## Phases
 
 1. **Phase 0 — Pilot (gate):** `distill.mjs` + `tech-tags.mjs` + `analyzer.mjs --pilot` on ~20 known projects (client work, sandboxes, dead exercises, the `TRIVCALC` duplicate, `_Learning` items). Success criteria: **category correct ≥ 80 %, client correct ≥ 90 %** where applicable; `project_type` correct ≥ 80 % (facets are reviewed but only category/client/type gate). On failure the distillate + contract survive and another engine can be plugged in.
-2. **Phase 1 — Batch pipeline:** full incremental batch, JSONL enrichment, `/api/analyze`, progress UI.
+2. **Phase 1 — Batch pipeline:** full incremental batch, JSONL enrichment, `/api/analyze`, progress UI; scanner gains `last_code_modified` (non-git code-activity date, computed during the size walk).
 3. **Phase 2 — UI:** columns, faceted filters, tech cross-section, AI Insights, reorganization report.
 4. **Phase 3 — Extensions:** deeper doc audit, README draft generation, MCP tools (`list_misplaced_projects`, `list_undocumented_projects`, `find_reusable_assets(query)`, `search_projects` gains facet params), doc-score history, `notable` field (one interesting fact per project), deployment detection (CI/Vercel/Docker signals + model judgment), project-relations pass (similarity over generated descriptions + facets, computed in Node without the model — flags duplicates and "N attempts at the same thing").
 

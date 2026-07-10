@@ -18,7 +18,8 @@
 - Context budget: distillate ≤ ~3k tokens (model context 4096, output reserve ~512). Preflight with `apfel --count-tokens --strict`.
 - The model never composes filesystem paths; Node derives `suggested_path`, `status`, `placement_ok`, merged `tech`.
 - Facet enums (from spec): `project_type` = web-app, api-service, cli-tool, library, browser-extension, desktop-app, mobile-app, script-collection, infra-config, template-boilerplate, prototype-poc, fork, content-docs. `domain` = e-commerce, communication-email, church-community, finance, education, devtools, iot-electronics, media, ai-ml, productivity, games, other. `maturity` = idea, prototype, mvp, production, abandoned-wip.
-- Status rules: active ≤ 3 months since last activity, dormant ≤ 18, else dead; archive-candidate = dead ∧ no git remote ∧ `scc.total_code` < 1000.
+- Status rules: active ≤ 3 months since last **code** activity, dormant ≤ 18, else dead; archive-candidate = dead ∧ no git remote ∧ `scc.total_code` < 1000.
+- Code activity excludes meta-doc files so README edits don't "revive" a project: excludes = `README*`, `CHANGELOG*`, `LICENSE*`, `docs`, `.github`, `CLAUDE.md`, `STATUS.md`, `TASKS.md`, `AGENTS.md` (curated list, deliberately NOT all `*.md`). Git projects: `git log -1 --format=%cI` with `:(exclude)` pathspecs. Non-git projects fall back to `last_modified` in phase 0 (scanner-side `last_code_modified` is phase 1). Pure-doc repos (no non-excluded commits) also fall back to `last_modified`.
 - Tests must not require `apfel` or network — subprocess calls are injected (`execImpl` parameter). Only the pilot CLI run itself touches the real model.
 
 ---
@@ -251,7 +252,7 @@ git commit -m "feat: deterministic tech tag extraction and normalization"
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
-- Produces: `gatherFacts(project): Promise<{ readme: string|null, topLevel: string[], commits: string[] }>` — disk reads (README, top-level listing, `git log -10 --pretty=%s`).
+- Produces: `gatherFacts(project): Promise<{ readme: string|null, topLevel: string[], commits: string[], lastCodeCommit: string|null }>` — disk reads (README, top-level listing, `git log -10 --pretty=%s`, and `git log -1 --format=%cI` with meta-doc excludes for the code-activity date).
 - Produces: `formatDistillate(project, facts, { readmeChars = 1500, baseDir = '' }): string` — pure.
 - Produces: `distillProject(project, facts, opts): { text: string, hash: string }` — `hash` is sha256 hex of `text`.
 
@@ -312,28 +313,47 @@ test('distillProject hash changes when facts change', () => {
   assert.notEqual(a.hash, b.hash)
 })
 
-test('gatherFacts reads README, top-level names and git subjects', async () => {
+test('gatherFacts reads README, top-level names, git subjects and code-activity date', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-distill-'))
   try {
-    await writeFile(path.join(dir, 'README.md'), '# Hello\nWorld')
     await mkdir(path.join(dir, 'node_modules'))
     await writeFile(path.join(dir, 'index.js'), '1')
     await exec('git', ['init', '-q'], { cwd: dir })
     await exec('git', ['config', 'user.email', 't@t.test'], { cwd: dir })
     await exec('git', ['config', 'user.name', 'T'], { cwd: dir })
+    const dated = (iso) => ({ cwd: dir, env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } })
     await exec('git', ['add', '-A'], { cwd: dir })
-    await exec('git', ['commit', '-q', '-m', 'first commit'], { cwd: dir })
+    await exec('git', ['commit', '-q', '-m', 'code commit'], dated('2020-01-01T00:00:00Z'))
+    // later doc-only commit must NOT move the code-activity date
+    await writeFile(path.join(dir, 'README.md'), '# Hello\nWorld')
+    await exec('git', ['add', '-A'], { cwd: dir })
+    await exec('git', ['commit', '-q', '-m', 'update readme'], dated('2026-07-01T00:00:00Z'))
     const facts = await gatherFacts({ directory: dir, git_info: { git_detected: true } })
     assert.equal(facts.readme, '# Hello\nWorld')
     assert.ok(facts.topLevel.includes('index.js'))
     assert.ok(!facts.topLevel.includes('node_modules'))
-    assert.deepEqual(facts.commits, ['first commit'])
+    assert.deepEqual(facts.commits, ['update readme', 'code commit'])
+    assert.match(facts.lastCodeCommit, /^2020-01-01/)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('gatherFacts returns null lastCodeCommit for doc-only repos', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'stow-distill-'))
+  try {
+    await writeFile(path.join(dir, 'README.md'), 'docs only')
+    await exec('git', ['init', '-q'], { cwd: dir })
+    await exec('git', ['config', 'user.email', 't@t.test'], { cwd: dir })
+    await exec('git', ['config', 'user.name', 'T'], { cwd: dir })
+    await exec('git', ['add', '-A'], { cwd: dir })
+    await exec('git', ['commit', '-q', '-m', 'readme'], { cwd: dir })
+    const facts = await gatherFacts({ directory: dir, git_info: { git_detected: true } })
+    assert.equal(facts.lastCodeCommit, null)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
 test('gatherFacts survives a missing directory', async () => {
   const facts = await gatherFacts({ directory: '/nonexistent/nope', git_info: {} })
-  assert.deepEqual(facts, { readme: null, topLevel: [], commits: [] })
+  assert.deepEqual(facts, { readme: null, topLevel: [], commits: [], lastCodeCommit: null })
 })
 ```
 
@@ -359,6 +379,14 @@ const exec = promisify(execFile)
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.txt', 'README']
 const MONTH_MS = 30.44 * 24 * 3600 * 1000
 
+// Meta-doc files excluded from the code-activity date, so README/doc edits
+// don't "revive" a project. Curated on purpose — NOT all *.md, because some
+// projects' markdown IS the content (books, doc sites).
+const CODE_ACTIVITY_EXCLUDES = [
+  'README*', 'readme*', 'CHANGELOG*', 'LICENSE*', 'docs', '.github',
+  'CLAUDE.md', 'STATUS.md', 'TASKS.md', 'AGENTS.md',
+]
+
 export async function gatherFacts(project) {
   const dir = project.directory
   let readme = null
@@ -370,13 +398,19 @@ export async function gatherFacts(project) {
     topLevel = (await readdir(dir)).filter(n => n !== 'node_modules' && n !== '.git').slice(0, 40)
   } catch { /* missing dir */ }
   let commits = []
+  let lastCodeCommit = null
   if (project.git_info?.git_detected) {
     try {
       const { stdout } = await exec('git', ['log', '-10', '--pretty=%s'], { cwd: dir, timeout: 10000 })
       commits = stdout.split('\n').filter(Boolean)
     } catch { /* no commits or git error */ }
+    try {
+      const pathspecs = CODE_ACTIVITY_EXCLUDES.map(e => `:(exclude)${e}`)
+      const { stdout } = await exec('git', ['log', '-1', '--format=%cI', '--', '.', ...pathspecs], { cwd: dir, timeout: 10000 })
+      lastCodeCommit = stdout.trim() || null
+    } catch { /* no commits or git error */ }
   }
-  return { readme, topLevel, commits }
+  return { readme, topLevel, commits, lastCodeCommit }
 }
 
 function day(iso) {
@@ -442,7 +476,7 @@ export function distillProject(project, facts, opts = {}) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test src/lib/distill.test.mjs`
-Expected: PASS (6 tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -461,7 +495,8 @@ git commit -m "feat: project distillate builder with input hashing"
 
 **Interfaces:**
 - Consumes: nothing yet (pure logic + one `readdir`).
-- Produces: `FACETS` (enum object), `CATEGORY_LEGEND` (category → meaning), `readTaxonomy(baseDir): Promise<{ categories: string[], clients: string[] }>`, `buildSchema(taxonomy): object`, `buildSystemPrompt(taxonomy): string`, `deriveStatus(project, now?): 'active'|'dormant'|'dead'|'archive-candidate'`, `suggestedPath(baseDir, category, client, name): string`, `isPlacementOk(directory, suggested): boolean`.
+- Produces: `FACETS` (enum object), `CATEGORY_LEGEND` (category → meaning), `readTaxonomy(baseDir): Promise<{ categories: string[], clients: string[] }>`, `buildSchema(taxonomy): object`, `buildSystemPrompt(taxonomy): string`, `deriveStatus(project, { now?, lastCodeCommit? }?): 'active'|'dormant'|'dead'|'archive-candidate'`, `suggestedPath(baseDir, category, client, name): string`, `isPlacementOk(directory, suggested): boolean`.
+- Activity date precedence in `deriveStatus`: `lastCodeCommit` (git, meta-docs excluded) → else max(`git_info.last_total_commit_date`, `last_modified`). The fallback is by design: doc-only repos and non-git projects use overall activity in phase 0.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -511,19 +546,30 @@ test('buildSystemPrompt contains legend lines for given categories only', () => 
 
 test('deriveStatus: active / dormant / dead by last activity', () => {
   const p = (iso) => ({ last_modified: iso, git_info: {} })
-  assert.equal(deriveStatus(p('2026-06-01T00:00:00Z'), NOW), 'active')
-  assert.equal(deriveStatus(p('2025-06-01T00:00:00Z'), NOW), 'dormant')
-  assert.equal(deriveStatus({ last_modified: '2022-01-01T00:00:00Z', git_info: { remotes: ['x'] }, scc: { total_code: 50 } }, NOW), 'dead')
+  assert.equal(deriveStatus(p('2026-06-01T00:00:00Z'), { now: NOW }), 'active')
+  assert.equal(deriveStatus(p('2025-06-01T00:00:00Z'), { now: NOW }), 'dormant')
+  assert.equal(deriveStatus({ last_modified: '2022-01-01T00:00:00Z', git_info: { remotes: ['x'] }, scc: { total_code: 50 } }, { now: NOW }), 'dead')
 })
 
 test('deriveStatus: archive-candidate = dead + no remote + tiny', () => {
   const p = { last_modified: '2022-01-01T00:00:00Z', git_info: {}, scc: { total_code: 150 } }
-  assert.equal(deriveStatus(p, NOW), 'archive-candidate')
+  assert.equal(deriveStatus(p, { now: NOW }), 'archive-candidate')
 })
 
 test('deriveStatus prefers last commit date over file mtime', () => {
   const p = { last_modified: '2020-01-01T00:00:00Z', git_info: { last_total_commit_date: '2026-06-20T00:00:00Z' } }
-  assert.equal(deriveStatus(p, NOW), 'active')
+  assert.equal(deriveStatus(p, { now: NOW }), 'active')
+})
+
+test('deriveStatus: code activity wins over doc-freshened dates', () => {
+  // README edited last week, but last real code change was 2022 → not active
+  const p = { last_modified: '2026-07-01T00:00:00Z', git_info: { last_total_commit_date: '2026-07-01T00:00:00Z', remotes: ['x'] }, scc: { total_code: 5000 } }
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeCommit: '2022-01-01T00:00:00Z' }), 'dead')
+})
+
+test('deriveStatus falls back to overall activity when lastCodeCommit is null', () => {
+  const p = { last_modified: '2026-07-01T00:00:00Z', git_info: {} }
+  assert.equal(deriveStatus(p, { now: NOW, lastCodeCommit: null }), 'active')
 })
 
 test('suggestedPath routes _Bizz through client and strips new: prefix', () => {
@@ -633,12 +679,20 @@ export function buildSystemPrompt(taxonomy) {
   ].join('\n')
 }
 
-export function deriveStatus(project, now = Date.now()) {
-  const candidates = [project.git_info?.last_total_commit_date, project.last_modified]
-    .map(d => Date.parse(d))
-    .filter(Number.isFinite)
-  if (!candidates.length) return 'dead'
-  const months = (now - Math.max(...candidates)) / MONTH_MS
+export function deriveStatus(project, { now = Date.now(), lastCodeCommit = null } = {}) {
+  // Code activity (meta-doc edits excluded) wins; doc-only repos and non-git
+  // projects fall back to overall activity — by design, see spec.
+  let last
+  if (lastCodeCommit && Number.isFinite(Date.parse(lastCodeCommit))) {
+    last = Date.parse(lastCodeCommit)
+  } else {
+    const candidates = [project.git_info?.last_total_commit_date, project.last_modified]
+      .map(d => Date.parse(d))
+      .filter(Number.isFinite)
+    if (!candidates.length) return 'dead'
+    last = Math.max(...candidates)
+  }
+  const months = (now - last) / MONTH_MS
   if (months <= 3) return 'active'
   if (months <= 18) return 'dormant'
   const noRemote = !(project.git_info?.remotes?.length)
@@ -662,7 +716,7 @@ export function isPlacementOk(directory, suggested) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test src/lib/analyzer.test.mjs`
-Expected: PASS (9 tests)
+Expected: PASS (11 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -888,7 +942,7 @@ export async function analyzeProject(project, ctx) {
       model: 'apple-foundationmodel/apfel',
     },
     derived: {
-      status: deriveStatus(project, now),
+      status: deriveStatus(project, { now, lastCodeCommit: facts.lastCodeCommit }),
       tech: normalizeTech([...extractTech(project, facts.topLevel), ...(out.tech_extra || [])]),
       placement_ok: isPlacementOk(project.directory, suggested),
       suggested_path: suggested,
@@ -902,12 +956,12 @@ export async function analyzeProject(project, ctx) {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node --test src/lib/analyzer.test.mjs`
-Expected: PASS (15 tests)
+Expected: PASS (17 tests)
 
 - [ ] **Step 5: Run the whole suite to check for regressions**
 
 Run: `npm test`
-Expected: all tests pass (existing suite + 27 new)
+Expected: all tests pass (existing suite + 30 new)
 
 - [ ] **Step 6: Commit**
 
