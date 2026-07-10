@@ -30,13 +30,16 @@ npm run tauri:dev    # Run desktop app in dev mode
 
 # Other
 npm run lint         # Run ESLint
+npm test             # Run tests (node --test)
 ```
 
 **Ports:** Dev uses `3089`, Production/Tauri uses `3088`. Deno shell requests `3087`, but both `deno:run` and `deno:build` produce a compiled `deno desktop` app, which binds a runtime-assigned port exposed via `DENO_SERVE_ADDRESS` instead (see docs/deno-vs-tauri.md).
 
 Next.js 16 uses Turbopack by default and separates dev/build outputs (`.next/dev` vs `.next/build`), so `npm run build` won't interfere with a running dev server.
 
-No test framework is currently configured.
+### Tests
+
+Tests use the built-in Node.js test runner (`node --test`, no framework dependency) with `node:assert/strict`. Test files are colocated with the code they cover as `<module>.test.mjs` (e.g. `src/lib/scripts.test.mjs`, `src/scanner/index.test.mjs`, `scripts/skills.test.mjs`). Run all with `npm test`, or a single file with `node --test src/lib/<file>.test.mjs`. Tests that need a filesystem or git create temp dirs via `mkdtemp` and clean up after themselves; subprocess-calling code takes an injectable exec so tests never require external tools.
 
 ### Scanner
 
