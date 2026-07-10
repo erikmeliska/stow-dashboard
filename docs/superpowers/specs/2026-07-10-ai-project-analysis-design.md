@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 **Status:** Approved (pending pilot outcome)
-**Goal:** Enrich every project in the JSONL with an AI-generated semantic layer — category, client, description, documentation score, placement advice — produced by the on-device Apple Foundation Model through the `apfel` CLI, and surface it in the dashboard (columns, filters, AI Insights, reorganization report).
+**Goal:** Enrich every project in the JSONL with an AI-generated semantic layer — folder category, client, description, faceted classification (type, domain, tech, maturity, reusable assets), documentation score, placement advice — produced by the on-device Apple Foundation Model through the `apfel` CLI, and surface it in the dashboard (columns, faceted filters, tech cross-sections, AI Insights, reorganization report).
 
 ## Context
 
@@ -48,10 +48,11 @@ JSONL metadata + README + git             ─┤→ distillate (≤ ~3k tokens/p
 ## Components
 
 - **`src/lib/distill.mjs`** — builds the per-project distillate: path + "currently uncategorized in root" note, name, README excerpt (~1500 chars), top-level file tree, package.json description + scripts, stack, git remote URL, ~10 recent commit messages, dates, sizes. Deterministic; `input_hash` = hash of the distillate. Preflights with `apfel --count-tokens --strict` and trims the README excerpt on overflow.
-- **`src/lib/analyzer.mjs`** — orchestrator: reads taxonomy from disk (`_*` dirs, `_Bizz/*` clients), generates the JSON Schema (enum injected at runtime) and the system prompt (category legend + doc-score anchors), iterates the JSONL, skips records whose `input_hash` matches, calls `apfel` serially (single local model; parallelism doesn't help), computes deterministic fields (status from dates, `suggested_path` from category+client, archive-candidate = dead ∧ no git remote ∧ total_code < 1000 lines), writes results incrementally.
+- **`src/lib/tech-tags.mjs`** — deterministic tech extraction: dependency→tech mapping table, file-signal rules (`Dockerfile`, `*.ino`, `fly.toml`, …), synonym normalization table. Pure functions; also used to normalize the model's `tech_extra`.
+- **`src/lib/analyzer.mjs`** — orchestrator: reads taxonomy from disk (`_*` dirs, `_Bizz/*` clients), generates the JSON Schema (category enum injected at runtime; facet enums from one config) and the system prompt (category legend + facet legends + doc-score anchors), iterates the JSONL, skips records whose `input_hash` matches, calls `apfel` serially (single local model; parallelism doesn't help), computes deterministic fields (status from dates, `suggested_path` from category+client, archive-candidate = dead ∧ no git remote ∧ total_code < 1000 lines, merged `tech`), writes results incrementally.
 - **`scripts/analyze.mjs`** — CLI: full batch, `--force`, `--pilot <paths…>` (analyze listed projects and print a review table).
 - **`POST /api/analyze`** — start batch from the UI (⋯ menu next to scan controls), progress reporting reusing the scan-progress mechanism; `{ project: <id> }` re-analyzes one project (details-sheet button).
-- **UI (phase 2)** — table columns Category / Client / Doc score; quick filters "Misplaced" and "Poor docs"; AI Insights section in the details sheet (description, doc gaps, suggested move); reorganization view listing suggested moves and archive candidates grouped by action.
+- **UI (phase 2)** — table columns Category / Client / Type / Doc score, tech tag chips; faceted filtering (type × domain × tech × maturity combine); quick filters "Misplaced" and "Poor docs"; "Tech cross-section" view (technology list with counts → click → projects); AI Insights section in the details sheet (description, facets, doc gaps, reusable assets, suggested move); reorganization view listing suggested moves and archive candidates grouped by action.
 
 ## Data model
 
@@ -62,6 +63,11 @@ New `ai_analysis` key on each JSONL record:
   "category": "_Learning",
   "client": "",                      // only for _Bizz; existing client or "new:<name>"
   "generated_description": "…",      // shown only when description is empty
+  "project_type": "script-collection",
+  "domain": "devtools",
+  "maturity": "prototype",           // idea | prototype | mvp | production | abandoned-wip
+  "tech_extra": ["chai"],            // model-suggested additions to the deterministic tech set
+  "reusable_assets": [],             // free text, max 3, e.g. "ready-made Google OAuth flow"
   "doc_score": 0,                    // 0–100
   "doc_gaps": ["README"],
   "confidence": "medium",            // high | medium | low
@@ -77,11 +83,24 @@ Deterministic fields computed in Node, stored alongside (not model output):
 {
   "status": "dead",                  // active ≤3mo | dormant ≤18mo | dead | archive-candidate
   "placement_ok": false,
-  "suggested_path": "/Users/ericsko/Projekty/_Learning/codewars"
+  "suggested_path": "/Users/ericsko/Projekty/_Learning/codewars",
+  "tech": ["javascript", "chai"]     // merged: deterministic extraction ∪ normalized tech_extra
 }
 ```
 
 The model never composes filesystem paths; it only classifies.
+
+## Facets (beyond folder category)
+
+The folder category is only one axis; the analysis fills independent facets so the table supports cross-sections (type × domain × tech × maturity combine as filters):
+
+- **`project_type`** — what the artifact is. Closed enum: `web-app`, `api-service`, `cli-tool`, `library`, `browser-extension`, `desktop-app`, `mobile-app`, `script-collection`, `infra-config`, `template-boilerplate`, `prototype-poc`, `fork`, `content-docs`.
+- **`domain`** — what it is about. Closed enum (~12 values, extendable in one place): `e-commerce`, `communication-email`, `church-community`, `finance`, `education`, `devtools`, `iot-electronics`, `media`, `ai-ml`, `productivity`, `games`, `other`.
+- **`tech`** — canonical technology tags for cross-sections ("everything using Prisma"). **Hybrid, deterministic-first:** Node extracts from manifests and file signals (dependency→tech mapping table, `Dockerfile`→`docker`, `*.ino`→`arduino`, `fly.toml`→`fly`, …) and picks primary techs out of raw `stack` noise; the model only supplies `tech_extra` for technologies visible in README/code but absent from manifests (non-npm projects). Node normalizes `tech_extra` through the same synonym table (`e-shop`/`eshop`→`e-commerce`-style dedup) before merging.
+- **`maturity`** — how far it got, orthogonal to activity status: a production project may rightfully be dormant; `production` + `dead` is an alert (unmaintained client deployment?).
+- **`reusable_assets`** — up to 3 free-text items naming what could be harvested ("ready-made Google OAuth flow", "Docker compose for Moodle", "Puppeteer scraper"). Turns the corpus into a building-block catalog, queryable via MCP.
+
+**Tag-explosion guard:** everything the model chooses freely is either schema-constrained (enums) or normalized in Node; only `reusable_assets` (and later `notable`) stay free text, where variety is value rather than chaos. All facets fit in the single per-project model call — the schema grows, the distillate does not.
 
 ## Error handling
 
@@ -93,10 +112,10 @@ The model never composes filesystem paths; it only classifies.
 
 ## Phases
 
-1. **Phase 0 — Pilot (gate):** `distill.mjs` + `analyzer.mjs --pilot` on ~20 known projects (client work, sandboxes, dead exercises, the `TRIVCALC` duplicate, `_Learning` items). Success criteria: **category correct ≥ 80 %, client correct ≥ 90 %** where applicable. On failure the distillate + contract survive and another engine can be plugged in.
+1. **Phase 0 — Pilot (gate):** `distill.mjs` + `tech-tags.mjs` + `analyzer.mjs --pilot` on ~20 known projects (client work, sandboxes, dead exercises, the `TRIVCALC` duplicate, `_Learning` items). Success criteria: **category correct ≥ 80 %, client correct ≥ 90 %** where applicable; `project_type` correct ≥ 80 % (facets are reviewed but only category/client/type gate). On failure the distillate + contract survive and another engine can be plugged in.
 2. **Phase 1 — Batch pipeline:** full incremental batch, JSONL enrichment, `/api/analyze`, progress UI.
-3. **Phase 2 — UI:** columns, quick filters, AI Insights, reorganization report.
-4. **Phase 3 — Extensions:** deeper doc audit, README draft generation, MCP tools (`list_misplaced_projects`, `list_undocumented_projects`), doc-score history.
+3. **Phase 2 — UI:** columns, faceted filters, tech cross-section, AI Insights, reorganization report.
+4. **Phase 3 — Extensions:** deeper doc audit, README draft generation, MCP tools (`list_misplaced_projects`, `list_undocumented_projects`, `find_reusable_assets(query)`, `search_projects` gains facet params), doc-score history, `notable` field (one interesting fact per project), deployment detection (CI/Vercel/Docker signals + model judgment), project-relations pass (similarity over generated descriptions + facets, computed in Node without the model — flags duplicates and "N attempts at the same thing").
 
 ## Testing
 
