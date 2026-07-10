@@ -207,3 +207,83 @@ test('processProject carries ai_analysis and ai_derived across re-extraction', a
         assert.ok(meta.stack !== undefined)          // and it IS a fresh record
     } finally { await fs.rm(dir, { recursive: true, force: true }) }
 })
+
+// --- Fix 1: errors must never delete projects ------------------------------
+
+test('processProject returns cached record when extraction fails', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-scan-'))
+    try {
+        const scanner = new ProjectScanner({ scanRoots: [dir] })
+        const cachedRecord = { directory: dir, project_name: 'cached-one', last_modified: '2020-01-01T00:00:00Z' }
+        scanner.existingProjectsCache.set(dir, cachedRecord)
+        // Force the update path, then make extraction fail (e.g. EMFILE).
+        scanner.shouldUpdateMetadata = async () => ({ needsUpdate: true, cached: null })
+        scanner.extractProjectMetadata = async () => { throw new Error('EMFILE') }
+
+        const events = []
+        scanner.onProgress = (e) => events.push(e)
+
+        const result = await scanner.processProject(dir)
+        assert.deepEqual(result, cachedRecord)                       // fell back to last known record
+        assert.ok(events.some(e => e.type === 'error'), 'an error progress event fired')
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+test('processProject returns null when extraction fails and no cache exists', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-scan-'))
+    try {
+        const scanner = new ProjectScanner({ scanRoots: [dir] })
+        scanner.shouldUpdateMetadata = async () => ({ needsUpdate: true, cached: null })
+        scanner.extractProjectMetadata = async () => { throw new Error('EMFILE') }
+        const result = await scanner.processProject(dir)
+        assert.equal(result, null)
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+async function writeRecords(file, count) {
+    const lines = []
+    for (let i = 0; i < count; i++) lines.push(JSON.stringify({ directory: `/p/${i}`, project_name: `p${i}` }))
+    await fs.writeFile(file, lines.join('\n') + '\n')
+}
+
+test('syncMetadata refuses a >30% shrink', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-sync-'))
+    const file = path.join(dir, 'projects.jsonl')
+    try {
+        await writeRecords(file, 30)
+        const before = await fs.readFile(file, 'utf-8')
+        const scanner = new ProjectScanner({ scanRoots: [], syncFile: file })
+        const events = []
+        scanner.onProgress = (e) => events.push(e)
+        const incoming = Array.from({ length: 10 }, (_, i) => ({ directory: `/p/${i}`, project_name: `p${i}` }))
+        await assert.rejects(() => scanner.syncMetadata(incoming), /sync refused/)
+        const after = await fs.readFile(file, 'utf-8')
+        assert.equal(after, before, 'file content unchanged')
+        assert.ok(events.some(e => e.type === 'sync_refused'), 'sync_refused event fired')
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+test('syncMetadata allows a >30% shrink when allowShrink is passed', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-sync-'))
+    const file = path.join(dir, 'projects.jsonl')
+    try {
+        await writeRecords(file, 30)
+        const scanner = new ProjectScanner({ scanRoots: [], syncFile: file })
+        const incoming = Array.from({ length: 10 }, (_, i) => ({ directory: `/p/${i}`, project_name: `p${i}` }))
+        await scanner.syncMetadata(incoming, { allowShrink: true })
+        const written = (await fs.readFile(file, 'utf-8')).trim().split('\n').filter(Boolean)
+        assert.equal(written.length, 10)
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
+test('syncMetadata allows a large shrink when existing file is at/under the 20-record floor', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-sync-'))
+    const file = path.join(dir, 'projects.jsonl')
+    try {
+        await writeRecords(file, 20)
+        const scanner = new ProjectScanner({ scanRoots: [], syncFile: file })
+        await scanner.syncMetadata([{ directory: '/p/0', project_name: 'p0' }])
+        const written = (await fs.readFile(file, 'utf-8')).trim().split('\n').filter(Boolean)
+        assert.equal(written.length, 1)
+    } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})

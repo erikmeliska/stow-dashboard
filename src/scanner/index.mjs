@@ -534,7 +534,9 @@ export class ProjectScanner {
             return projectMeta
         } catch (error) {
             this.onProgress({ type: 'error', directory, error: error.message })
-            return null
+            // A transient failure (EMFILE, git hiccup) must not delete the project
+            // from the dataset — fall back to the last known record.
+            return this.existingProjectsCache.get(directory) ?? null
         }
     }
 
@@ -705,8 +707,30 @@ export class ProjectScanner {
         }
     }
 
-    async syncMetadata(projects) {
+    // Count non-empty JSONL records already present in the sync file (0 if absent).
+    async countExistingSyncRecords() {
+        if (!this.syncFile) return 0
+        try {
+            const content = await fs.readFile(this.syncFile, 'utf-8')
+            return content.trim().split('\n').filter(l => l.trim()).length
+        } catch {
+            return 0
+        }
+    }
+
+    async syncMetadata(projects, { allowShrink = false } = {}) {
         if (!this.syncFile) return
+
+        // Shrink guard: a scan that silently dropped subtrees (e.g. EMFILE under
+        // the desktop shell's 256-fd limit) would otherwise rewrite the JSONL
+        // with only the survivors, permanently deleting projects. Refuse a
+        // suspiciously large shrink unless explicitly overridden. The floor
+        // (>20 existing records) keeps the guard out of the way of tiny/new files.
+        const existingCount = await this.countExistingSyncRecords()
+        if (!allowShrink && existingCount > 20 && projects.length < existingCount * 0.7) {
+            this.onProgress({ type: 'sync_refused', existing: existingCount, incoming: projects.length })
+            throw new Error(`sync refused: incoming ${projects.length} < 70% of existing ${existingCount} projects — pass allowShrink to override`)
+        }
 
         const parentDir = path.dirname(this.syncFile)
         await fs.mkdir(parentDir, { recursive: true })
