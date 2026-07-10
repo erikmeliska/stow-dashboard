@@ -121,6 +121,26 @@ test('getAnalysisStatus tracks a batch lifecycle', async () => {
   } finally { await rm(base, { recursive: true, force: true }) }
 })
 
+test('getAnalysisStatus records a friendly lastError when the model is unavailable', async () => {
+  const { base, dataFile } = await makeWorld()
+  try {
+    const downExec = async () => {
+      const err = new Error('exit 5')
+      err.code = 5
+      err.stderr = 'model assets not available'
+      throw err
+    }
+    await assert.rejects(
+      runAnalysisBatch({ dataFile, baseDir: base, execImpl: downExec, force: true }),
+      err => err.kind === 'unavailable'
+    )
+    const s = getAnalysisStatus()
+    assert.equal(s.running, false)
+    assert.ok(s.finishedAt)
+    assert.equal(s.lastError, 'Apple model unavailable — is apfel installed and Apple Intelligence enabled?')
+  } finally { await rm(base, { recursive: true, force: true }) }
+})
+
 test('getAnalysisStatus reports running=true mid-batch', async () => {
   const { base, dataFile } = await makeWorld()
   try {

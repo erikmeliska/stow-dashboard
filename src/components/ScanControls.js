@@ -53,11 +53,13 @@ export function ScanControls({ lastSyncTime }) {
     const [elapsedTime, setElapsedTime] = React.useState(0)
     const [autoRefresh, setAutoRefresh] = React.useState(false)
     const [syncAgo, setSyncAgo] = React.useState('')
+    const [analyzeSummary, setAnalyzeSummary] = React.useState(null)
     const startTimeRef = React.useRef(null)
     const timerRef = React.useRef(null)
     const autoRefreshRef = React.useRef(null)
     const syncTimerRef = React.useRef(null)
     const analyzePollRef = React.useRef(null)
+    const analyzeSummaryTimerRef = React.useRef(null)
 
     React.useEffect(() => {
         setIsMounted(true)
@@ -157,8 +159,23 @@ export function ScanControls({ lastSyncTime }) {
                 window.clearInterval(analyzePollRef.current)
                 analyzePollRef.current = null
             }
+            if (analyzeSummaryTimerRef.current) {
+                window.clearTimeout(analyzeSummaryTimerRef.current)
+                analyzeSummaryTimerRef.current = null
+            }
         }
     }, [])
+
+    // Show an analyze result line next to the toolbar for a few seconds after
+    // the batch ends (the isScanning-gated progress area hides immediately).
+    const showAnalyzeSummary = (summary, ms = 5000) => {
+        if (analyzeSummaryTimerRef.current) window.clearTimeout(analyzeSummaryTimerRef.current)
+        setAnalyzeSummary(summary)
+        analyzeSummaryTimerRef.current = window.setTimeout(() => {
+            setAnalyzeSummary(null)
+            analyzeSummaryTimerRef.current = null
+        }, ms)
+    }
 
     // Reflect an /api/analyze/status snapshot into the progress UI; when the
     // batch is no longer running, stop polling and show the summary.
@@ -172,13 +189,19 @@ export function ScanControls({ lastSyncTime }) {
             window.clearInterval(analyzePollRef.current)
             analyzePollRef.current = null
         }
-        setProgress({
-            message: `AI analysis done: ${s.analyzed} analyzed, ${s.skipped} cached, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
-            success: true,
-        })
+        if (s.lastError) {
+            // Batch aborted (e.g. Apple model unavailable) — mirror the scan
+            // error presentation instead of a green success line.
+            showAnalyzeSummary({ message: `AI analysis failed: ${s.lastError}`, error: true }, 10000)
+        } else {
+            showAnalyzeSummary({
+                message: `AI analysis done: ${s.analyzed} analyzed, ${s.skipped} cached, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
+                success: true,
+            })
+            setLastSync(new Date().toISOString())
+        }
         setIsScanning(false)
         setScanType(null)
-        setLastSync(new Date().toISOString())
         router.refresh()
     }
 
@@ -202,6 +225,7 @@ export function ScanControls({ lastSyncTime }) {
         if (type === 'analyze' || type === 'analyze-force') {
             setIsScanning(true)
             setScanType('analyze')
+            setAnalyzeSummary(null)
             setProgress({ message: 'Starting AI analysis…' })
             setLogs([])
             setScanStats({ current: 0, total: 0 })
@@ -219,13 +243,13 @@ export function ScanControls({ lastSyncTime }) {
                     startAnalysisPolling()
                 } else {
                     const data = await res.json().catch(() => ({}))
-                    setProgress({ message: `Error: ${data.error || res.statusText}`, error: true })
+                    showAnalyzeSummary({ message: `Error: ${data.error || res.statusText}`, error: true }, 10000)
                     setIsScanning(false)
                     setScanType(null)
                 }
             } catch (error) {
                 console.error('Analyze error:', error)
-                setProgress({ message: `Error: ${error.message}`, error: true })
+                showAnalyzeSummary({ message: `Error: ${error.message}`, error: true }, 10000)
                 setIsScanning(false)
                 setScanType(null)
             }
@@ -375,8 +399,21 @@ export function ScanControls({ lastSyncTime }) {
                         )}
                     </div>
                 )}
+                {/* Analyze result summary (lingers a few seconds after the batch ends) */}
+                {!isScanning && analyzeSummary && (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                        {analyzeSummary.error ? (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                        ) : (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                        )}
+                        <span className="max-w-[280px] truncate" title={analyzeSummary.message}>
+                            {analyzeSummary.message}
+                        </span>
+                    </div>
+                )}
                 {/* Sync status (when not scanning) */}
-                {!isScanning && isMounted && (
+                {!isScanning && !analyzeSummary && isMounted && (
                     <span className="text-sm text-muted-foreground" title={lastSync ? new Date(lastSync).toLocaleString() : ''}>
                         {lastSync ? `Synced ${syncAgo}` : 'Not synced'}
                     </span>

@@ -109,7 +109,7 @@ export async function runAnalysisBatch({ dataFile, baseDir, force = false, only 
         }
       } catch (err) {
         if (err instanceof ApfelError && err.kind === 'unavailable') {
-          status.lastError = err.message
+          status.lastError = 'Apple model unavailable — is apfel installed and Apple Intelligence enabled?'
           throw err
         }
         errors++
