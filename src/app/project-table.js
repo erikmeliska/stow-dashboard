@@ -17,6 +17,9 @@ import {
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuTrigger,
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
@@ -117,6 +120,26 @@ const AI_STATUS_PILL_CLASS = {
 }
 const defaultSorting = [{ id: 'last_modified', desc: true }]
 
+// AI facet accessors — each returns the list of values a project contributes to the facet.
+// Unanalyzed / errored records contribute nothing, so they never match a selected value.
+const FACET_ACCESSORS = {
+    category: p => p.ai_analysis?.category ? [p.ai_analysis.category] : [],
+    type:     p => p.ai_analysis?.project_type ? [p.ai_analysis.project_type] : [],
+    domain:   p => p.ai_analysis?.domain ? [p.ai_analysis.domain] : [],
+    maturity: p => p.ai_analysis?.maturity ? [p.ai_analysis.maturity] : [],
+    tech:     p => p.ai_derived?.tech ?? [],
+}
+const FACET_KEYS = ['category', 'type', 'domain', 'maturity', 'tech']
+const FACET_LABELS = {
+    category: 'Category',
+    type: 'Type',
+    domain: 'Domain',
+    maturity: 'Maturity',
+    tech: 'Tech',
+}
+const TECH_FACET_CAP = 30
+const emptyAiFacets = () => ({ category: [], type: [], domain: [], maturity: [], tech: [] })
+
 export function ProjectTable({ projects, ownRepos }) {
     const [isHydrated, setIsHydrated] = React.useState(false)
     const [sorting, setSorting] = React.useState(defaultSorting)
@@ -124,6 +147,7 @@ export function ProjectTable({ projects, ownRepos }) {
     const [columnVisibility, setColumnVisibility] = React.useState(defaultColumnVisibility)
     const [globalFilter, setGlobalFilter] = React.useState("")
     const [selectedGroups, setSelectedGroups] = React.useState([])
+    const [aiFacets, setAiFacets] = React.useState(emptyAiFacets)
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
     const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
@@ -139,6 +163,9 @@ export function ProjectTable({ projects, ownRepos }) {
         hasOwnCommits: null,
         hasReadme: null,
         hasTasks: null,
+        analyzed: null,
+        misplaced: null,
+        poorDocs: null,
     })
 
     // Cycle through: null -> true -> false -> null
@@ -164,6 +191,9 @@ export function ProjectTable({ projects, ownRepos }) {
             hasOwnCommits: null,
             hasReadme: null,
             hasTasks: null,
+            analyzed: null,
+            misplaced: null,
+            poorDocs: null,
         })
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
@@ -179,6 +209,7 @@ export function ProjectTable({ projects, ownRepos }) {
         setPagination({ pageIndex: 0, pageSize: 20 })
         setGlobalFilter("")
         setSelectedGroups([])
+        setAiFacets(emptyAiFacets())
         clearAllFilters()
     }
 
@@ -235,6 +266,29 @@ export function ProjectTable({ projects, ownRepos }) {
             .map(([name, count]) => ({ name, count }))
     }, [searchFilteredProjects])
 
+    // AI facet value counts from search-filtered projects (the tech cross-section).
+    // tech sorted by count desc; the others alphabetically.
+    const facetStats = React.useMemo(() => {
+        const stats = {}
+        for (const facet of FACET_KEYS) {
+            const counts = {}
+            searchFilteredProjects.forEach(project => {
+                FACET_ACCESSORS[facet](project).forEach(value => {
+                    if (!value) return
+                    counts[value] = (counts[value] || 0) + 1
+                })
+            })
+            const entries = Object.entries(counts).map(([value, count]) => ({ value, count }))
+            if (facet === 'tech') {
+                entries.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+            } else {
+                entries.sort((a, b) => a.value.localeCompare(b.value))
+            }
+            stats[facet] = entries
+        }
+        return stats
+    }, [searchFilteredProjects])
+
     // Final filtered projects (search + groups + quick filters)
     const filteredProjects = React.useMemo(() => {
         let result = searchFilteredProjects
@@ -244,6 +298,16 @@ export function ProjectTable({ projects, ownRepos }) {
             result = result.filter(project =>
                 selectedGroups.some(group => (project.groupParts || []).includes(group))
             )
+        }
+
+        // AI facet filters (OR within a facet, AND across facets — same as groups)
+        for (const facet of FACET_KEYS) {
+            const selected = aiFacets[facet]
+            if (selected.length > 0) {
+                result = result.filter(project =>
+                    FACET_ACCESSORS[facet](project).some(value => selected.includes(value))
+                )
+            }
         }
 
         // Quick filters (null = any, true = must have, false = must not have)
@@ -310,8 +374,32 @@ export function ProjectTable({ projects, ownRepos }) {
             })
         }
 
+        if (filters.analyzed !== null) {
+            result = result.filter(project => {
+                const isAnalyzed = project.ai_analysis && !project.ai_analysis.error
+                return filters.analyzed ? isAnalyzed : !isAnalyzed
+            })
+        }
+
+        if (filters.misplaced !== null) {
+            result = result.filter(project => {
+                const placementOk = project.ai_derived?.placement_ok
+                // records without ai_derived match neither yes nor no
+                return filters.misplaced ? placementOk === false : placementOk === true
+            })
+        }
+
+        if (filters.poorDocs !== null) {
+            result = result.filter(project => {
+                const score = project.ai_analysis?.doc_score ?? -1
+                const isPoor = score >= 0 && score < 50
+                const isGood = score >= 50
+                return filters.poorDocs ? isPoor : isGood
+            })
+        }
+
         return result
-    }, [searchFilteredProjects, selectedGroups, filters, getPortsForProject, isProjectRunning])
+    }, [searchFilteredProjects, selectedGroups, aiFacets, filters, getPortsForProject, isProjectRunning])
 
     const toggleGroup = (groupName) => {
         setSelectedGroups(prev =>
@@ -327,6 +415,24 @@ export function ProjectTable({ projects, ownRepos }) {
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
 
+    const toggleFacet = (facet, value) => {
+        setAiFacets(prev => {
+            const selected = prev[facet]
+            const next = selected.includes(value)
+                ? selected.filter(v => v !== value)
+                : [...selected, value]
+            return { ...prev, [facet]: next }
+        })
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const clearFacets = () => {
+        setAiFacets(emptyAiFacets())
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const facetSelectionCount = FACET_KEYS.reduce((sum, f) => sum + aiFacets[f].length, 0)
+
     // Auto-remove selected groups that no longer exist in filtered results
     React.useEffect(() => {
         const availableGroups = new Set(groupStats.map(g => g.name))
@@ -335,6 +441,21 @@ export function ProjectTable({ projects, ownRepos }) {
             setSelectedGroups(validGroups)
         }
     }, [groupStats, selectedGroups])
+
+    // Auto-remove selected facet values that no longer exist in the filtered facet stats
+    React.useEffect(() => {
+        setAiFacets(prev => {
+            let changed = false
+            const next = {}
+            for (const facet of FACET_KEYS) {
+                const available = new Set(facetStats[facet].map(e => e.value))
+                const valid = prev[facet].filter(v => available.has(v))
+                if (valid.length !== prev[facet].length) changed = true
+                next[facet] = valid
+            }
+            return changed ? next : prev
+        })
+    }, [facetStats])
 
     // Load settings from localStorage on mount
     React.useEffect(() => {
@@ -346,6 +467,7 @@ export function ProjectTable({ projects, ownRepos }) {
             if (settings.filters) setFilters(settings.filters)
             if (settings.globalFilter) setGlobalFilter(settings.globalFilter)
             if (settings.selectedGroups) setSelectedGroups(settings.selectedGroups)
+            if (settings.aiFacets) setAiFacets({ ...emptyAiFacets(), ...settings.aiFacets })
         }
         setIsHydrated(true)
     }, [])
@@ -359,9 +481,10 @@ export function ProjectTable({ projects, ownRepos }) {
             pageSize: pagination.pageSize,
             filters,
             globalFilter,
-            selectedGroups
+            selectedGroups,
+            aiFacets
         })
-    }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, isHydrated])
+    }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, aiFacets, isHydrated])
     
     const columns = [
         {
@@ -1012,6 +1135,66 @@ export function ProjectTable({ projects, ownRepos }) {
 
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" className={facetSelectionCount > 0 ? "border-primary" : ""}>
+                                <Sparkles className="mr-1.5 h-4 w-4" />
+                                <span className="hidden sm:inline">AI filters</span>
+                                {facetSelectionCount > 0 && (
+                                    <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
+                                        {facetSelectionCount}
+                                    </span>
+                                )}
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-52">
+                            {facetSelectionCount > 0 && (
+                                <div
+                                    className="px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:text-foreground"
+                                    onClick={clearFacets}
+                                >
+                                    Clear all AI filters
+                                </div>
+                            )}
+                            {FACET_KEYS.map(facet => {
+                                const entries = facetStats[facet]
+                                const shown = facet === 'tech' ? entries.slice(0, TECH_FACET_CAP) : entries
+                                const hiddenCount = entries.length - shown.length
+                                const selectedInFacet = aiFacets[facet].length
+                                return (
+                                    <DropdownMenuSub key={facet}>
+                                        <DropdownMenuSubTrigger disabled={entries.length === 0}>
+                                            <span className="flex-1">{FACET_LABELS[facet]}</span>
+                                            {selectedInFacet > 0 && (
+                                                <span className="ml-2 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                                                    {selectedInFacet}
+                                                </span>
+                                            )}
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+                                            {shown.map(({ value, count }) => (
+                                                <DropdownMenuCheckboxItem
+                                                    key={value}
+                                                    checked={aiFacets[facet].includes(value)}
+                                                    onCheckedChange={() => toggleFacet(facet, value)}
+                                                    onSelect={(e) => e.preventDefault()}
+                                                >
+                                                    <span className="flex-1">{value.replace(/^_/, '')}</span>
+                                                    <span className="ml-2 text-xs text-muted-foreground">{count}</span>
+                                                </DropdownMenuCheckboxItem>
+                                            ))}
+                                            {hiddenCount > 0 && (
+                                                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                                    +{hiddenCount} more
+                                                </div>
+                                            )}
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                )
+                            })}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                             <Button variant="outline" size="sm">
                                 <span className="hidden sm:inline">Columns</span>
                                 <ChevronDown className="sm:ml-1.5 h-4 w-4" />
@@ -1067,6 +1250,9 @@ export function ProjectTable({ projects, ownRepos }) {
                         { key: 'hasOwnCommits', label: 'My Commits', shortLabel: 'Mine' },
                         { key: 'hasReadme', label: 'README', shortLabel: 'Docs' },
                         { key: 'hasTasks', label: 'Tasks', shortLabel: 'Task' },
+                        { key: 'analyzed', label: 'Analyzed', shortLabel: 'AI' },
+                        { key: 'misplaced', label: 'Misplaced', shortLabel: 'Mispl' },
+                        { key: 'poorDocs', label: 'Poor docs', shortLabel: 'Docs' },
                     ].map(({ key, label, shortLabel }) => {
                         const value = filters[key]
                         return (
@@ -1117,6 +1303,30 @@ export function ProjectTable({ projects, ownRepos }) {
                         <button
                             className="text-xs text-muted-foreground hover:text-foreground"
                             onClick={clearGroups}
+                        >
+                            Clear all
+                        </button>
+                    </div>
+                )}
+
+                {/* Selected AI facets as chips */}
+                {facetSelectionCount > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {FACET_KEYS.flatMap(facet =>
+                            aiFacets[facet].map(value => (
+                                <span
+                                    key={`${facet}:${value}`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-500/10 text-violet-600 dark:text-violet-400 rounded text-xs cursor-pointer hover:bg-violet-500/20 transition-colors"
+                                    onClick={() => toggleFacet(facet, value)}
+                                >
+                                    {facet}: {value.replace(/^_/, '')}
+                                    <X className="h-3 w-3" />
+                                </span>
+                            ))
+                        )}
+                        <button
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                            onClick={clearFacets}
                         >
                             Clear all
                         </button>
