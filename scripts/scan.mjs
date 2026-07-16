@@ -6,9 +6,15 @@ import { config } from 'dotenv'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const REPO_ROOT = path.resolve(__dirname, '..')
+
+// Where the ledger and .env.local live: the desktop app's app-data dir when
+// it holds the live ledger, else this repo. See src/lib/state-dir.mjs.
+const { ledgerFile, envFile } = await import('../src/lib/state-dir.mjs')
+const DEFAULT_SYNC_FILE = ledgerFile({ base: REPO_ROOT })
 
 // Load .env.local (silent)
-config({ path: path.join(__dirname, '..', '.env.local'), debug: false })
+config({ path: envFile({ base: REPO_ROOT }), debug: false })
 
 // Dynamic import of the scanner
 const { ProjectScanner } = await import('../src/scanner/index.mjs')
@@ -44,7 +50,7 @@ function parseArgs() {
                 options.ignore.push(args[++i])
             }
         } else if (arg === '--sync' || arg === '-s') {
-            options.sync = args[++i] || path.join(__dirname, '..', 'data', 'projects_metadata.jsonl')
+            options.sync = args[++i] || DEFAULT_SYNC_FILE
         } else if (arg === '--force' || arg === '-f') {
             options.force = true
         } else if (arg === '--cleanup') {
@@ -66,7 +72,10 @@ Usage: node scripts/scan.mjs [options]
 Options:
   -r, --root <path...>   Root directories to scan (defaults to SCAN_ROOTS env)
   -i, --ignore <pattern...>  Additional patterns to ignore
-  -s, --sync [path]      Sync all metadata to JSONL file
+  -s, --sync [path]      Sync all metadata to JSONL file (default: the active
+                         state dir's ledger — the desktop app's app-data dir
+                         when present, else this repo's data/; STOW_STATE_DIR
+                         overrides)
   -f, --force            Force update all metadata
   --cleanup              Delete all .project_meta.json files
   --allow-shrink         Allow syncing even if it removes >30% of existing projects
@@ -76,7 +85,7 @@ Environment:
   SCAN_ROOTS    Comma-separated list of directories to scan (in .env.local)
 
 Examples:
-  node scripts/scan.mjs -s data/projects_metadata.jsonl
+  node scripts/scan.mjs -s
   node scripts/scan.mjs -r ~/Projekty ~/Work -s
   node scripts/scan.mjs -f -s
   node scripts/scan.mjs --cleanup
@@ -98,7 +107,7 @@ async function main() {
 
     // Default sync file if --sync is used without path
     if (options.sync === undefined && process.argv.includes('--sync') || process.argv.includes('-s')) {
-        options.sync = path.join(__dirname, '..', 'data', 'projects_metadata.jsonl')
+        options.sync = DEFAULT_SYNC_FILE
     }
 
     console.log('Starting scan...')

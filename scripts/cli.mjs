@@ -5,12 +5,16 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { execFileSync } from 'child_process'
 import { config } from 'dotenv'
+import { ledgerFile, envFile } from '../src/lib/state-dir.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const DATA_FILE = path.join(__dirname, '..', 'data', 'projects_metadata.jsonl')
 
-config({ path: path.join(__dirname, '..', '.env.local'), debug: false })
+// Same ledger the desktop app and MCP see — see src/lib/state-dir.mjs.
+const STATE = { base: path.resolve(__dirname, '..') }
+const DATA_FILE = ledgerFile(STATE)
+
+config({ path: envFile(STATE), debug: false })
 const BASE_DIR = process.env.BASE_DIR || ''
 
 // ANSI colors

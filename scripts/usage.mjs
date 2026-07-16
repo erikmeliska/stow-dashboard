@@ -6,12 +6,18 @@
 // projects by list-price cost plus totals and timing.
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { updateUsage, defaultUsagePaths } from '../src/lib/usage.mjs'
+import { ledgerFile } from '../src/lib/state-dir.mjs'
+
+// Run against the live state dir, not cwd: the desktop app writes its ledger
+// and usage.json to its app-data dir (see src/lib/state-dir.mjs), and pricing
+// the wrong ledger would leave the app showing stale costs.
+const STATE = { base: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') }
 
 async function readProjectDirs() {
-  const file = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
   let text
-  try { text = await readFile(file, 'utf8') } catch { return [] }
+  try { text = await readFile(ledgerFile(STATE), 'utf8') } catch { return [] }
   const dirs = []
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
@@ -28,7 +34,7 @@ const fmtInt = n => Math.round(n).toLocaleString('en-US')
 
 async function main() {
   const rebuild = process.argv.includes('--rebuild')
-  const paths = defaultUsagePaths()
+  const paths = defaultUsagePaths(STATE)
   const projectDirs = await readProjectDirs()
 
   console.log(`Parsing usage${rebuild ? ' (rebuild)' : ''} …`)

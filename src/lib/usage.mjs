@@ -7,6 +7,7 @@ import { Buffer } from 'node:buffer'
 import path from 'node:path'
 import os from 'node:os'
 import { costForClaude, costForCodex } from './usage-pricing.mjs'
+import { dataDir } from './state-dir.mjs'
 
 const ACTIVE_GAP_S = 300
 
@@ -81,14 +82,18 @@ export function splitCompleteLines(buffer) {
 const READ_CHUNK = 4 * 1024 * 1024 // 4 MiB — stream large first-parse files
 
 // Default real-machine paths, shared by the CLI and the refresh routes (Task 3).
-export function defaultUsagePaths() {
+// The ledger lives in the resolved state dir (state-dir.mjs), so the desktop
+// app, the web app, the CLI and the MCP server all price the same transcripts
+// into the same usage.json. `opts` is forwarded (CLIs pass their repo root as
+// `base`); callers inside the Next server pass nothing.
+export function defaultUsagePaths(opts = {}) {
   const home = os.homedir()
-  const dataDir = path.join(process.cwd(), 'data')
+  const dir = dataDir(opts)
   return {
     claudeDir: path.join(home, '.claude', 'projects'),
     codexDir: path.join(home, '.codex', 'sessions'),
-    cacheFile: path.join(dataDir, 'usage-cache.json'),
-    outFile: path.join(dataDir, 'usage.json'),
+    cacheFile: path.join(dir, 'usage-cache.json'),
+    outFile: path.join(dir, 'usage.json'),
   }
 }
 

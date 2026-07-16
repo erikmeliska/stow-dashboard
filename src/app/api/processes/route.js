@@ -1,12 +1,10 @@
 import fs from 'fs/promises'
-import path from 'path'
 import { collectProjectProcesses } from '@/lib/processes.mjs'
-
-const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+import { ledgerFile } from '@/lib/state-dir.mjs'
 
 async function getProjectDirectories() {
     try {
-        const content = await fs.readFile(DATA_FILE, 'utf-8')
+        const content = await fs.readFile(ledgerFile(), 'utf-8')
         return content
             .trim()
             .split('\n')

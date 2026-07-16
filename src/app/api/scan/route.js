@@ -1,14 +1,12 @@
-import path from 'path'
 import fs from 'fs/promises'
 import { ProjectScanner } from '@/scanner/index.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
 import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
-
-const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+import { ledgerFile } from '@/lib/state-dir.mjs'
 
 async function getExistingProjectCount() {
     try {
-        const content = await fs.readFile(SYNC_FILE, 'utf-8')
+        const content = await fs.readFile(ledgerFile(), 'utf-8')
         return content.trim().split('\n').filter(Boolean).length
     } catch {
         return 0
@@ -40,7 +38,7 @@ export async function POST(request) {
 
                 const scanner = new ProjectScanner({
                     scanRoots: SCAN_ROOTS,
-                    syncFile: SYNC_FILE,
+                    syncFile: ledgerFile(),
                     forceUpdate: force,
                     onProgress: (event) => {
                         if (event.type === 'updated' || event.type === 'existing') {

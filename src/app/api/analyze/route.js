@@ -1,9 +1,7 @@
-import path from 'path'
 import { runAnalysisBatch, isAnalysisRunning } from '@/lib/analyze-batch.mjs'
 import { readProjectsData } from '@/lib/projects'
 import { getBaseDir } from '@/lib/scan-roots.mjs'
-
-const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+import { ledgerFile } from '@/lib/state-dir.mjs'
 
 export async function POST(request) {
   const body = await request.json().catch(() => ({}))
@@ -26,7 +24,7 @@ export async function POST(request) {
   // (getAnalysisStatus / GET /api/analyze/status), so we start it without
   // awaiting and let the client poll for progress.
   runAnalysisBatch({
-    dataFile: DATA_FILE,
+    dataFile: ledgerFile(),
     baseDir: getBaseDir(),
     force: force || Boolean(project),
     only,

@@ -1,5 +1,4 @@
 import { promises as fs } from 'fs'
-import path from 'path'
 import Link from 'next/link'
 import { ProjectTable } from './project-table'
 import { readProjectsData } from '@/lib/projects'
@@ -9,17 +8,16 @@ import { SettingsDialog } from '@/components/SettingsDialog'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
 import { getBaseDir } from '@/lib/scan-roots.mjs'
+import { ledgerFile, dataFile } from '@/lib/state-dir.mjs'
 
 export const dynamic = 'force-dynamic'
 
 const OWN_REPOS = ['boys-from-heaven', 'boysfromheaven', 'erikmeliska', 'intelimail']
 const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.MD', 'README', 'readme']
-const SYNC_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
-const USAGE_FILE = path.join(process.cwd(), 'data', 'usage.json')
 
 async function readUsageData() {
     try {
-        return JSON.parse(await fs.readFile(USAGE_FILE, 'utf8'))
+        return JSON.parse(await fs.readFile(dataFile('usage.json'), 'utf8'))
     } catch {
         return { projects: {} }
     }
@@ -39,7 +37,7 @@ async function checkReadmeExists(directory) {
 
 async function getLastSyncTime() {
     try {
-        const stat = await fs.stat(SYNC_FILE)
+        const stat = await fs.stat(ledgerFile())
         return stat.mtime.toISOString()
     } catch {
         return null

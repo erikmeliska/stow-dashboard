@@ -1,8 +1,6 @@
 import { promises as fs } from 'fs'
-import path from 'path'
 import { NextResponse } from 'next/server'
-
-const ENV_PATH = path.join(process.cwd(), '.env.local')
+import { envFile } from '@/lib/state-dir.mjs'
 
 const SETTINGS_KEYS = ['SCAN_ROOTS', 'BASE_DIR', 'TERMINAL_APP', 'IDE_COMMAND', 'TERMINAL_APPS', 'IDE_COMMANDS']
 
@@ -24,7 +22,7 @@ function parseEnvFile(content) {
 
 export async function GET() {
     try {
-        const content = await fs.readFile(ENV_PATH, 'utf-8')
+        const content = await fs.readFile(envFile(), 'utf-8')
         return NextResponse.json(parseEnvFile(content))
     } catch {
         return NextResponse.json({})
@@ -33,11 +31,12 @@ export async function GET() {
 
 export async function POST(request) {
     const newSettings = await request.json()
+    const envPath = envFile()
 
     // Read existing file to preserve comments and unknown keys
     let lines = []
     try {
-        const content = await fs.readFile(ENV_PATH, 'utf-8')
+        const content = await fs.readFile(envPath, 'utf-8')
         lines = content.split('\n')
     } catch {
         // File doesn't exist, start fresh
@@ -64,7 +63,7 @@ export async function POST(request) {
         }
     }
 
-    await fs.writeFile(ENV_PATH, lines.join('\n'))
+    await fs.writeFile(envPath, lines.join('\n'))
 
     // Update process.env so changes take effect immediately
     for (const [key, value] of Object.entries(newSettings)) {

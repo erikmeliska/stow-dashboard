@@ -1,13 +1,12 @@
-import path from 'path'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readOpenWithEnv, isAllowedApp } from '@/lib/open-with.mjs'
+import { envFile } from '@/lib/state-dir.mjs'
 
 const execAsync = promisify(exec)
-const ENV_PATH = path.join(process.cwd(), '.env.local')
 
 export async function GET() {
-    const config = await readOpenWithEnv(ENV_PATH)
+    const config = await readOpenWithEnv(envFile())
     return Response.json(config)
 }
 
@@ -18,7 +17,7 @@ export async function POST(request) {
         return Response.json({ error: 'Directory is required' }, { status: 400 })
     }
 
-    const config = await readOpenWithEnv(ENV_PATH)
+    const config = await readOpenWithEnv(envFile())
 
     try {
         switch (action) {

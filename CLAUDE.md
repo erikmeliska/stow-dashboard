@@ -78,6 +78,8 @@ OLLAMA_URL=http://localhost:11434   # AI-analysis fallback engine for language-r
 OLLAMA_MODEL=llama3                 # Ollama model for the fallback (default)
 ```
 
+`STOW_STATE_DIR` is set in the *process env*, not `.env.local` (it decides which `.env.local` gets read): it overrides where `data/` and `.env.local` live — see "State Dir" under Data Requirements.
+
 ## Architecture
 
 ### Data Flow
@@ -136,6 +138,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/usage.mjs` - AI usage ledger: transcript tail-parse, aggregation, `data/usage.json`
 - `src/lib/usage-pricing.mjs` - Token → USD pricing tables (Claude + Codex)
 - `src/lib/scan-roots.mjs` - Resolves SCAN_ROOTS / project dirs for scan and usage
+- `src/lib/state-dir.mjs` - Resolves the state dir (`data/`, `.env.local`) shared by web app, desktop app, CLIs and MCP
 - `scripts/scan.mjs` - CLI for running the scanner
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
@@ -252,6 +255,17 @@ Tools (21):
 - `find_reusable_assets` — search AI-discovered harvestable building blocks across all projects
 
 ## Data Requirements
+
+### State Dir (where data/ and .env.local actually live)
+
+All writable state — `data/projects_metadata.jsonl`, `data/usage.json`, `data/usage-cache.json`, `data/run-logs/`, `.env.local` — lives in one *state dir*, resolved by `src/lib/state-dir.mjs`. **Never build these paths by hand** (`path.join(process.cwd(), 'data', …)` or module-relative): the desktop app can't write inside its own bundle, so it keeps state in `~/Library/Application Support/StowDashboardDeno`, and hand-rolled paths are how the web app, the CLIs and the MCP server ended up reading two different ledgers.
+
+Resolution order (`resolveStateDir({ base })`):
+1. `STOW_STATE_DIR` — explicit override; the Deno shell sets it, and `STOW_STATE_DIR=. npm run scan` forces repo-local state.
+2. The desktop app-data dir, if it already holds a scanned ledger.
+3. `base` — `process.cwd()` inside the Next server (the default), the repo root for CLIs and the MCP server (they run with an arbitrary cwd, so they must pass it).
+
+Use `ledgerFile()`, `dataFile(name)`, `dataDir()`, `envFile()` — and call them at request/call time, not at module eval, since the compiled desktop app preloads route modules once at boot (same reason as `scan-roots.mjs`).
 
 The app expects `data/projects_metadata.jsonl` to exist. Each line is a JSON object with project metadata including:
 - `directory`, `project_name`, `description`

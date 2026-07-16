@@ -1,10 +1,9 @@
 import fs from 'fs/promises'
-import path from 'path'
+import { ledgerFile } from './state-dir.mjs'
 
 export async function readProjectsData() {
     try {
-        const dataPath = path.join(process.cwd(), 'data/projects_metadata.jsonl')
-        const fileContent = await fs.readFile(dataPath, 'utf-8')
+        const fileContent = await fs.readFile(ledgerFile(), 'utf-8')
         
         // Parse JSONL file
         const projects = fileContent

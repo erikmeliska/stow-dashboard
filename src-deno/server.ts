@@ -1,11 +1,15 @@
 /**
  * Starts the Next.js standalone server in-process (Deno Node compat) on PORT.
  *
- * The app resolves data/projects_metadata.jsonl and .env.local via
- * process.cwd() (see src/lib/projects.js and several src/app/api/* routes),
- * and the scan API writes back to cwd. A compiled binary's embedded VFS may
- * be read-only, so on startup we sync writable state to
- * ~/Library/Application Support/StowDashboardDeno.
+ * The app resolves data/projects_metadata.jsonl and .env.local through
+ * src/lib/state-dir.mjs, whose default base is process.cwd(). A compiled
+ * binary's embedded VFS may be read-only, so on startup we sync writable
+ * state to ~/Library/Application Support/StowDashboardDeno and point the app
+ * at it — both by pinning cwd (below) and by exporting STOW_STATE_DIR, which
+ * state-dir.mjs honours ahead of cwd. Out-of-process consumers (the MCP
+ * server, the CLIs) don't inherit that env var; they find the same dir via
+ * state-dir.mjs's app-data detection, which is what keeps them from reading
+ * a second, stale ledger in the repo.
  *
  * Two things Next.js standalone's server.js does that we must work around:
  *
@@ -139,6 +143,14 @@ export async function startServer(): Promise<void> {
   for (const [key, value] of Object.entries(env)) Deno.env.set(key, value);
   Deno.env.set("PORT", String(PORT));
   Deno.env.set("HOSTNAME", "localhost");
+
+  // Announce the state dir explicitly rather than relying on the pinned cwd
+  // alone: src/lib/state-dir.mjs resolves every data/.env.local path through
+  // STOW_STATE_DIR first, so the Next server (in-process) and anything it
+  // spawns stay on this dir even if cwd ever moves. Separate processes with
+  // their own cwd — the MCP server, the CLIs — don't inherit this env; they
+  // find the same dir via state-dir.mjs's app-data detection.
+  Deno.env.set("STOW_STATE_DIR", appData);
 
   console.error(`[Stow/Deno] app-data dir=${appData}`);
   console.error(`[Stow/Deno] starting standalone server from ${STANDALONE_DIR}`);

@@ -13,7 +13,12 @@ import { readFile, writeFile, mkdir } from 'fs/promises'
 import { config } from 'dotenv'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-config({ path: path.join(__dirname, '..', '.env.local'), debug: false })
+const REPO_ROOT = path.resolve(__dirname, '..')
+
+// Analyze whatever ledger is live (the desktop app's app-data dir when it has
+// one, else this repo's data/) — see src/lib/state-dir.mjs.
+const { ledgerFile, envFile } = await import('../src/lib/state-dir.mjs')
+config({ path: envFile({ base: REPO_ROOT }), debug: false })
 
 const { ApfelError, execClosedStdin } = await import('../src/lib/analyzer.mjs')
 const { runAnalysisBatch } = await import('../src/lib/analyze-batch.mjs')
@@ -22,7 +27,7 @@ const { runAnalysisBatch } = await import('../src/lib/analyze-batch.mjs')
 // (execClosedStdin) closes it so the child runs. Reuse it here for the preflight.
 const exec = execClosedStdin
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'projects_metadata.jsonl')
+const DATA_FILE = ledgerFile({ base: REPO_ROOT })
 const RESULTS_FILE = path.join(__dirname, '..', 'test', 'fixtures', 'pilot-results.json')
 const BASE_DIR = process.env.BASE_DIR || path.join(os.homedir(), 'Projekty')
 

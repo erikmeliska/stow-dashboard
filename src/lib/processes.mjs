@@ -3,9 +3,10 @@ import { promisify } from 'util'
 import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { ledgerFile } from './state-dir.mjs'
 
 const execAsync = promisify(exec)
-const DATA_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/projects_metadata.jsonl')
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 // Coarse, pure command-string classifier (claude | dev-server | terminal | process).
 // Standalone utility for display/labeling surfaces; NOT part of the parent-process-tree
@@ -21,7 +22,7 @@ export function classifyHost(command) {
 
 async function getProjectDirectories() {
     try {
-        const content = await fs.readFile(DATA_FILE, 'utf-8')
+        const content = await fs.readFile(ledgerFile({ base: REPO_ROOT }), 'utf-8')
         return content
             .trim()
             .split('\n')

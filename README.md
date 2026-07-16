@@ -150,17 +150,21 @@ For each project, it extracts:
 
 ```bash
 # Scan using SCAN_ROOTS from .env.local
-node scripts/scan.mjs -s data/projects_metadata.jsonl
+node scripts/scan.mjs -s
 
 # Override scan roots
-node scripts/scan.mjs -r ~/projects ~/work -s data/projects_metadata.jsonl
+node scripts/scan.mjs -r ~/projects ~/work -s
 
 # Force update all metadata
-node scripts/scan.mjs -f -s data/projects_metadata.jsonl
+node scripts/scan.mjs -f -s
 
 # Clean up .project_meta.json files
 node scripts/scan.mjs --cleanup
 ```
+
+`-s` writes to the active state dir's ledger — the desktop app's app-data dir
+when it holds one, else this repo's `data/`. Pass `STOW_STATE_DIR=.` to force
+repo-local state, or `-s <path>` for an explicit file.
 
 ### API
 
@@ -211,6 +215,13 @@ data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
 ```
 
+Writable state (`data/`, `.env.local`) lives in a *state dir* resolved by
+`src/lib/state-dir.mjs` — this repo when you run it from here, or
+`~/Library/Application Support/StowDashboardDeno` once the desktop app has
+scanned. `STOW_STATE_DIR` overrides it. Resolve paths through that module
+rather than building them from `process.cwd()`, so the web app, desktop app,
+CLIs and MCP server all share one ledger.
+
 ## CLI
 
 Stow includes a terminal CLI for quick access to project data without opening the dashboard.
@@ -246,7 +257,7 @@ stow quickscan       # Refresh git info for running projects only
 
 Directories are clickable (OSC 8 terminal hyperlinks) — click to open in Finder.
 
-No server needed — reads directly from `data/projects_metadata.jsonl` and detects processes via `lsof`.
+No server needed — reads the state dir's `data/projects_metadata.jsonl` directly (see Project Structure) and detects processes via `lsof`.
 
 ## MCP Server
 

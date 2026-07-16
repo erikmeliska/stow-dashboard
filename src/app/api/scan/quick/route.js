@@ -1,4 +1,3 @@
-import path from 'path'
 import fs from 'fs/promises'
 import { simpleGit } from 'simple-git'
 import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
@@ -6,8 +5,7 @@ import { collectProjectProcesses } from '@/lib/processes.mjs'
 import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
 import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
-
-const DATA_FILE = path.join(process.cwd(), 'data', 'projects_metadata.jsonl')
+import { ledgerFile } from '@/lib/state-dir.mjs'
 
 // Read per-request so a SCAN_ROOTS change from the Settings dialog applies
 // without a server restart; strip trailing slashes for path-prefix matching.
@@ -98,8 +96,11 @@ export async function POST() {
 
             try {
                 const SCAN_ROOTS = scanRoots()
+                // Resolve once per cycle so the read and the write below can't
+                // straddle two different state dirs.
+                const dataFile = ledgerFile()
                 // Load existing projects
-                const content = await fs.readFile(DATA_FILE, 'utf-8')
+                const content = await fs.readFile(dataFile, 'utf-8')
                 const projects = content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
                 const projectMap = new Map(projects.map(p => [p.directory, p]))
 
@@ -170,7 +171,7 @@ export async function POST() {
                 // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
                 const lines = Array.from(projectMap.values()).map(p => JSON.stringify(p))
-                await fs.writeFile(DATA_FILE, lines.join('\n') + '\n')
+                await fs.writeFile(dataFile, lines.join('\n') + '\n')
 
                 // Regroup so newly discovered projects claim their processes in the payload
                 const finalProcesses = discovered.length > 0

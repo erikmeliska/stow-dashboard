@@ -22,6 +22,7 @@ import { verifyTask, auditTasks, generateChangelog } from '../lib/history.mjs'
 import { writeBrief, openInClaudeDesktop } from '../lib/dispatch.mjs'
 import { readOpenWithEnv } from '../lib/open-with.mjs'
 import { defaultUsagePaths } from '../lib/usage.mjs'
+import { ledgerFile, envFile } from '../lib/state-dir.mjs'
 import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
@@ -31,10 +32,16 @@ process.env.PATH = `${process.env.PATH}:/usr/sbin:/sbin`
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = path.resolve(__dirname, '../..')
-const DATA_FILE = path.join(PROJECT_ROOT, 'data', 'projects_metadata.jsonl')
+
+// The MCP server is spawned by an AI client with an arbitrary cwd, so state
+// can't be resolved from cwd — pass the repo as the fallback base. The
+// desktop app's app-data dir still wins when it holds the live ledger, which
+// is what keeps the MCP tools and the Deno app on one dataset.
+const STATE = { base: PROJECT_ROOT }
+const DATA_FILE = ledgerFile(STATE)
 
 // Load environment from .env.local
-const envPath = path.join(PROJECT_ROOT, '.env.local')
+const envPath = envFile(STATE)
 try {
     const envContent = await fs.readFile(envPath, 'utf-8')
     for (const line of envContent.split('\n')) {
@@ -66,7 +73,7 @@ async function loadProjects() {
 // Load the AI usage ledger (data/usage.json); tolerate missing/broken file.
 async function loadUsage() {
     try {
-        const { outFile } = defaultUsagePaths()
+        const { outFile } = defaultUsagePaths(STATE)
         const raw = JSON.parse(await fs.readFile(outFile, 'utf-8'))
         return raw && typeof raw.projects === 'object' && raw.projects !== null ? raw : { projects: {} }
     } catch {
