@@ -23,7 +23,7 @@ Available as a **web app** or **native desktop app** (macOS).
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
 - **Dark Mode** - Full dark mode support
-- **Desktop App** - Native macOS app with system tray (Tauri)
+- **Desktop App** - Native macOS app with system tray (Deno; Tauri kept as fallback)
 
 ## Tech Stack
 
@@ -31,74 +31,98 @@ Available as a **web app** or **native desktop app** (macOS).
 - **UI:** [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS](https://tailwindcss.com/)
 - **Table:** [@tanstack/react-table](https://tanstack.com/table)
 - **Icons:** [Lucide React](https://lucide.dev/)
-- **Desktop:** [Tauri 2](https://tauri.app/) (optional, for native app)
+- **Desktop:** [`deno desktop`](https://docs.deno.com/runtime/desktop/) (Deno 2.9+, shipped shell) — [Tauri 2](https://tauri.app/) kept as fallback
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Node.js 20.9+** - Required for web app and desktop app
-- **Rust** - Required only for building the desktop app ([install](https://rustup.rs/))
+- **Node.js 20.9+** — web app, scanner, CLI, MCP server
+- **Deno 2.9+** — only for the desktop app ([install](https://docs.deno.com/runtime/getting_started/installation/)); `deno desktop` needs 2.9 or newer
+- **Rust** — only if you build the Tauri fallback shell ([install](https://rustup.rs/))
 
-### Installation
+### First run
 
-1. Clone the repository:
+1. Clone and install:
    ```bash
-   git clone https://github.com/yourusername/stow-dashboard.git
+   git clone https://github.com/erikmeliska/stow-dashboard.git
    cd stow-dashboard
-   ```
-
-2. Install dependencies:
-   ```bash
    npm install
    ```
 
-3. Configure environment in `.env.local`:
+2. Configure `.env.local` — at minimum tell it where your projects live:
    ```bash
    cp .env.example .env.local
-   # Edit .env.local with your directories
    ```
 
    ```env
-   SCAN_ROOTS=/Users/you/projects,/Users/you/work
-   BASE_DIR=/Users/you/projects
-   TERMINAL_APP=Terminal   # or Warp, iTerm
-   IDE_COMMAND=code        # or cursor, zed
+   SCAN_ROOTS=/Users/you/projects,/Users/you/work   # comma-separated, what gets scanned
+   BASE_DIR=/Users/you/projects                     # trims this prefix in the UI
+   IDE_COMMANDS=code,cursor,zed                     # first = default
+   TERMINAL_APPS=Terminal,Warp                      # first = default
    ```
 
-4. Run the initial scan:
+3. Scan your projects — this builds the ledger everything else reads:
    ```bash
-   npm run scan
+   npm run scan          # ~1000 projects takes a few minutes; repeat runs are ~8x faster
    ```
 
-### Running the Dashboard
+4. Start it:
+   ```bash
+   npm run dev           # http://localhost:3089
+   ```
 
-#### Option 1: Web App (Development)
+That's a working dashboard. For the desktop app, keep going below.
+
+### Running the dashboard
+
+| | Command | URL |
+|---|---|---|
+| **Dev** (hot reload) | `npm run dev` | http://localhost:3089 |
+| **Web production** | `npm run build && npm run start` | http://localhost:3088 |
+| **Desktop app** | see below | its own window |
+
+Dev and production use different ports on purpose, so you can run both at once.
+
+### Desktop app (macOS)
+
+The shipped desktop shell is built with `deno desktop` — a real macOS `.app`
+with a system tray, running the Next.js server in-process under Deno's Node
+compatibility layer. You need **Deno 2.9+** to *build* it; the finished app
+bundles its own server, so it doesn't need Node installed to run. Tauri is kept
+as a fallback shell; see [ADR 0002](docs/adr/0002-switch-desktop-shell-to-deno.md).
+
+**Build and install:**
+
 ```bash
-npm run dev
-# Open http://localhost:3089
+npm run deno:build     # Next build + assemble bundle + compile the .app
+ditto "dist/Stow Dashboard Deno.app" "/Applications/Stow Dashboard Deno.app"
+open "/Applications/Stow Dashboard Deno.app"
 ```
 
-#### Option 2: Web App (Production)
+Use `ditto`, not `cp` — it preserves the bundle's structure and signature.
+Re-run the same commands to update an existing install; your scanned data and
+settings live outside the bundle and survive (see below).
+
+**Iterating on it:**
+
 ```bash
-npm run build
-npm run start
-# Open http://localhost:3088
+npm run deno:prepare   # rebuild only the bundled server (after code changes)
+npm run deno:run       # compile + open the app, skipping the prepare step
 ```
 
-#### Option 3: Desktop App (Recommended)
-```bash
-npm run tauri:build
-# Find the app at:
-# - macOS: src-tauri/target/release/bundle/macos/Stow Dashboard.app
-# - DMG:   src-tauri/target/release/bundle/dmg/Stow Dashboard_*.dmg
-```
+`deno:run` does *not* rebuild the bundle, so on a fresh clone it fails —
+`src-deno/standalone/` is gitignored and only `deno:prepare` (or `deno:build`,
+which includes it) creates it. Use `deno:build` the first time.
 
-The desktop app:
-- Runs as a **system tray icon** (click to show/hide window)
-- Bundles the Next.js server (~19MB DMG)
-- Uses your system's Node.js (not bundled)
-- Includes your `.env.local` settings
+**What to expect:**
+- Tray icon: click to show/hide the window, right-click for Show/Hide/Rescan/Quit
+- On first launch it copies `data/` and `.env.local` out of the bundle into
+  `~/Library/Application Support/StowDashboardDeno` and works there from then on
+  — which is why step 3 above (`npm run scan`) is worth doing before you build.
+  Later rebuilds never overwrite that state; the app owns it.
+- It picks its own port at runtime rather than the requested 3087 — a
+  `deno desktop` behaviour, not a bug. The window finds it automatically.
 
 ## Scripts
 
@@ -111,7 +135,12 @@ npm run build         # Build Next.js for production
 npm run start         # Start production server on port 3088
 npm run start:bg      # Start production server in background
 
-# Desktop App (recommended)
+# Desktop App (Deno — the shipped shell, needs Deno 2.9+)
+npm run deno:build    # Build dist/Stow Dashboard Deno.app (includes deno:prepare)
+npm run deno:prepare  # Rebuild the bundled Next.js server only
+npm run deno:run      # Compile + open the app (skips prepare)
+
+# Desktop App (Tauri — fallback shell, needs Rust)
 npm run tauri:build   # Build native macOS app + DMG
 npm run tauri:dev     # Run desktop app in dev mode
 
@@ -119,12 +148,18 @@ npm run tauri:dev     # Run desktop app in dev mode
 npm run scan          # Scan projects and generate metadata
 npm run scan:force    # Force rescan all projects
 
+# AI analysis & usage
+npm run analyze       # AI project analysis batch (incremental)
+npm run usage         # Rebuild the AI usage/cost ledger from CLI transcripts
+
 # Other
 npm run mcp           # Start MCP server for AI assistants
+npm test              # Run tests (node --test)
 npm run lint          # Run ESLint
 ```
 
-**Ports:** Dev uses `3089`, Production/Tauri uses `3088` (so they don't conflict).
+**Ports:** Dev uses `3089`, web production and Tauri use `3088`. The Deno app
+requests `3087` but binds a runtime-assigned port instead (see Desktop app above).
 
 ## Scanner
 
@@ -203,13 +238,19 @@ src/
 │   └── server.mjs            # MCP server for AI assistants
 ├── scanner/                  # Project scanner module
 └── lib/                      # Utilities
-src-tauri/                    # Tauri desktop app (Rust)
+src-deno/                     # Deno desktop app (shipped shell)
+├── main.ts                   # Entrypoint (server start, window, tray)
+├── server.ts                 # Runs Next.js standalone in-process
+├── tray.ts                   # Tray menu
+└── standalone/               # Assembled bundle (gitignored, built by deno:prepare)
+src-tauri/                    # Tauri desktop app (Rust, fallback shell)
 ├── src/lib.rs                # Main app logic
 ├── tauri.conf.json           # Tauri configuration
 └── icons/                    # App icons
 scripts/
 ├── cli.mjs                   # CLI tool (stow command)
 ├── scan.mjs                  # CLI scanner script
+├── prepare-deno.mjs          # Prepare standalone for Deno
 └── prepare-tauri.mjs         # Prepare standalone for Tauri
 data/
 └── projects_metadata.jsonl   # Generated metadata (gitignored)
@@ -318,12 +359,21 @@ npm run mcp
 
 ### Environment Variables
 
+Set these in `.env.local` (the desktop app edits its own copy — see below):
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SCAN_ROOTS` | Comma-separated directories to scan | - |
-| `BASE_DIR` | Base path for relative directory display | - |
-| `TERMINAL_APP` | Terminal app for "Open in Terminal" | `Terminal` |
-| `IDE_COMMAND` | IDE command for "Open in IDE" | `code` |
+| `SCAN_ROOTS` | Comma-separated directories to scan | `~/Projekty` |
+| `BASE_DIR` | Base path for relative directory display | `~/Projekty` |
+| `IDE_COMMANDS` | Comma-separated IDE commands, first = default (legacy `IDE_COMMAND` still honored) | `code` |
+| `TERMINAL_APPS` | Comma-separated terminal apps, first = default (legacy `TERMINAL_APP` still honored) | `Terminal` |
+| `OLLAMA_URL` | Ollama endpoint for the AI-analysis fallback | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama model for the fallback | `llama3` |
+
+`STOW_STATE_DIR` is set in the *process env*, not `.env.local` — it decides
+which `.env.local` gets read in the first place. It overrides where `data/` and
+`.env.local` live (see Project Structure); e.g. `STOW_STATE_DIR=. npm run scan`
+forces repo-local state instead of the desktop app's.
 
 ## Roadmap
 
