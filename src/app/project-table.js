@@ -30,7 +30,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import { formatTimeAgo, getGitProvider, docScoreColor, formatUsd } from "@/lib/utils"
+import { formatTimeAgo, getGitProvider, docScoreColor, formatUsdWithUnpriced } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -976,7 +976,7 @@ export function ProjectTable({ projects, ownRepos }) {
                 const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtTokens(inTokens)} out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
                 return (
                     <span className="text-sm whitespace-nowrap tabular-nums" title={title}>
-                        {hasUnpriced ? '~' : ''}{formatUsd(total)}
+                        {formatUsdWithUnpriced(total, hasUnpriced)}
                     </span>
                 )
             },

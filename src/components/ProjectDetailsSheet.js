@@ -20,7 +20,7 @@ import {
     RefreshCw,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { formatTimeAgo, docScoreColor, formatUsd } from "@/lib/utils"
+import { formatTimeAgo, docScoreColor, formatUsd, formatUsdWithUnpriced } from "@/lib/utils"
 
 import {
     Sheet,
@@ -874,7 +874,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                             <StatItem label="Active time" value={`${activeHours} h`} />
                                             <StatItem
                                                 label="Total cost"
-                                                value={`${hasUnpriced ? '~' : ''}${formatUsd(totalCost)}`}
+                                                value={formatUsdWithUnpriced(totalCost, hasUnpriced)}
                                                 className="font-semibold text-green-600 dark:text-green-400"
                                             />
                                         </div>
@@ -945,7 +945,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                                 {s.tool}
                                                             </span>
                                                             <span className="text-muted-foreground tabular-nums w-12 text-right">{(s.activeMinutes ?? 0).toFixed(0)} min</span>
-                                                            <span className="tabular-nums w-12 text-right">{unpriced.has(s.model) ? '~' : ''}{formatUsd(s.costUsd ?? 0)}</span>
+                                                            <span className="tabular-nums w-12 text-right">{formatUsdWithUnpriced(s.costUsd ?? 0, unpriced.has(s.model))}</span>
                                                         </div>
                                                     ))}
                                                 </div>
