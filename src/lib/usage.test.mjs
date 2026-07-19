@@ -53,6 +53,69 @@ test('parseCodexLines: cumulative token_count REPLACES, session_meta cwd', () =>
   assert.equal(s.activeSeconds, 120)
 })
 
+// Codex per-model attribution helpers. `turn_context` is a TOP-LEVEL type and
+// its payload carries no `type` field — a parser mirroring the `token_count`
+// branch (`pay.type === ...`) would match zero lines.
+const ctx = (model, ts) => JSON.stringify({ timestamp: ts, type: 'turn_context', payload: { cwd: '/p/b', model, approval_policy: 'on-request', summary: 'auto' } })
+const tcl = (inp, cached, out, ts) => JSON.stringify({ timestamp: ts, payload: { type: 'token_count', info: { total_token_usage: { input_tokens: inp, cached_input_tokens: cached, output_tokens: out } } } })
+
+test('parseCodexLines: turn_context switches model, deltas split across models', () => {
+  const s = newFileState('codex')
+  parseCodexLines([
+    ctx('gpt-5.1-codex-max', '2026-07-10T10:00:00Z'),
+    tcl(100, 10, 5, '2026-07-10T10:01:00Z'),
+    tcl(300, 200, 40, '2026-07-10T10:02:00Z'),
+    ctx('gpt-5.3-codex', '2026-07-10T10:03:00Z'),
+    tcl(500, 250, 90, '2026-07-10T10:04:00Z'),
+  ], s)
+  assert.deepEqual(s.codex, { input: 500, cachedInput: 250, output: 90 })
+  assert.deepEqual(s.codexByModel, {
+    'gpt-5.1-codex-max': { input: 300, cachedInput: 200, output: 40 },
+    'gpt-5.3-codex': { input: 200, cachedInput: 50, output: 50 },
+  })
+  assert.equal(s.codexModel, 'gpt-5.3-codex')
+})
+
+test('parseCodexLines: duplicate token_count contributes 0 (delta, not last_token_usage)', () => {
+  const s = newFileState('codex')
+  parseCodexLines([
+    ctx('gpt-5.1-codex-max', '2026-07-10T10:00:00Z'),
+    tcl(100, 10, 5, '2026-07-10T10:01:00Z'),
+    tcl(100, 10, 5, '2026-07-10T10:02:00Z'), // duplicate: same cumulative total
+    tcl(100, 10, 5, '2026-07-10T10:03:00Z'), // and another
+  ], s)
+  assert.deepEqual(s.codexByModel, { 'gpt-5.1-codex-max': { input: 100, cachedInput: 10, output: 5 } })
+  assert.deepEqual(s.codex, { input: 100, cachedInput: 10, output: 5 })
+})
+
+test('parseCodexLines: split parse equals single parse (tail-parse identity)', () => {
+  const lines = [
+    ctx('gpt-5.1-codex-max', '2026-07-10T10:00:00Z'),
+    tcl(100, 10, 5, '2026-07-10T10:01:00Z'),
+    tcl(300, 200, 40, '2026-07-10T10:02:00Z'),
+    ctx('gpt-5.3-codex', '2026-07-10T10:03:00Z'),
+    tcl(500, 250, 90, '2026-07-10T10:04:00Z'),
+  ]
+  const whole = parseCodexLines(lines, newFileState('codex'))
+  const split = newFileState('codex')
+  parseCodexLines(lines.slice(0, 2), split)
+  parseCodexLines(lines.slice(2), split)
+  assert.deepEqual(split, whole)
+})
+
+test('parseCodexLines: token_count before any turn_context lands in "unknown"', () => {
+  const s = newFileState('codex')
+  parseCodexLines([
+    tcl(100, 10, 5, '2026-07-10T10:01:00Z'),
+    ctx('gpt-5.1-codex-max', '2026-07-10T10:02:00Z'),
+    tcl(180, 30, 25, '2026-07-10T10:03:00Z'),
+  ], s)
+  assert.deepEqual(s.codexByModel, {
+    unknown: { input: 100, cachedInput: 10, output: 5 },
+    'gpt-5.1-codex-max': { input: 80, cachedInput: 20, output: 20 },
+  })
+})
+
 test('splitCompleteLines returns only complete lines and correct byte count', () => {
   const buf = Buffer.from('ahoj\nsvet čau\npartial', 'utf8')
   const { lines, consumedBytes } = splitCompleteLines(buf)
@@ -63,7 +126,75 @@ test('splitCompleteLines returns only complete lines and correct byte count', ()
 import { mkdtemp, writeFile, appendFile, mkdir, readFile, rm } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { updateUsage } from './usage.mjs'
+import { updateUsage, aggregateUsage } from './usage.mjs'
+
+const codexEntry = state => ({ tool: 'codex', state: { ...newFileState('codex'), cwd: '/p/a', ...state } })
+
+test('aggregateUsage: legacy codex state without codexByModel falls into "unknown"', () => {
+  // A cache written before Task 3: `codex` totals exist, `codexByModel` does not.
+  // The conservation guard must attribute the whole total rather than dropping it.
+  const legacy = { tool: 'codex', state: { tool: 'codex', cwd: '/p/a', models: {}, codex: { input: 900, cachedInput: 400, output: 70 }, firstTs: null, lastTs: null, prevTs: null, activeSeconds: 0, sessions: 1 } }
+  const out = aggregateUsage({ files: { '/f/legacy.jsonl': legacy } }, ['/p/a'])
+  const p = out.projects['/p/a']
+  assert.deepEqual(p.byCodexModel.unknown, { input: 900, cachedInput: 400, output: 70, costUsd: 0 })
+  assert.ok(p.unpricedModels.includes('unknown'))
+  assert.equal(p.tokens.codexInput, 900)
+})
+
+test('aggregateUsage: byCodexModel sums equal the codex token totals; buckets priced per model', () => {
+  const out = aggregateUsage({
+    files: {
+      '/f/a.jsonl': codexEntry({
+        codex: { input: 500, cachedInput: 250, output: 90 },
+        codexByModel: {
+          'gpt-5.1-codex-max': { input: 300, cachedInput: 200, output: 40 },
+          'gpt-5.3-codex': { input: 200, cachedInput: 50, output: 50 },
+        },
+      }),
+    },
+  }, ['/p/a'])
+  const p = out.projects['/p/a']
+  const sum = k => Object.values(p.byCodexModel).reduce((n, b) => n + b[k], 0)
+  assert.equal(sum('input'), p.tokens.codexInput)
+  assert.equal(sum('cachedInput'), p.tokens.codexCachedInput)
+  assert.equal(sum('output'), p.tokens.codexOutput)
+  // Both models are in the pricing snapshot → priced, and the per-bucket costs
+  // roll up to the session's unverified cost.
+  assert.ok(p.byCodexModel['gpt-5.1-codex-max'].costUsd > 0)
+  assert.ok(p.byCodexModel['gpt-5.3-codex'].costUsd > 0)
+  assert.equal(p.unpricedModels.length, 0)
+  const bucketSum = Object.values(p.byCodexModel).reduce((n, b) => n + b.costUsd, 0)
+  assert.ok(Math.abs(p.costUnverifiedUsd - bucketSum) < 1e-12)
+  assert.ok(Math.abs(p.sessionList[0].costUsd - bucketSum) < 1e-12)
+  // Dominant model by output tokens.
+  assert.equal(p.sessionList[0].model, 'gpt-5.3-codex')
+})
+
+test('aggregateUsage: uncovered codex remainder is conserved into "unknown"', () => {
+  const out = aggregateUsage({
+    files: {
+      '/f/a.jsonl': codexEntry({
+        codex: { input: 500, cachedInput: 250, output: 90 },
+        codexByModel: { 'gpt-5.1-codex-max': { input: 300, cachedInput: 200, output: 40 } },
+      }),
+    },
+  }, ['/p/a'])
+  const p = out.projects['/p/a']
+  assert.deepEqual(p.byCodexModel.unknown, { input: 200, cachedInput: 50, output: 50, costUsd: 0 })
+  const sum = k => Object.values(p.byCodexModel).reduce((n, b) => n + b[k], 0)
+  assert.equal(sum('input'), p.tokens.codexInput)
+  assert.equal(sum('output'), p.tokens.codexOutput)
+})
+
+test('aggregateUsage: the conservation guard does not mutate persisted ledger state', () => {
+  const entry = codexEntry({
+    codex: { input: 500, cachedInput: 250, output: 90 },
+    codexByModel: { 'gpt-5.1-codex-max': { input: 300, cachedInput: 200, output: 40 } },
+  })
+  const before = JSON.stringify(entry.state)
+  aggregateUsage({ files: { '/f/a.jsonl': entry } }, ['/p/a'])
+  assert.equal(JSON.stringify(entry.state), before)
+})
 
 async function makeStores() {
   const base = await mkdtemp(path.join(os.tmpdir(), 'stow-usage-'))

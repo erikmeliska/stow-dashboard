@@ -12,8 +12,10 @@ import { dataDir } from './state-dir.mjs'
 const ACTIVE_GAP_S = 300
 
 export function newFileState(tool) {
-  return { tool, cwd: null, models: {}, codex: null, firstTs: null, lastTs: null, prevTs: null, activeSeconds: 0, sessions: 1 }
+  return { tool, cwd: null, models: {}, codex: null, codexModel: null, codexByModel: {}, firstTs: null, lastTs: null, prevTs: null, activeSeconds: 0, sessions: 1 }
 }
+
+const ZERO_CODEX = { input: 0, cachedInput: 0, output: 0 }
 
 function tickActive(state, ts) {
   if (!ts) return
@@ -52,19 +54,41 @@ export function parseClaudeLines(lines, state) {
 }
 
 export function parseCodexLines(lines, state) {
+  // Migrate cached states written before per-model attribution existed. Their
+  // `codex` totals stay authoritative; the missing buckets are reconstructed
+  // from here on, and addSession's conservation guard covers the pre-existing
+  // remainder. (`??=` in place — bumping cache.version would drop the durable
+  // `missing: true` ghosts.)
+  state.codexModel ??= null
+  state.codexByModel ??= {}
+
   for (const line of lines) {
     let d
     try { d = JSON.parse(line) } catch { continue }
     const pay = (d.payload && typeof d.payload === 'object') ? d.payload : {}
     if (!state.cwd && typeof pay.cwd === 'string') state.cwd = pay.cwd
     tickActive(state, d.timestamp)
+    // `turn_context` is a TOP-LEVEL type and its payload has no `type` field —
+    // it records the model for the turns that follow, until the next one.
+    if (d.type === 'turn_context' && typeof pay.model === 'string') state.codexModel = pay.model
     if (pay.type === 'token_count' && pay.info?.total_token_usage) {
       const tu = pay.info.total_token_usage
-      state.codex = {
+      const cur = {
         input: tu.input_tokens || 0,
         cachedInput: tu.cached_input_tokens || 0,
         output: tu.output_tokens || 0,
       }
+      // Attribute the DELTA against the previous cumulative, not
+      // `info.last_token_usage`: Codex re-emits duplicate token_count events
+      // that repeat the previous turn's `last` while `total` is unchanged, so
+      // summing `last` over-counts. A delta is 0 for those and exact otherwise.
+      const prev = state.codex ?? ZERO_CODEX
+      const b = state.codexByModel[state.codexModel ?? 'unknown'] ??= { input: 0, cachedInput: 0, output: 0 }
+      b.input += Math.max(0, cur.input - prev.input)
+      b.cachedInput += Math.max(0, cur.cachedInput - prev.cachedInput)
+      b.output += Math.max(0, cur.output - prev.output)
+      // `state.codex` keeps its exact meaning: newest cumulative REPLACES.
+      state.codex = cur
     }
   }
   return state
@@ -227,6 +251,7 @@ function newAccumulator() {
     costUsd: 0,
     costUnverifiedUsd: 0,
     byModel: {},
+    byCodexModel: {},
     unpricedModels: new Set(),
     lastActivity: null,
     sessionList: [],
@@ -240,7 +265,7 @@ function addSession(acc, absPath, entry) {
   if (st.lastTs && (!acc.lastActivity || st.lastTs > acc.lastActivity)) acc.lastActivity = st.lastTs
 
   let fileCostUsd = 0, fileCostUnverified = 0, tokensIn = 0, tokensOut = 0
-  let model // dominant model for a claude session (by output tokens)
+  let model // dominant model for the session (by output tokens)
 
   if (st.tool === 'claude') {
     let bestOut = -1
@@ -265,13 +290,42 @@ function addSession(acc, absPath, entry) {
     acc.tokens.codexInput += t.input
     acc.tokens.codexCachedInput += t.cachedInput
     acc.tokens.codexOutput += t.output
-    // BRIDGE (Task 2): per-session Codex model attribution is Task 3's job —
-    // st.codexModel doesn't exist yet, so bucket it under 'unknown' to avoid
-    // polluting unpricedModels with null. "unpriced, never $0" beats silently
-    // mispricing with the wrong model's rate. Task 3 re-buckets from 'unknown'.
-    const c = costForCodex(t, st.codexModel)
-    if (c === null) acc.unpricedModels.add(st.codexModel ?? 'unknown')
-    else { acc.costUnverifiedUsd += c; fileCostUnverified = c }
+
+    // COPY the per-model buckets: `st` is the persisted cache state that gets
+    // written back to disk, and the conservation guard below adds to them.
+    const buckets = {}
+    const covered = { input: 0, cachedInput: 0, output: 0 }
+    for (const [id, b] of Object.entries(st.codexByModel || {})) {
+      const c = { input: b.input || 0, cachedInput: b.cachedInput || 0, output: b.output || 0 }
+      buckets[id] = c
+      covered.input += c.input; covered.cachedInput += c.cachedInput; covered.output += c.output
+    }
+
+    // Conservation guard: per-model deltas re-sum to the cumulative total in
+    // practice, but a legacy state carries no buckets at all, and a truncated
+    // or rewritten transcript could leave a gap. Anything the buckets don't
+    // cover goes to `unknown` so the per-model view always re-sums to
+    // `tokens.codex*` and no tokens are silently dropped.
+    const rem = {
+      input: Math.max(0, t.input - covered.input),
+      cachedInput: Math.max(0, t.cachedInput - covered.cachedInput),
+      output: Math.max(0, t.output - covered.output),
+    }
+    if (rem.input || rem.cachedInput || rem.output) {
+      const u = buckets.unknown ??= { input: 0, cachedInput: 0, output: 0 }
+      u.input += rem.input; u.cachedInput += rem.cachedInput; u.output += rem.output
+    }
+
+    let bestOut = -1
+    for (const [id, b] of Object.entries(buckets)) {
+      const bm = acc.byCodexModel[id] ??= { input: 0, cachedInput: 0, output: 0, costUsd: 0 }
+      bm.input += b.input; bm.cachedInput += b.cachedInput; bm.output += b.output
+      const c = costForCodex(b, id)
+      // "unpriced, never $0": an unknown model id is reported, not guessed at.
+      if (c === null) acc.unpricedModels.add(id)
+      else { bm.costUsd += c; acc.costUnverifiedUsd += c; fileCostUnverified += c }
+      if (b.output > bestOut) { bestOut = b.output; model = id }
+    }
     tokensIn += t.input; tokensOut += t.output
   }
 
