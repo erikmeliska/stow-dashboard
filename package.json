@@ -35,6 +35,7 @@
     "scan": "node scripts/scan.mjs -s",
     "scan:force": "node scripts/scan.mjs -s -f",
     "usage": "node scripts/usage.mjs",
+    "pricing:sync": "node scripts/pricing-sync.mjs",
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
     "stow": "node scripts/cli.mjs"
