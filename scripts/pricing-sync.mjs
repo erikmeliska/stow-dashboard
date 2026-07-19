@@ -125,18 +125,23 @@ async function readOldSnapshot(outFile) {
   }
 }
 
-async function main() {
-  const oldSnapshot = await readOldSnapshot(OUT_FILE)
-  const { snapshot, missing } = await buildSnapshot()
-
-  await atomicWriteJson(OUT_FILE, snapshot)
+export async function main({ fetchImpl = fetch, now = () => new Date(), outFile = OUT_FILE, readSnapshot = readOldSnapshot, writeJson = atomicWriteJson } = {}) {
+  const oldSnapshot = await readSnapshot(outFile)
+  const { snapshot, missing } = await buildSnapshot({ fetchImpl, now })
 
   console.log(`Fetched ${LITELLM_URL}`)
-  console.log(`Wrote ${OUT_FILE} (${Object.keys(snapshot.models).length}/${WANTED.length} WANTED ids)\n`)
+  console.log(`Models found: ${Object.keys(snapshot.models).length}/${WANTED.length} WANTED ids\n`)
   console.log('Diff report:')
   console.log(diffReport(oldSnapshot, snapshot, missing))
 
-  if (missing.length) process.exitCode = 1
+  if (missing.length) {
+    console.log(`\nRefusal: snapshot was NOT written — ${missing.length} WANTED id(s) missing from LiteLLM.`)
+    process.exitCode = 1
+    return
+  }
+
+  await writeJson(outFile, snapshot)
+  console.log(`\nWrote ${outFile}`)
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

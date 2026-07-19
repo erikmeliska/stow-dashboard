@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mapEntry, buildSnapshot, diffReport, WANTED } from './pricing-sync.mjs'
+import { mapEntry, buildSnapshot, diffReport, main, WANTED } from './pricing-sync.mjs'
 
 test('mapEntry maps the five per-token fields and drops _flex/_priority/_batches/_above_272k noise', () => {
   const entry = {
@@ -77,4 +77,37 @@ test('diffReport flags new, changed, unchanged and removed models, plus missing 
   assert.match(report, /\+ c: NEW/)
   assert.match(report, /- removed: REMOVED/)
   assert.match(report, /MISSING from LiteLLM.*d/)
+})
+
+test('main refuses to write snapshot when WANTED ids are missing', async () => {
+  let writeJsonCalled = false
+  const fetchImpl = async () => {
+    // Return only one model, missing all others
+    return { ok: true, json: async () => ({ 'claude-opus-4-8': { input_cost_per_token: 5e-6, output_cost_per_token: 2.5e-5 } }) }
+  }
+  const readSnapshot = async () => null
+  const writeJson = async () => { writeJsonCalled = true }
+
+  process.exitCode = 0
+  await main({ fetchImpl, readSnapshot, writeJson })
+
+  assert.equal(writeJsonCalled, false, 'writeJson should not be called when there are missing ids')
+  assert.equal(process.exitCode, 1, 'exit code should be 1 when there are missing ids')
+})
+
+test('main writes snapshot successfully when all WANTED ids are present', async () => {
+  const allModels = Object.fromEntries(
+    WANTED.map(id => [id, { input_cost_per_token: 5e-6, output_cost_per_token: 2.5e-5 }])
+  )
+  let writeJsonData = null
+  const fetchImpl = async () => ({ ok: true, json: async () => allModels })
+  const readSnapshot = async () => null
+  const writeJson = async (outFile, data) => { writeJsonData = data }
+
+  process.exitCode = 0
+  await main({ fetchImpl, readSnapshot, writeJson })
+
+  assert.equal(writeJsonData !== null, true, 'writeJson should be called when all ids are present')
+  assert.equal(Object.keys(writeJsonData.models).length, WANTED.length, 'all WANTED models should be in the snapshot')
+  assert.equal(process.exitCode, 0, 'exit code should be 0 on success')
 })
