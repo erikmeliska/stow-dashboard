@@ -177,11 +177,11 @@ function fakeCcusageExec({ claudeTotal, codexTotal }) {
     assert.equal(cmd, 'ccusage')
     if (args[0] === '--version') return { stdout: '19.0.3\n', stderr: '' }
     if (args[0] === 'claude') {
-      assert.ok(args.includes('--offline'), 'claude daily must be queried with --offline')
+      assert.ok(!args.includes('--offline'), 'claude daily must use live network pricing, not --offline')
       return { stdout: JSON.stringify({ daily: [], totals: { totalCost: claudeTotal } }), stderr: '' }
     }
     if (args[0] === 'codex') {
-      assert.ok(args.includes('--offline'), 'codex daily must be queried with --offline')
+      assert.ok(!args.includes('--offline'), 'codex daily must use live network pricing, not --offline')
       return { stdout: JSON.stringify({ daily: [], totals: { costUSD: codexTotal } }), stderr: '' }
     }
     throw new Error(`unexpected ccusage invocation: ${args.join(' ')}`)

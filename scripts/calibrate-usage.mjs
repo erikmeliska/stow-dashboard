@@ -226,15 +226,15 @@ export async function main({
   }
 
   console.log(`Ledger: ${outFile}`)
-  console.log(`ccusage: v${version} (verified against 19.0.3) — queried with --offline (cached pricing, no network fetch) for a deterministic comparison.`)
+  console.log(`ccusage: v${version} (verified against 19.0.3) — queried with live (network) pricing, since that's the whole point of a reference check; a future ccusage release may shift its prices, which is why the version is printed above.`)
   console.log(`Window (from the ledger's own session timestamps): ${window.sinceIso} .. ${window.untilIso}`)
   console.log(`  ccusage queried with --since ${window.since} --until ${window.until} to match.`)
 
   let claudeDaily, codexDaily
   try {
     ;[claudeDaily, codexDaily] = await Promise.all([
-      runCcusage(['claude', 'daily', '--json', '--offline', '--since', window.since, '--until', window.until], execImpl),
-      runCcusage(['codex', 'daily', '--json', '--offline', '--since', window.since, '--until', window.until], execImpl),
+      runCcusage(['claude', 'daily', '--json', '--since', window.since, '--until', window.until], execImpl),
+      runCcusage(['codex', 'daily', '--json', '--since', window.since, '--until', window.until], execImpl),
     ])
   } catch (err) {
     console.error(`ccusage invocation failed: ${err.message}`)
