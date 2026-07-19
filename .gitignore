@@ -57,3 +57,8 @@ next-env.d.ts
 .paperclip/
 .playwright-mcp/
 .stow/
+
+# Local records carrying this machine's real AI-usage figures (public repo).
+# TRI-STOW-0003's evidence and the litellm-pricing plan stay local.
+TASKS.md
+docs/superpowers/plans/2026-07-19-litellm-pricing.md
