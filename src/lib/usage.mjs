@@ -15,7 +15,7 @@ export function newFileState(tool) {
   return { tool, cwd: null, models: {}, codex: null, codexModel: null, codexByModel: {}, firstTs: null, lastTs: null, prevTs: null, activeSeconds: 0, sessions: 1 }
 }
 
-const ZERO_CODEX = { input: 0, cachedInput: 0, output: 0 }
+const ZERO_CODEX = Object.freeze({ input: 0, cachedInput: 0, output: 0 })
 
 function tickActive(state, ts) {
   if (!ts) return
@@ -83,10 +83,30 @@ export function parseCodexLines(lines, state) {
       // that repeat the previous turn's `last` while `total` is unchanged, so
       // summing `last` over-counts. A delta is 0 for those and exact otherwise.
       const prev = state.codex ?? ZERO_CODEX
-      const b = state.codexByModel[state.codexModel ?? 'unknown'] ??= { input: 0, cachedInput: 0, output: 0 }
-      b.input += Math.max(0, cur.input - prev.input)
-      b.cachedInput += Math.max(0, cur.cachedInput - prev.cachedInput)
-      b.output += Math.max(0, cur.output - prev.output)
+      const key = state.codexModel ?? 'unknown'
+      if (cur.input < prev.input || cur.cachedInput < prev.cachedInput || cur.output < prev.output) {
+        // The cumulative went BACKWARDS (e.g. a mid-rollout context reset or
+        // compaction) — `cur` is a fresh baseline, not a continuation of
+        // `prev`. A one-directional `Math.max(0, cur - prev)` would clamp the
+        // delta to 0 here while `state.codex` still drops to `cur`, leaving
+        // the buckets stuck at the stale, too-high pre-reset totals (a silent
+        // over-report, since cost is computed from the buckets). Since
+        // `state.codex` REPLACES on every event, the buckets must be rebuilt
+        // to match: zero every model's totals and attribute the whole new
+        // cumulative to the current model. This keeps
+        // sum(codexByModel[*]) === state.codex exactly at every point,
+        // whether the cumulative is monotonic or not.
+        for (const bucket of Object.values(state.codexByModel)) {
+          bucket.input = 0; bucket.cachedInput = 0; bucket.output = 0
+        }
+        const b = state.codexByModel[key] ??= { input: 0, cachedInput: 0, output: 0 }
+        b.input = cur.input; b.cachedInput = cur.cachedInput; b.output = cur.output
+      } else {
+        const b = state.codexByModel[key] ??= { input: 0, cachedInput: 0, output: 0 }
+        b.input += cur.input - prev.input
+        b.cachedInput += cur.cachedInput - prev.cachedInput
+        b.output += cur.output - prev.output
+      }
       // `state.codex` keeps its exact meaning: newest cumulative REPLACES.
       state.codex = cur
     }

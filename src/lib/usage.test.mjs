@@ -116,6 +116,27 @@ test('parseCodexLines: token_count before any turn_context lands in "unknown"', 
   })
 })
 
+test('parseCodexLines: decreasing cumulative (counter reset) keeps buckets conserved', () => {
+  // Reviewer repro: a cumulative that goes DOWN (e.g. a mid-rollout context
+  // reset/compaction) must not be absorbed by Math.max(0, delta) while
+  // `state.codex` drops to the lower value — that leaves stale, too-high
+  // totals stuck in the buckets. sum(byCodexModel[*]) must equal the final
+  // `state.codex` unconditionally, in both directions.
+  const s = newFileState('codex')
+  parseCodexLines([
+    ctx('gpt-5.4', '2026-07-10T10:00:00Z'),
+    tcl(1000, 400, 100, '2026-07-10T10:01:00Z'),
+    tcl(200, 50, 20, '2026-07-10T10:02:00Z'),
+  ], s)
+  assert.deepEqual(s.codex, { input: 200, cachedInput: 50, output: 20 })
+  const sum = k => Object.values(s.codexByModel).reduce((n, b) => n + b[k], 0)
+  assert.equal(sum('input'), s.codex.input)
+  assert.equal(sum('cachedInput'), s.codex.cachedInput)
+  assert.equal(sum('output'), s.codex.output)
+  // The stale higher figures from before the reset must not linger.
+  assert.deepEqual(s.codexByModel, { 'gpt-5.4': { input: 200, cachedInput: 50, output: 20 } })
+})
+
 test('splitCompleteLines returns only complete lines and correct byte count', () => {
   const buf = Buffer.from('ahoj\nsvet čau\npartial', 'utf8')
   const { lines, consumedBytes } = splitCompleteLines(buf)
@@ -275,9 +296,10 @@ test('updateUsage: codex rollout maps via session_meta cwd; unmatched bucket wor
     const out = JSON.parse(await readFile(w.outFile, 'utf8'))
     assert.equal(Object.keys(out.projects).length, 0)
     assert.equal(out.unmatched.sessions, 1)
-    // BRIDGE (Task 2): costForCodex now requires a per-session model id (Task 3
-    // wires that through); until then every Codex session is correctly unpriced
-    // rather than mispriced, per the "unpriced, never $0" rule Claude already had.
+    // This fixture has no `turn_context`, so all its tokens land in the
+    // "unknown" bucket (costForCodex('unknown') has no pricing entry) and the
+    // session is correctly unpriced rather than mispriced, per the
+    // "unpriced, never $0" rule Claude already had.
     assert.equal(out.unmatched.costUnverifiedUsd, 0)
     assert.ok(out.unmatched.unpricedModels.length > 0)
   } finally { await rm(w.base, { recursive: true, force: true }) }
