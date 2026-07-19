@@ -144,7 +144,11 @@ test('updateUsage: codex rollout maps via session_meta cwd; unmatched bucket wor
     const out = JSON.parse(await readFile(w.outFile, 'utf8'))
     assert.equal(Object.keys(out.projects).length, 0)
     assert.equal(out.unmatched.sessions, 1)
-    assert.ok(out.unmatched.costUnverifiedUsd > 1)   // 1M non-cached input ≈ $1.25
+    // BRIDGE (Task 2): costForCodex now requires a per-session model id (Task 3
+    // wires that through); until then every Codex session is correctly unpriced
+    // rather than mispriced, per the "unpriced, never $0" rule Claude already had.
+    assert.equal(out.unmatched.costUnverifiedUsd, 0)
+    assert.ok(out.unmatched.unpricedModels.length > 0)
   } finally { await rm(w.base, { recursive: true, force: true }) }
 })
 
