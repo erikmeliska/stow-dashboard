@@ -1,0 +1,87 @@
+{
+  "_source": "litellm model_prices_and_context_window.json",
+  "_fetched": "2026-07-19",
+  "models": {
+    "gpt-5.6-sol": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.00003,
+      "cacheWrite5m": 0.00000625
+    },
+    "gpt-5.6-terra": {
+      "in": 0.0000025,
+      "cacheRead": 2.5e-7,
+      "out": 0.000015,
+      "cacheWrite5m": 0.000003125
+    },
+    "gpt-5.5": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.00003
+    },
+    "gpt-5.4": {
+      "in": 0.0000025,
+      "cacheRead": 2.5e-7,
+      "out": 0.000015
+    },
+    "gpt-5.3-codex": {
+      "in": 0.00000175,
+      "cacheRead": 1.75e-7,
+      "out": 0.000014
+    },
+    "gpt-5.1-codex-max": {
+      "in": 0.00000125,
+      "cacheRead": 1.25e-7,
+      "out": 0.00001
+    },
+    "claude-fable-5": {
+      "in": 0.00001,
+      "cacheRead": 0.000001,
+      "out": 0.00005,
+      "cacheWrite5m": 0.0000125,
+      "cacheWrite1h": 0.00002
+    },
+    "claude-opus-4-8": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.000025,
+      "cacheWrite5m": 0.00000625,
+      "cacheWrite1h": 0.00001
+    },
+    "claude-opus-4-7": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.000025,
+      "cacheWrite5m": 0.00000625,
+      "cacheWrite1h": 0.00001
+    },
+    "claude-opus-4-6": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.000025,
+      "cacheWrite5m": 0.00000625,
+      "cacheWrite1h": 0.00001
+    },
+    "claude-sonnet-5": {
+      "in": 0.000002,
+      "cacheRead": 2e-7,
+      "out": 0.00001,
+      "cacheWrite5m": 0.0000025,
+      "cacheWrite1h": 0.000004
+    },
+    "claude-sonnet-4-6": {
+      "in": 0.000003,
+      "cacheRead": 3e-7,
+      "out": 0.000015,
+      "cacheWrite5m": 0.00000375,
+      "cacheWrite1h": 0.000006
+    },
+    "claude-haiku-4-5": {
+      "in": 0.000001,
+      "cacheRead": 1e-7,
+      "out": 0.000005,
+      "cacheWrite5m": 0.00000125,
+      "cacheWrite1h": 0.000002
+    }
+  }
+}

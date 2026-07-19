@@ -31,6 +31,8 @@ npm run tauri:dev    # Run desktop app in dev mode
 # AI Analysis & Usage
 npm run analyze      # AI project analysis batch (incremental; --force, --retry-errors, --pilot, --data <file>)
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
+npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
+node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
 
 # Other
 npm run lint         # Run ESLint
@@ -136,12 +138,15 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/analyze-batch.mjs` - Incremental batch orchestration (input_hash/version gating)
 - `src/lib/ollama.mjs` - Ollama fallback engine for rejected/oversized projects
 - `src/lib/usage.mjs` - AI usage ledger: transcript tail-parse, aggregation, `data/usage.json`
-- `src/lib/usage-pricing.mjs` - Token → USD pricing tables (Claude + Codex)
+- `src/lib/usage-pricing.mjs` - Token → USD lookup layer over the vendored LiteLLM snapshot (Claude + Codex)
+- `src/lib/pricing-data.json` - Vendored LiteLLM pricing snapshot (refreshed by `npm run pricing:sync`, not hand-edited)
+- `scripts/pricing-sync.mjs` - CLI that refreshes `pricing-data.json` from LiteLLM upstream
 - `src/lib/scan-roots.mjs` - Resolves SCAN_ROOTS / project dirs for scan and usage
 - `src/lib/state-dir.mjs` - Resolves the state dir (`data/`, `.env.local`) shared by web app, desktop app, CLIs and MCP
 - `scripts/scan.mjs` - CLI for running the scanner
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
+- `scripts/calibrate-usage.mjs` - Hand-run cross-check of `data/usage.json` cost against `ccusage` (read-only, not part of `npm test`)
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
 - `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
 - `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
@@ -229,9 +234,11 @@ Per-project AI token cost is derived from local CLI transcripts (`npm run usage`
 
 - Reads Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`) transcripts — append-only, so parsing is an incremental tail-parse keyed by size/mtime
 - Durable "ghost" ledger entries survive transcript pruning (a deleted transcript stays counted)
-- Tokens-only ledger is priced at aggregation time (`usage-pricing.mjs`); Codex is `costUnverifiedUsd` (no server-side pricing)
+- One tokens-only ledger, priced at aggregation time (`usage-pricing.mjs`) from the vendored LiteLLM snapshot — Claude and Codex are priced identically, per model; an unknown model id is surfaced as `unpriced`, never guessed at as $0
 - Output is `data/usage.json`, joined to projects at render time — surfaces an AI `$` column and a details-sheet breakdown (list-price value, not an invoice)
 - Refreshed in every refresh cycle and on demand via `/api/usage/rebuild`
+- After `npm run pricing:sync` (or whenever the `$` figures look off), revalidate against [ccusage](https://github.com/ryoppippi/ccusage) — an independent third-party tool reading the same transcripts — with `node scripts/calibrate-usage.mjs`. It's a hand-run script, not a `node --test` test (it shells out to the `ccusage` binary), and it's read-only: it never rebuilds `data/usage.json`, so run `npm run usage` first if the ledger is stale or missing.
+- Known current FAIL: the gate reports Claude drift ~89% against ccusage. This is a pre-existing bug the calibration script surfaced, not a pricing regression — `parseClaudeLines()` in `usage.mjs` does no cross-file dedup, so resumed/sidechain transcript rewrites get double-counted (roughly 2x overstatement); the Codex bucket is separately excluded from the gate until `npm run usage -- --rebuild` re-derives the ledger. There is also a second, still-unexplained discrepancy: the ledger's token counts match neither the raw transcripts nor a deduplicated pass, suggesting the incremental tail-parse double-counts some regions across re-parses. See `TASKS.md` (`TRI-STOW-0003`) for the full diagnosis to pick up — don't read this FAIL as a pricing-snapshot problem.
 
 ### Quick Filters
 

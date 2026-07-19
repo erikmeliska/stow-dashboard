@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { updateUsage, defaultUsagePaths } from '../src/lib/usage.mjs'
+import { priceSource } from '../src/lib/usage-pricing.mjs'
 import { ledgerFile } from '../src/lib/state-dir.mjs'
 
 // Run against the live state dir, not cwd: the desktop app writes its ledger
@@ -37,23 +38,25 @@ async function main() {
   const paths = defaultUsagePaths(STATE)
   const projectDirs = await readProjectDirs()
 
+  const src = priceSource()
   console.log(`Parsing usage${rebuild ? ' (rebuild)' : ''} …`)
   console.log(`  claude: ${paths.claudeDir}`)
   console.log(`  codex:  ${paths.codexDir}`)
   console.log(`  projects: ${projectDirs.length}`)
+  console.log(`  pricing: litellm @ ${src.fetched}, ${src.modelCount} models`)
 
   const r = await updateUsage({ ...paths, projectDirs, rebuild })
   const out = JSON.parse(await readFile(paths.outFile, 'utf8'))
 
   const rows = Object.entries(out.projects)
-    .map(([dir, p]) => ({ dir, ...p, total: (p.costUsd || 0) + (p.costUnverifiedUsd || 0) }))
+    .map(([dir, p]) => ({ dir, ...p, total: p.costUsd || 0 }))
     .sort((a, b) => b.total - a.total)
     .slice(0, 15)
 
   console.log('\nTop projects by list-price value:')
   console.log('  ' + 'COST'.padStart(9) + '  ' + 'SESS'.padStart(4) + '  ' + 'HOURS'.padStart(6) + '  PROJECT')
   for (const p of rows) {
-    const mark = p.costUsd === 0 && p.costUnverifiedUsd > 0 ? '~' : ' '
+    const mark = (p.unpricedModels || []).length > 0 ? '~' : ' '
     console.log(
       '  ' + (mark + fmtUsd(p.total)).padStart(9) +
       '  ' + String(p.sessions).padStart(4) +
@@ -63,11 +66,11 @@ async function main() {
   }
 
   const t = out.totals
+  const hasUnpriced = Object.values(out.projects).some(p => (p.unpricedModels || []).length > 0)
+    || (out.unmatched.unpricedModels || []).length > 0
   console.log('\nTotals (list-price value of consumption, NOT an invoice):')
-  console.log(`  Claude  ${fmtUsd(t.costUsd)}   (in ${fmtInt(t.tokens.input)} / out ${fmtInt(t.tokens.output)} tok)`)
-  console.log(`  Codex   ~${fmtUsd(t.costUnverifiedUsd)}  ⚠️ estimated rates  (in ${fmtInt(t.tokens.codexInput)} / out ${fmtInt(t.tokens.codexOutput)} tok)`)
-  console.log(`  Combined ${fmtUsd(t.costUsd + t.costUnverifiedUsd)}   ·  ${t.sessions} sessions  ·  ${(t.activeMinutes / 60).toFixed(1)} h`)
-  console.log(`  Unmatched: ${out.unmatched.sessions} sessions · ${fmtUsd(out.unmatched.costUsd)} + ~${fmtUsd(out.unmatched.costUnverifiedUsd)}`)
+  console.log(`  Total   ${hasUnpriced ? '~' : ''}${fmtUsd(t.costUsd)}   (in ${fmtInt(t.tokens.input + t.tokens.codexInput)} / out ${fmtInt(t.tokens.output + t.tokens.codexOutput)} tok)   ·  ${t.sessions} sessions  ·  ${(t.activeMinutes / 60).toFixed(1)} h`)
+  console.log(`  Unmatched: ${out.unmatched.sessions} sessions · ${(out.unmatched.unpricedModels || []).length > 0 ? '~' : ''}${fmtUsd(out.unmatched.costUsd)}`)
 
   console.log(`\nParsed ${r.filesParsed} · skipped ${r.filesSkipped} · missing ${r.filesMissing} · ${r.durationMs} ms`)
   console.log(`Wrote ${paths.outFile}`)
