@@ -25,7 +25,7 @@
 import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dataFile } from '../src/lib/state-dir.mjs'
 
 const DRIFT_THRESHOLD_PCT = 5
@@ -50,6 +50,17 @@ const exec = execFileAsync
 export async function runCcusage(args, execImpl = exec) {
   const { stdout } = await execImpl('ccusage', args, {})
   return JSON.parse(stdout)
+}
+
+// `ccusage --version` — not JSON, so it can't go through runCcusage. Printed
+// in the output header so any recorded run is interpretable later: ccusage's
+// dedup semantics and pricing source are version-dependent (this script was
+// verified against 19.0.3), and an upgrade that changes either would show up
+// here as the explanation for a drift that isn't a pricing regression on our
+// side.
+export async function ccusageVersion(execImpl = exec) {
+  const { stdout } = await execImpl('ccusage', ['--version'], {})
+  return stdout.trim()
 }
 
 // --- pure logic (covered by scripts/calibrate-usage.test.mjs) --------------
@@ -103,6 +114,40 @@ export function driftPct(ours, theirs) {
   return Math.abs(ours - theirs) / theirs * 100
 }
 
+// The ledger deliberately keeps "ghost" sessions after their transcript file
+// is deleted (Claude Code's cleanupPeriodDays, 30 days by default, prunes
+// transcripts on disk but the ledger's cost survives). ccusage only ever
+// reads live transcripts, so it structurally cannot see a ghost session
+// regardless of --since/--until — comparing raw ledger cost against ccusage
+// therefore always overstates "drift" by however much of the ledger is
+// ghosts, which is a retention-policy artifact, not a pricing bug.
+//
+// `usage.json`'s sessionList entries only carry `file: basename(absPath)` +
+// `tool`, not the absolute path (that lives in usage-cache.json, which this
+// script otherwise never needs). `${tool}:${basename}` is not a guaranteed-
+// unique key across the whole store, but transcript files are named by
+// session UUID (Claude) or a UUID/timestamp-derived id (Codex), so a
+// collision is not realistically expected — that's the precision this
+// approach actually supports, not exact-path matching.
+export function ghostCostByTool(usage, cacheFiles) {
+  const ghostKeys = new Set()
+  for (const [absPath, entry] of Object.entries(cacheFiles || {})) {
+    if (entry.missing) ghostKeys.add(`${entry.tool}:${path.basename(absPath)}`)
+  }
+  const accs = [...Object.values(usage.projects || {}), usage.unmatched].filter(Boolean)
+  const ghost = { claude: 0, codex: 0 }
+  const total = { claude: 0, codex: 0 }
+  for (const acc of accs) {
+    for (const s of acc.sessionList || []) {
+      const bucket = total[s.tool] !== undefined ? s.tool : null
+      if (!bucket) continue
+      total[bucket] += s.costUsd || 0
+      if (ghostKeys.has(`${s.tool}:${s.file}`)) ghost[bucket] += s.costUsd || 0
+    }
+  }
+  return { ghost, total }
+}
+
 // Merges ccusage's `claude daily` and `codex daily` rows into one per-date
 // table. Field names differ between the two commands (`totalCost` vs
 // `costUSD`) — normalized here.
@@ -135,8 +180,17 @@ export function formatTable(rows) {
 
 // --- orchestration -----------------------------------------------------
 
-export async function main() {
-  const outFile = dataFile('usage.json', STATE)
+// `execImpl`/`outFile`/`cacheFile` are the injectable seam (repo convention,
+// src/lib/analyzer.mjs:164-206): tests supply a fake execImpl (so the real
+// `ccusage` binary is never invoked) plus temp-dir ledger files (so a test
+// run never depends on — or reads — this machine's real usage.json). CLI
+// usage (`node scripts/calibrate-usage.mjs`) calls main() with no args and
+// gets the real state-dir paths and the real exec.
+export async function main({
+  execImpl = exec,
+  outFile = dataFile('usage.json', STATE),
+  cacheFile = dataFile('usage-cache.json', STATE),
+} = {}) {
   let usage
   try {
     usage = JSON.parse(await readFile(outFile, 'utf8'))
@@ -154,15 +208,33 @@ export async function main() {
     return
   }
 
+  // usage-cache.json is best-effort context (ghost-session share below) —
+  // this script stays useful without it, it just can't discount ghosts.
+  let cacheFiles = null
+  try {
+    cacheFiles = JSON.parse(await readFile(cacheFile, 'utf8')).files || {}
+  } catch { /* optional */ }
+
+  let version
+  try {
+    version = await ccusageVersion(execImpl)
+  } catch (err) {
+    console.error(`ccusage invocation failed: ${err.message}`)
+    console.error('Is ccusage installed? (npm i -g ccusage)')
+    process.exitCode = 1
+    return
+  }
+
   console.log(`Ledger: ${outFile}`)
+  console.log(`ccusage: v${version} (verified against 19.0.3) — queried with --offline (cached pricing, no network fetch) for a deterministic comparison.`)
   console.log(`Window (from the ledger's own session timestamps): ${window.sinceIso} .. ${window.untilIso}`)
   console.log(`  ccusage queried with --since ${window.since} --until ${window.until} to match.`)
 
   let claudeDaily, codexDaily
   try {
     ;[claudeDaily, codexDaily] = await Promise.all([
-      runCcusage(['claude', 'daily', '--json', '--since', window.since, '--until', window.until]),
-      runCcusage(['codex', 'daily', '--json', '--since', window.since, '--until', window.until]),
+      runCcusage(['claude', 'daily', '--json', '--offline', '--since', window.since, '--until', window.until], execImpl),
+      runCcusage(['codex', 'daily', '--json', '--offline', '--since', window.since, '--until', window.until], execImpl),
     ])
   } catch (err) {
     console.error(`ccusage invocation failed: ${err.message}`)
@@ -184,34 +256,71 @@ export async function main() {
     codex: codexDaily.totals?.costUSD || 0,
   }
 
-  const claudeDrift = driftPct(ours.claude.cost, theirs.claude)
-  const codexDrift = driftPct(ours.codex.cost, theirs.codex)
-  const totalOurs = ours.claude.cost + ours.codex.cost
+  // Ghost sessions (transcript deleted, cost retained) are structurally
+  // invisible to ccusage — comparing against raw ledger cost always
+  // overstates drift by the ghost share. Where we can identify them (needs
+  // usage-cache.json), subtract ghost cost before computing drift, and
+  // report the ghost dollar amount so it's never silently discounted.
+  let ghost = { claude: 0, codex: 0 }
+  let ghostTotal = { claude: 0, codex: 0 }
+  if (cacheFiles) {
+    ;({ ghost, total: ghostTotal } = ghostCostByTool(usage, cacheFiles))
+  }
+  const ghostPct = (g, t) => t > 0 ? (g / t * 100) : 0
+  console.log('\nGhost sessions (transcript deleted, cost retained — ccusage cannot see these regardless of window):')
+  if (!cacheFiles) {
+    console.log(`  UNKNOWN — ${cacheFile} not found, cannot separate ghost cost from live cost.`)
+  } else {
+    console.log(`  Claude   $${ghost.claude.toFixed(2)} of $${ghostTotal.claude.toFixed(2)} ledger cost (${ghostPct(ghost.claude, ghostTotal.claude).toFixed(1)}%)`)
+    console.log(`  Codex    $${ghost.codex.toFixed(2)} of $${ghostTotal.codex.toFixed(2)} ledger cost (${ghostPct(ghost.codex, ghostTotal.codex).toFixed(1)}%)`)
+  }
+
+  const ghostAdjustedClaude = ours.claude.cost - ghost.claude
+  const ghostAdjustedCodex = ours.codex.cost - ghost.codex
+
+  const claudeDrift = driftPct(ghostAdjustedClaude, theirs.claude)
+  const codexDrift = driftPct(ghostAdjustedCodex, theirs.codex)
+  const totalOurs = ghostAdjustedClaude + ghostAdjustedCodex
   const totalTheirs = theirs.claude + theirs.codex
   const totalDrift = driftPct(totalOurs, totalTheirs)
 
-  console.log('\nAggregate summary (whole aligned window):')
-  console.log(`  Claude   ours $${ours.claude.cost.toFixed(2)}   vs ccusage $${theirs.claude.toFixed(2)}   -> ${claudeDrift.toFixed(1)}% drift`)
-  console.log(`  Codex    ours $${ours.codex.cost.toFixed(2)}   vs ccusage $${theirs.codex.toFixed(2)}   -> ${codexDrift.toFixed(1)}% drift`)
+  console.log('\nAggregate summary (whole aligned window; ours is ghost-adjusted — live-session cost only, see above):')
+  console.log(`  Claude   ours $${ghostAdjustedClaude.toFixed(2)}   vs ccusage $${theirs.claude.toFixed(2)}   -> ${claudeDrift.toFixed(1)}% drift`)
+  console.log(`  Codex    ours $${ghostAdjustedCodex.toFixed(2)}   vs ccusage $${theirs.codex.toFixed(2)}   -> ${codexDrift.toFixed(1)}% drift`)
   console.log(`  Total    ours $${totalOurs.toFixed(2)}   vs ccusage $${totalTheirs.toFixed(2)}   -> ${totalDrift.toFixed(1)}% drift`)
 
-  if (!ours.codex.sawBucket) {
+  // A pre-branch ledger has no `byCodexModel` bucket at all, so `ours.codex`
+  // is always 0 — that's not a pricing signal, it's "not generated yet".
+  // Print the (meaningless) figures for visibility but EXCLUDE Codex from
+  // the pass/fail gate so a stale ledger doesn't force a guaranteed non-zero
+  // exit regardless of actual Claude pricing health.
+  const codexGated = ours.codex.sawBucket
+  if (!codexGated) {
     console.log('\n  NOTE: no project in this ledger has a `byCodexModel` bucket — it predates')
     console.log('  per-model Codex attribution. The Codex drift above is not a meaningful')
-    console.log('  calibration signal until you run `npm run usage -- --rebuild`.')
+    console.log('  calibration signal and is EXCLUDED from the pass/fail gate below. Run')
+    console.log('  `npm run usage -- --rebuild` to enable it.')
   }
 
-  const worstDrift = Math.max(claudeDrift, codexDrift)
+  const gatedDrifts = codexGated ? [claudeDrift, codexDrift] : [claudeDrift]
+  const worstDrift = Math.max(...gatedDrifts)
+  const driftSummary = `Claude ${claudeDrift.toFixed(1)}%${codexGated ? `, Codex ${codexDrift.toFixed(1)}%` : ', Codex excluded (see NOTE above)'}`
   if (worstDrift > DRIFT_THRESHOLD_PCT) {
-    console.error(`\nFAIL: drift exceeds ${DRIFT_THRESHOLD_PCT}% (Claude ${claudeDrift.toFixed(1)}%, Codex ${codexDrift.toFixed(1)}%).`)
+    console.error(`\nFAIL: drift exceeds ${DRIFT_THRESHOLD_PCT}% (${driftSummary}).`)
     process.exitCode = 1
     return
   }
-  console.log(`\nOK: drift is within ${DRIFT_THRESHOLD_PCT}% (Claude ${claudeDrift.toFixed(1)}%, Codex ${codexDrift.toFixed(1)}%).`)
+  console.log(`\nOK: drift is within ${DRIFT_THRESHOLD_PCT}% (${driftSummary}).`)
 }
 
 // Only run when executed directly (`node scripts/calibrate-usage.mjs`) — not
 // when imported for its pure functions, e.g. by calibrate-usage.test.mjs.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL (not a hand-built `file://${...}` template) so this survives
+// paths with spaces or non-ASCII characters, which import.meta.url always
+// percent-encodes: a naive string comparison would silently mismatch on
+// e.g. `~/My Projects/stow-dashboard`, and main() would never run — the
+// worst failure mode for a calibration tool is exiting 0 having printed
+// nothing.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }
