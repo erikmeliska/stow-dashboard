@@ -322,5 +322,8 @@ export async function main({
 // worst failure mode for a calibration tool is exiting 0 having printed
 // nothing.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main()
+  main().catch(err => {
+    console.error(err)
+    process.exitCode = 1
+  })
 }

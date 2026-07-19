@@ -5,7 +5,7 @@
 // model_prices_and_context_window.json, synced via `npm run pricing:sync`.
 //
 // Static import (not fs + JSON.parse at runtime): Next.js excludes *.json
-// from output-file-tracing for the standalone build (next.config.js), so the
+// from output-file-tracing for the standalone build (next.config.mjs), so the
 // snapshot must be inlined into the compiled bundle by the bundler at build
 // time, which only happens for statically-imported modules.
 import PRICING from './pricing-data.json' with { type: 'json' }
