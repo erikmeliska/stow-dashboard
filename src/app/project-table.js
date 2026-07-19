@@ -949,7 +949,7 @@ export function ProjectTable({ projects, ownRepos }) {
         },
         {
             id: "ai_cost",
-            accessorFn: row => row.usage ? (row.usage.costUsd ?? 0) + (row.usage.costUnverifiedUsd ?? 0) : -1,
+            accessorFn: row => row.usage?.costUsd ?? -1,
             sortDescFirst: true,
             header: ({ column }) => {
                 return (
@@ -968,7 +968,7 @@ export function ProjectTable({ projects, ownRepos }) {
                 const total = row.getValue("ai_cost")
                 if (total < 0) return <span className="text-muted-foreground text-sm">—</span>
                 const usage = row.original.usage
-                const unverifiedOnly = (usage.costUsd ?? 0) === 0 && (usage.costUnverifiedUsd ?? 0) > 0
+                const hasUnpriced = (usage.unpricedModels || []).length > 0
                 const t = usage.tokens || {}
                 const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
                 const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
@@ -976,7 +976,7 @@ export function ProjectTable({ projects, ownRepos }) {
                 const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtTokens(inTokens)} out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
                 return (
                     <span className="text-sm whitespace-nowrap tabular-nums" title={title}>
-                        {unverifiedOnly ? '~' : ''}{formatUsd(total)}
+                        {hasUnpriced ? '~' : ''}{formatUsd(total)}
                     </span>
                 )
             },

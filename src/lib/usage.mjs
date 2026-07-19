@@ -269,7 +269,6 @@ function newAccumulator() {
     activeMinutes: 0,
     tokens: emptyTokens(),
     costUsd: 0,
-    costUnverifiedUsd: 0,
     byModel: {},
     byCodexModel: {},
     unpricedModels: new Set(),
@@ -284,7 +283,7 @@ function addSession(acc, absPath, entry) {
   acc.activeMinutes += (st.activeSeconds || 0) / 60
   if (st.lastTs && (!acc.lastActivity || st.lastTs > acc.lastActivity)) acc.lastActivity = st.lastTs
 
-  let fileCostUsd = 0, fileCostUnverified = 0, tokensIn = 0, tokensOut = 0
+  let fileCostUsd = 0, tokensIn = 0, tokensOut = 0
   let model // dominant model for the session (by output tokens)
 
   if (st.tool === 'claude') {
@@ -343,7 +342,7 @@ function addSession(acc, absPath, entry) {
       const c = costForCodex(b, id)
       // "unpriced, never $0": an unknown model id is reported, not guessed at.
       if (c === null) acc.unpricedModels.add(id)
-      else { bm.costUsd += c; acc.costUnverifiedUsd += c; fileCostUnverified += c }
+      else { bm.costUsd += c; acc.costUsd += c; fileCostUsd += c }
       if (b.output > bestOut) { bestOut = b.output; model = id }
     }
     tokensIn += t.input; tokensOut += t.output
@@ -356,7 +355,7 @@ function addSession(acc, absPath, entry) {
     startedAt: st.firstTs,
     lastActivity: st.lastTs,
     activeMinutes: (st.activeSeconds || 0) / 60,
-    costUsd: st.tool === 'claude' ? fileCostUsd : fileCostUnverified,
+    costUsd: fileCostUsd,
     tokensIn,
     tokensOut,
   })
@@ -390,12 +389,11 @@ export function aggregateUsage(cache, projectDirs) {
     addSession(target, absPath, entry)
   }
 
-  const totals = { sessions: 0, activeMinutes: 0, costUsd: 0, costUnverifiedUsd: 0, tokens: emptyTokens() }
+  const totals = { sessions: 0, activeMinutes: 0, costUsd: 0, tokens: emptyTokens() }
   const roll = acc => {
     totals.sessions += acc.sessions
     totals.activeMinutes += acc.activeMinutes
     totals.costUsd += acc.costUsd
-    totals.costUnverifiedUsd += acc.costUnverifiedUsd
     for (const k of Object.keys(totals.tokens)) totals.tokens[k] += acc.tokens[k]
   }
   for (const dir of Object.keys(projects)) { roll(projects[dir]); finalizeAcc(projects[dir]) }

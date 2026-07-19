@@ -847,13 +847,14 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                         const t = usage.tokens || {}
                         const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n ?? 0}`
 
-                        const totalCost = (usage.costUsd ?? 0) + (usage.costUnverifiedUsd ?? 0)
-                        const hasUnverified = (usage.costUnverifiedUsd ?? 0) > 0
-                        const activeHours = ((usage.activeMinutes ?? 0) / 60).toFixed(1)
-
                         const claudeModels = Object.entries(usage.byModel || {})
+                        const codexModels = Object.entries(usage.byCodexModel || {})
                         const unpriced = new Set(usage.unpricedModels || [])
-                        const hasCodex = (t.codexInput ?? 0) + (t.codexOutput ?? 0) > 0
+                        const hasCodex = codexModels.length > 0
+
+                        const totalCost = usage.costUsd ?? 0
+                        const hasUnpriced = unpriced.size > 0
+                        const activeHours = ((usage.activeMinutes ?? 0) / 60).toFixed(1)
 
                         const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
                         const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
@@ -873,7 +874,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                             <StatItem label="Active time" value={`${activeHours} h`} />
                                             <StatItem
                                                 label="Total cost"
-                                                value={`${hasUnverified ? '~' : ''}${formatUsd(totalCost)}`}
+                                                value={`${hasUnpriced ? '~' : ''}${formatUsd(totalCost)}`}
                                                 className="font-semibold text-green-600 dark:text-green-400"
                                             />
                                         </div>
@@ -903,17 +904,22 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     </div>
                                                 )}
                                                 {hasCodex && (
-                                                    <div className="space-y-1 pt-1">
-                                                        <div className="flex items-center justify-between gap-2 text-xs">
-                                                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-zinc-500/20 text-muted-foreground">codex</span>
-                                                            <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-                                                                {fmtTokens(t.codexInput ?? 0)}/{fmtTokens(t.codexOutput ?? 0)}
-                                                            </span>
-                                                            <span className="tabular-nums w-16 text-right">
-                                                                ~{formatUsd(usage.costUnverifiedUsd ?? 0)}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-[10px] text-muted-foreground">⚠️ estimated rates</p>
+                                                    <div className="space-y-1.5 pt-1">
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-zinc-500/20 text-muted-foreground">codex</span>
+                                                        {codexModels.map(([id, m]) => {
+                                                            const isUnpriced = unpriced.has(id)
+                                                            return (
+                                                                <div key={id} className="flex items-center justify-between gap-2 text-xs">
+                                                                    <span className="font-mono truncate">{id}</span>
+                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cachedInput ?? 0)}
+                                                                    </span>
+                                                                    <span className="tabular-nums w-16 text-right">
+                                                                        {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
+                                                                    </span>
+                                                                </div>
+                                                            )
+                                                        })}
                                                     </div>
                                                 )}
                                             </div>
@@ -939,7 +945,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                                 {s.tool}
                                                             </span>
                                                             <span className="text-muted-foreground tabular-nums w-12 text-right">{(s.activeMinutes ?? 0).toFixed(0)} min</span>
-                                                            <span className="tabular-nums w-12 text-right">{s.tool === 'codex' ? '~' : ''}{formatUsd(s.costUsd ?? 0)}</span>
+                                                            <span className="tabular-nums w-12 text-right">{unpriced.has(s.model) ? '~' : ''}{formatUsd(s.costUsd ?? 0)}</span>
                                                         </div>
                                                     ))}
                                                 </div>

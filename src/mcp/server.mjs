@@ -632,7 +632,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 sessions: u.sessions,
                 activeHours: +((u.activeMinutes || 0) / 60).toFixed(1),
                 costUsd: u.costUsd,
-                costUnverifiedUsd: u.costUnverifiedUsd,
                 note: 'list-price value, not an invoice',
             } : null
 

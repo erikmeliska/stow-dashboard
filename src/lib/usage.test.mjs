@@ -185,7 +185,7 @@ test('aggregateUsage: byCodexModel sums equal the codex token totals; buckets pr
   assert.ok(p.byCodexModel['gpt-5.3-codex'].costUsd > 0)
   assert.equal(p.unpricedModels.length, 0)
   const bucketSum = Object.values(p.byCodexModel).reduce((n, b) => n + b.costUsd, 0)
-  assert.ok(Math.abs(p.costUnverifiedUsd - bucketSum) < 1e-12)
+  assert.ok(Math.abs(p.costUsd - bucketSum) < 1e-12)
   assert.ok(Math.abs(p.sessionList[0].costUsd - bucketSum) < 1e-12)
   // Dominant model by output tokens.
   assert.equal(p.sessionList[0].model, 'gpt-5.3-codex')
@@ -300,7 +300,7 @@ test('updateUsage: codex rollout maps via session_meta cwd; unmatched bucket wor
     // "unknown" bucket (costForCodex('unknown') has no pricing entry) and the
     // session is correctly unpriced rather than mispriced, per the
     // "unpriced, never $0" rule Claude already had.
-    assert.equal(out.unmatched.costUnverifiedUsd, 0)
+    assert.equal(out.unmatched.costUsd, 0)
     assert.ok(out.unmatched.unpricedModels.length > 0)
   } finally { await rm(w.base, { recursive: true, force: true }) }
 })
