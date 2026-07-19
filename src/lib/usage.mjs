@@ -266,11 +266,11 @@ function addSession(acc, absPath, entry) {
     acc.tokens.codexCachedInput += t.cachedInput
     acc.tokens.codexOutput += t.output
     // BRIDGE (Task 2): per-session Codex model attribution is Task 3's job —
-    // st.codexModel doesn't exist yet, so this is always undefined and every
-    // Codex session lands in unpricedModels. That's intended: "unpriced,
-    // never $0" beats silently mispricing with the wrong model's rate.
+    // st.codexModel doesn't exist yet, so bucket it under 'unknown' to avoid
+    // polluting unpricedModels with null. "unpriced, never $0" beats silently
+    // mispricing with the wrong model's rate. Task 3 re-buckets from 'unknown'.
     const c = costForCodex(t, st.codexModel)
-    if (c === null) acc.unpricedModels.add(st.codexModel)
+    if (c === null) acc.unpricedModels.add(st.codexModel ?? 'unknown')
     else { acc.costUnverifiedUsd += c; fileCostUnverified = c }
     tokensIn += t.input; tokensOut += t.output
   }

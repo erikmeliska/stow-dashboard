@@ -161,3 +161,30 @@ test('updateUsage: corrupt cache file → full re-parse, no throw', async () => 
     assert.equal(r.filesParsed, 1)
   } finally { await rm(w.base, { recursive: true, force: true }) }
 })
+
+test('updateUsage: Codex-only session yields unpricedModels containing "unknown", not null', async () => {
+  const w = await makeStores()
+  try {
+    // Create a Codex session with no model id (Task 3 hasn't run yet)
+    const meta = JSON.stringify({ type: 'session_meta', timestamp: '2026-07-10T10:00:00Z', payload: { cwd: '/p/a' } }) + '\n'
+    const tc = JSON.stringify({ timestamp: '2026-07-10T10:01:00Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 50 } } } }) + '\n'
+    await writeFile(w.codexSession, meta + tc)
+
+    const opts = { claudeDir: w.claudeDir, codexDir: w.codexDir, cacheFile: w.cacheFile, outFile: w.outFile, projectDirs: ['/p/a'] }
+    await updateUsage(opts)
+
+    const out = JSON.parse(await readFile(w.outFile, 'utf8'))
+    const proj = out.projects['/p/a']
+
+    // Verify unpricedModels contains the string 'unknown', not null/undefined
+    assert.ok(Array.isArray(proj.unpricedModels), 'unpricedModels should be an array')
+    assert.ok(proj.unpricedModels.includes('unknown'), 'unpricedModels should include "unknown"')
+    assert.ok(!proj.unpricedModels.includes(null), 'unpricedModels should not include null')
+    assert.ok(!proj.unpricedModels.includes(undefined), 'unpricedModels should not include undefined')
+    // Verify no undefined values in the array
+    for (const model of proj.unpricedModels) {
+      assert.notEqual(model, null, `unpricedModels should not contain null value, got: ${model}`)
+      assert.notEqual(model, undefined, `unpricedModels should not contain undefined value, got: ${model}`)
+    }
+  } finally { await rm(w.base, { recursive: true, force: true }) }
+})
