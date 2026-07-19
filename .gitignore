@@ -50,3 +50,10 @@ next-env.d.ts
 
 # Command Center: skill symlinks are regenerable from skills.manifest.json (solo mode)
 .claude/skills/
+
+# Local tool scratch — logs and page dumps, regenerated on every run.
+# Untracked-but-not-ignored is how a blanket `git add` once swept a
+# 1M-line server.log into a commit.
+.paperclip/
+.playwright-mcp/
+.stow/
