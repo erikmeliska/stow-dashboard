@@ -31,6 +31,8 @@ npm run tauri:dev    # Run desktop app in dev mode
 # AI Analysis & Usage
 npm run analyze      # AI project analysis batch (incremental; --force, --retry-errors, --pilot, --data <file>)
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
+npm run pricing:sync # Refresh src/lib/pricing-data.json from the vendored LiteLLM snapshot
+node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
 
 # Other
 npm run lint         # Run ESLint
@@ -142,6 +144,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/scan.mjs` - CLI for running the scanner
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
+- `scripts/calibrate-usage.mjs` - Hand-run cross-check of `data/usage.json` cost against `ccusage` (read-only, not part of `npm test`)
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
 - `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
 - `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
@@ -232,6 +235,7 @@ Per-project AI token cost is derived from local CLI transcripts (`npm run usage`
 - Tokens-only ledger is priced at aggregation time (`usage-pricing.mjs`); Codex is `costUnverifiedUsd` (no server-side pricing)
 - Output is `data/usage.json`, joined to projects at render time — surfaces an AI `$` column and a details-sheet breakdown (list-price value, not an invoice)
 - Refreshed in every refresh cycle and on demand via `/api/usage/rebuild`
+- After `npm run pricing:sync` (or whenever the `$` figures look off), revalidate against [ccusage](https://github.com/ryoppippi/ccusage) — an independent third-party tool reading the same transcripts — with `node scripts/calibrate-usage.mjs`. It's a hand-run script, not a `node --test` test (it shells out to the `ccusage` binary), and it's read-only: it never rebuilds `data/usage.json`, so run `npm run usage` first if the ledger is stale or missing.
 
 ### Quick Filters
 
