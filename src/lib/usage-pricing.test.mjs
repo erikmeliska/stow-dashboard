@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { matchPrice, matchInTable, costForClaude, costForCodex, priceSource } from './usage-pricing.mjs'
+import snapshot from './pricing-data.json' with { type: 'json' }
 
 test('matchPrice longest-prefix matches dated model ids', () => {
   assert.deepEqual(matchPrice('claude-haiku-4-5-20251001'), {
@@ -56,5 +57,8 @@ test('costForCodex returns null for an unknown model id (unpriced, never $0)', (
 test('priceSource reports the snapshot freshness and model count', () => {
   const src = priceSource()
   assert.equal(typeof src.fetched, 'string')
-  assert.equal(src.modelCount, 13)
+  // Tie the count to the vendored snapshot itself, not a literal that breaks
+  // every time a model is added to WANTED (e.g. claude-opus-5).
+  assert.equal(src.modelCount, Object.keys(snapshot.models).length)
+  assert.ok(src.modelCount > 0)
 })

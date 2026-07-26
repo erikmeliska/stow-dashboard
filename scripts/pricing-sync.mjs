@@ -24,6 +24,7 @@ export const WANTED = [
   'gpt-5.3-codex',
   'gpt-5.1-codex-max',
   'claude-fable-5',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',

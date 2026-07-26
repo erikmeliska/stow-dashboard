@@ -1,6 +1,6 @@
 {
   "_source": "litellm model_prices_and_context_window.json",
-  "_fetched": "2026-07-19",
+  "_fetched": "2026-07-26",
   "models": {
     "gpt-5.6-sol": {
       "in": 0.000005,
@@ -40,6 +40,13 @@
       "out": 0.00005,
       "cacheWrite5m": 0.0000125,
       "cacheWrite1h": 0.00002
+    },
+    "claude-opus-5": {
+      "in": 0.000005,
+      "cacheRead": 5e-7,
+      "out": 0.000025,
+      "cacheWrite5m": 0.00000625,
+      "cacheWrite1h": 0.00001
     },
     "claude-opus-4-8": {
       "in": 0.000005,
