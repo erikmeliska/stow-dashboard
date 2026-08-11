@@ -1,11 +1,17 @@
 import fs from 'fs/promises'
+import path from 'path'
 import { simpleGit } from 'simple-git'
-import { getLatestMtime, ProjectScanner } from '@/scanner/index.mjs'
+import { getLatestMtime, ProjectScanner, Semaphore } from '@/scanner/index.mjs'
 import { collectProjectProcesses } from '@/lib/processes.mjs'
 import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
 import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
+import { refreshProjectGit } from '@/lib/git-status.mjs'
 import { ledgerFile } from '@/lib/state-dir.mjs'
+
+// How many `git status` calls the working-tree pass keeps in flight. Each is
+// one short-lived process, so this is about not stampeding the disk, not fds.
+const GIT_CONCURRENCY = 16
 
 // Read per-request so a SCAN_ROOTS change from the Settings dialog applies
 // without a server restart; strip trailing slashes for path-prefix matching.
@@ -64,6 +70,7 @@ async function getGitInfo(repoPath) {
 
         return {
             project_created: firstCommit?.date || null,
+            head_sha: lastCommit?.hash || null,
             current_user: currentUser,
             current_email: currentEmail,
             total_commits: totalCommits,
@@ -81,6 +88,17 @@ async function getGitInfo(repoPath) {
         }
     } catch (error) {
         return { git_error: error.message, git_detected: false }
+    }
+}
+
+// A `.git` entry in the project root — a directory for a normal clone, a file
+// for a worktree or submodule, so a plain access() check covers both.
+async function hasGitDir(directory) {
+    try {
+        await fs.access(path.join(directory, '.git'))
+        return true
+    } catch {
+        return false
     }
 }
 
@@ -149,16 +167,36 @@ export async function POST() {
                     }
                 }
 
-                // Git refresh for projects with a running process + freshly discovered ones
+                // Git refresh. Projects with a running process (plus the ones just
+                // discovered) are "active": they get the full treatment — commit walk
+                // and a tree-mtime pass. Every *other* project that still has a .git on
+                // disk gets a working-tree status refresh, so a Refresh brings the
+                // branch/ahead/behind/dirty columns up to date for the whole table, not
+                // just for whatever happens to be running.
                 const activeDirs = new Set([...Object.keys(processMap), ...discovered])
                 const activeProjects = [...activeDirs].map(d => projectMap.get(d)).filter(Boolean)
 
-                sendEvent({ type: 'status', message: `Refreshing ${activeProjects.length} active projects`, total: activeProjects.length })
+                const gitProjects = []
+                for (const project of projectMap.values()) {
+                    if (activeDirs.has(project.directory)) continue
+                    if (await hasGitDir(project.directory)) gitProjects.push(project)
+                }
+
+                const total = activeProjects.length + gitProjects.length
+                sendEvent({
+                    type: 'status',
+                    message: `Refreshing ${activeProjects.length} active + ${gitProjects.length} git projects`,
+                    total
+                })
 
                 let current = 0
-                for (const project of activeProjects) {
+                const progress = (directory) => {
                     current++
-                    sendEvent({ type: 'refreshing', directory: project.directory, current, total: activeProjects.length })
+                    sendEvent({ type: 'refreshing', directory, current, total })
+                }
+
+                for (const project of activeProjects) {
+                    progress(project.directory)
                     const [gitInfo, lastModified] = await Promise.all([
                         getGitInfo(project.directory),
                         getLatestMtime(project.directory)
@@ -167,6 +205,17 @@ export async function POST() {
                     project.last_modified = lastModified
                     projectMap.set(project.directory, project)
                 }
+
+                const gitLimiter = new Semaphore(GIT_CONCURRENCY)
+                await Promise.all(gitProjects.map(project => gitLimiter.run(async () => {
+                    try {
+                        await refreshProjectGit(project, { fullGitInfo: getGitInfo })
+                        projectMap.set(project.directory, project)
+                    } catch {
+                        // One unreadable repo must not abort the cycle.
+                    }
+                    progress(project.directory)
+                })))
 
                 // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
@@ -190,7 +239,7 @@ export async function POST() {
                 sendEvent({
                     type: 'complete',
                     success: true,
-                    projectCount: activeProjects.length,
+                    projectCount: total,
                     discovered,
                     processes: finalProcesses,
                     duration
@@ -216,7 +265,7 @@ export async function POST() {
 
 export async function GET() {
     return Response.json({
-        message: 'Combined refresh: process detection, project auto-discovery, git refresh for active projects',
+        message: 'Combined refresh: process detection, project auto-discovery, git status for every project with a .git (full git walk for active ones)',
         method: 'POST'
     })
 }

@@ -130,6 +130,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/mcp/server.mjs` - Standalone MCP server for AI assistants
 - `src/lib/projects.js` - JSONL parsing and data loading
 - `src/lib/discovery.mjs` - Project auto-discovery from process cwds
+- `src/lib/git-status.mjs` - Cheap per-repo working-tree status for the refresh cycle (porcelain v2 parse + HEAD-gated escalation to the full commit walk)
 - `src/lib/utils.js` - Utility functions (cn, formatTimeAgo, getGitProvider)
 - `src/scanner/index.mjs` - Project scanner (Node.js port of stow-agent)
 - `src/lib/analyzer.mjs` - AI analysis: taxonomy, schema, apfel wrapper, deterministic derivations
@@ -188,7 +189,8 @@ The dashboard detects running processes and Docker containers for each project:
 - Uses `lsof` to find processes with listening ports and their working directories
 - Uses `docker ps` with compose labels to detect containers from `docker compose`
 - Matches processes/containers to projects by comparing cwd with project directories
-- Refresh cycle (opt-in): the toolbar's Auto toggle runs a combined 60s cycle — process detection, project auto-discovery, git refresh of active projects (`POST /api/scan/quick`); a manual Refresh button runs the same once. With Auto off, the Running column updates only on manual refresh.
+- Refresh cycle (opt-in): the toolbar's Auto toggle runs a combined 60s cycle — process detection, project auto-discovery, git refresh (`POST /api/scan/quick`); a manual Refresh button runs the same once. With Auto off, the Running column updates only on manual refresh.
+- Git refresh has two tiers. *Active* projects (a running process, or just auto-discovered) get the full `getGitInfo()` commit walk plus a tree-mtime pass. Every **other** project that still has a `.git` on disk gets a cheap working-tree refresh via `src/lib/git-status.mjs` — one `git --no-optional-locks status --porcelain=v2 --branch -u` per repo, 16 at a time — so branch/ahead/behind/uncommitted are current table-wide, not just for what's running. It escalates to the full walk only when `git_info.head_sha` shows HEAD moved (commit counts and remotes can't change while HEAD sits still) or when a directory has newly become a repo. A ledger with no `head_sha` yet counts as "no news", so the first cycle after an upgrade doesn't walk every repo at once. `-u` and the `HEAD` label for a detached checkout exist for parity with the full scan's simple-git call — without them the Uncommitted column would jump depending on which tier last touched the project (cross-checked against simple-git over ~500 real repos). Measured cost on a ~1200-entry ledger (≈500 live repos): 5-6s per cycle end to end.
 - Auto-discovery: unmatched process cwds under `SCAN_ROOTS` are walked up to the nearest directory with a project indicator and added to the JSONL automatically (bare directories are skipped; 5-min negative cache); weak-only group directories (just `.git` with sub-projects) are skipped, same as the full scan. Full scan remains the only path that removes deleted projects and refreshes scc/size metrics.
 - Full scan / Force rescan moved into the ⋯ menu next to the refresh controls.
 - Displays process count (green) and container count (blue) in Running column

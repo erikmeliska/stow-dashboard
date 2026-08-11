@@ -453,7 +453,7 @@ export function ScanControls({ lastSyncTime }) {
                         }
                     }}
                     disabled={isScanning && !autoRefresh}
-                    title={autoRefresh ? "Auto-refresh enabled (60s): processes, discovery, git — click to disable" : "Enable 60s auto-refresh (processes, discovery, git)"}
+                    title={autoRefresh ? "Auto-refresh enabled (60s): processes, discovery, git status of all repos — click to disable" : "Enable 60s auto-refresh (processes, discovery, git status of all repos)"}
                 >
                     {isScanning && scanType === 'quick' ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -467,7 +467,7 @@ export function ScanControls({ lastSyncTime }) {
                     size="sm"
                     onClick={() => handleScan('quick')}
                     disabled={isScanning}
-                    title="Refresh now: processes, project discovery, git status of active projects"
+                    title="Refresh now: processes, project discovery, git status of every project with a repo"
                 >
                     {isScanning && scanType === 'quick' ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

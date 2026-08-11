@@ -232,6 +232,9 @@ export class ProjectScanner {
 
             return {
                 project_created: firstCommit?.date || null,
+                // HEAD at scan time — the refresh cycle compares against this to
+                // decide whether a repo needs the full commit walk again.
+                head_sha: lastCommit?.hash || null,
                 current_user: currentUser,
                 current_email: currentEmail,
                 total_commits: totalCommits,
