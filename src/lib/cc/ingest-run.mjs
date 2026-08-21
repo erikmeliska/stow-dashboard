@@ -58,11 +58,17 @@ export async function listTranscripts(claudeDir) {
   return out;
 }
 
-/** Change signature for a session: size+mtime of the main file and every subagent file. */
+/**
+ * Change signature for a session: size+mtime of the main file and every
+ * subagent file. mtime is rounded to whole seconds on purpose: Node and Deno
+ * report `mtimeMs` with different sub-second precision, and the CLI (Node)
+ * and the desktop app (Deno) share one store — with raw ms they kept
+ * re-parsing each other's sessions.
+ */
 async function signatureOf(file, subagents) {
   const parts = [];
   for (const p of [file, ...subagents]) {
-    try { const s = await stat(p); parts.push(`${basename(p)}:${s.size}:${Math.floor(s.mtimeMs)}`); } catch { parts.push(`${basename(p)}:gone`); }
+    try { const s = await stat(p); parts.push(`${basename(p)}:${s.size}:${Math.floor(s.mtimeMs / 1000)}`); } catch { parts.push(`${basename(p)}:gone`); }
   }
   return parts.join('|');
 }
