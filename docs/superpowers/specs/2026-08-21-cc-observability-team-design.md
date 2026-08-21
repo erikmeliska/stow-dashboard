@@ -40,6 +40,9 @@ attribution, skills manifest, dashboard, and MCP — and create two tools both r
 - **Guard → standalone tiny package `cc-guard`** — one file, zero deps, installs into
   `~/.claude/settings.json`, must run on every machine even without the dashboard. It only
   blocks and appends guard events to a local audit that stow ingests.
+  **It lives in its own repo `/Users/ericsko/Projekty/_Bizz/TriSoft/cc-guard`** (its design and
+  plan moved there: `cc-guard/docs/design.md`, `cc-guard/docs/plan.md`). This document is the
+  observer/umbrella spec; cc-guard is referenced here only as an external audit-log producer.
 
 Rationale: the guard is a different discipline (real-time safety enforcement, must always run
 and be fast). Everything else is the same observability mission stow already started.
