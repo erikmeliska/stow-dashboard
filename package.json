@@ -39,7 +39,8 @@
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
     "stow": "node scripts/cli.mjs",
-    "cc:ingest": "node --disable-warning=ExperimentalWarning scripts/cc-ingest.mjs"
+    "cc:ingest": "node --disable-warning=ExperimentalWarning scripts/cc-ingest.mjs",
+    "cc:eval": "node --disable-warning=ExperimentalWarning scripts/cc-eval.mjs"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.3",
