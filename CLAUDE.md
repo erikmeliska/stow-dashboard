@@ -33,7 +33,7 @@ npm run analyze      # AI project analysis batch (incremental; --force, --retry-
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
-npm run cc:ingest    # Rebuild the Claude Code session store (data/cc-sessions.db) from ~/.claude transcripts + cc-guard audit
+npm run cc:ingest    # Update the Claude Code session store (data/cc-sessions.db) from ~/.claude transcripts + cc-guard audit (incremental; --full re-parses)
 npm run cc:eval -- --summaries [--limit N] [--id SID]  # On-demand AI summaries for stored sessions via the local `claude` CLI
 
 # Other
@@ -157,7 +157,9 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/cc/context.mjs` - Work context per session: git branch/repo, PR, tool-agnostic `ticket_id` + `ticket_source`
 - `src/lib/cc/quality.mjs` - Quality score v1 (transparent heuristic, components stored as `quality_detail`)
 - `src/lib/cc/summary.mjs` - AI summary engine (`distill` + `summarize` over `claude -p`, injectable exec) and `summarizeSession`
-- `scripts/cc-ingest.mjs` - CLI that walks `~/.claude/projects` (+ subagent transcripts), computes context + quality, upserts the session store
+- `src/lib/cc/ingest-run.mjs` - Ingest runner (`ingestAll`, serialised `runIngest`): walks `~/.claude/projects` (+ subagent transcripts), computes context + quality, upserts the store; incremental via `ingest_state` signatures
+- `scripts/cc-ingest.mjs` - Thin CLI over `ingest-run.mjs` (`--full`)
+- `src/app/api/sessions/ingest/route.js` - `POST` runs the incremental ingest (called by the `/sessions` page on load/Reload and by the refresh cycle)
 - `scripts/cc-eval.mjs` - CLI for on-demand AI summaries (`npm run cc:eval -- --summaries`)
 - `src/app/api/sessions/route.js` + `summarize/route.js` + `src/app/sessions/page.js` - Session list/detail API, summarize action, and the session viewer
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
@@ -258,7 +260,8 @@ Per-project AI token cost is derived from local CLI transcripts (`npm run usage`
 
 A second, session-centric view of Claude Code usage lives in `data/cc-sessions.db` (`node:sqlite`, built into Node ≥ 24 and Deno — no dependency; verified in the compiled Deno desktop binary, file-backed with WAL). It is a **new** store, not a migration: `projects_metadata.jsonl` and `usage.json` are untouched.
 
-- `npm run cc:ingest` walks `~/.claude/projects/<slug>/<session>.jsonl`, reuses `parseClaudeLines` + `costForClaude` for tokens/cost, and adds a second pass for tool/skill counts and `skill_edited` (an Edit/Write under a skills dir after a Skill call). Subagent transcripts (`<slug>/<session>/subagents/*.jsonl`) are folded into the parent session's tokens/cost/tool counts; turns and timing come from the main transcript. Full re-parse each run (~5 s for ~250 sessions); idempotent upserts.
+- `npm run cc:ingest` walks `~/.claude/projects/<slug>/<session>.jsonl`, reuses `parseClaudeLines` + `costForClaude` for tokens/cost, and adds a second pass for tool/skill counts and `skill_edited` (an Edit/Write under a skills dir after a Skill call). Subagent transcripts (`<slug>/<session>/subagents/*.jsonl`) are folded into the parent session's tokens/cost/tool counts; turns and timing come from the main transcript. **Incremental**: `ingest_state` keeps a size+mtime signature per session (main + subagent files); unchanged sessions are skipped (guard hits still refreshed), so a run is ~0.1 s when nothing changed vs ~5 s for a `--full` re-parse of ~250 sessions. Idempotent upserts.
+- The store is kept fresh automatically: the `/sessions` page POSTs `/api/sessions/ingest` on load and on Reload, and the 60 s refresh cycle (`/api/scan/quick`) runs the same incremental ingest after the usage rebuild (`cc_ingested` event). Concurrent callers share one run.
 - cc-guard (separate repo `../cc-guard`) appends `{ts, action, rule, command, session_id, cwd}` lines to `~/.claude/cc-guard/audit.jsonl`; that file is the only contract between the two repos and is ingested as `guard_hits`. Missing audit = zero hits, not an error.
 - `GET /api/sessions?project=&limit=` lists, `?id=` returns `{session, tools, skills, guard_hits}`; `/sessions` renders them. The route opens the DB per request (never at module eval — see State Dir).
 - `node:sqlite` still emits an ExperimentalWarning on Node 24, so `npm test` and `cc:ingest` run with `--disable-warning=ExperimentalWarning`.

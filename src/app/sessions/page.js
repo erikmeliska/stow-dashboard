@@ -157,6 +157,8 @@ export default function SessionsPage() {
   async function load() {
     setLoading(true)
     try {
+      // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
+      await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
       const r = await fetch('/api/sessions?limit=1000')
       const d = await r.json()
       setSessions(d.sessions || [])

@@ -6,6 +6,7 @@ import { collectProjectProcesses } from '@/lib/processes.mjs'
 import { resolveCandidateRoot, NegativeCache, dirHasProjectIndicator, isWeakOnlyGroup } from '@/lib/discovery.mjs'
 import { getScanRoots } from '@/lib/scan-roots.mjs'
 import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
+import { runIngest } from '@/lib/cc/ingest-run.mjs'
 import { refreshProjectGit } from '@/lib/git-status.mjs'
 import { ledgerFile } from '@/lib/state-dir.mjs'
 
@@ -233,6 +234,14 @@ export async function POST() {
                     sendEvent({ type: 'usage_updated', ...usage })
                 } catch (usageErr) {
                     sendEvent({ type: 'usage_error', message: usageErr.message })
+                }
+
+                // Claude Code session store (incremental; never fatal to the refresh cycle)
+                try {
+                    const cc = await runIngest()
+                    sendEvent({ type: 'cc_ingested', ...cc })
+                } catch (ccErr) {
+                    sendEvent({ type: 'cc_ingest_error', message: ccErr.message })
                 }
 
                 const duration = Math.round((Date.now() - startTime) / 1000)
