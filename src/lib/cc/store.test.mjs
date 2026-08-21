@@ -44,3 +44,28 @@ test('listSessions filters by project and orders newest first', () => {
 test('getSession returns null for unknown id', () => {
   assert.equal(getSession(seed(), 'nope'), null);
 });
+
+import { DatabaseSync } from 'node:sqlite';
+import { setSummary } from './store.mjs';
+
+test('openStore migrates an old phase-1 DB in place', () => {
+  const raw = new DatabaseSync(':memory:');
+  raw.exec('CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_dir TEXT, started_at TEXT, jira_ticket TEXT, quality_score REAL, summary TEXT)');
+  raw.exec("INSERT INTO sessions (session_id) VALUES ('old')");
+  const db = openStore(raw);
+  const cols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+  for (const c of ['ticket_id', 'ticket_source', 'pr', 'quality_detail', 'summary_model', 'summarized_at']) assert.ok(cols.includes(c), c);
+  assert.equal(getSession(db, 'old').session.session_id, 'old');
+});
+
+test('re-upsert keeps the summary, setSummary writes it', () => {
+  const db = seed();
+  setSummary(db, 's1', { summary: '{"what":"x"}', model: 'claude-haiku-4-5', at: '2026-08-21T12:00:00Z' });
+  upsertSession(db, { session_id: 's1', project_dir: '/p/a', model: 'y', ticket_id: 'ABC-1', ticket_source: 'branch', git_branch: 'feat/ABC-1', quality_score: 80, quality_detail: '{"verified":true}' });
+  const s = getSession(db, 's1').session;
+  assert.equal(s.summary, '{"what":"x"}');
+  assert.equal(s.summary_model, 'claude-haiku-4-5');
+  assert.equal(s.model, 'y');
+  assert.equal(s.ticket_id, 'ABC-1');
+  assert.equal(s.quality_score, 80);
+});

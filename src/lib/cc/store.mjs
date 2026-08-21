@@ -22,8 +22,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   started_at TEXT, ended_at TEXT, duration_s REAL, active_s REAL,
   input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER,
   cache_write_5m INTEGER, cache_write_1h INTEGER, cost_usd REAL,
-  turns INTEGER, status TEXT, git_repo TEXT, git_branch TEXT, jira_ticket TEXT,
-  quality_score REAL, summary TEXT, raw_ref TEXT, ingested_at TEXT
+  turns INTEGER, status TEXT, git_repo TEXT, git_branch TEXT, pr TEXT,
+  ticket_id TEXT, ticket_source TEXT,
+  quality_score REAL, quality_detail TEXT, summary TEXT, summary_model TEXT, summarized_at TEXT,
+  raw_ref TEXT, ingested_at TEXT
 );
 CREATE TABLE IF NOT EXISTS tool_usage (session_id TEXT, tool TEXT, count INTEGER, PRIMARY KEY (session_id, tool));
 CREATE TABLE IF NOT EXISTS skill_usage (session_id TEXT, skill TEXT, count INTEGER, edited INTEGER DEFAULT 0, PRIMARY KEY (session_id, skill));
@@ -33,26 +35,52 @@ CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
 CREATE INDEX IF NOT EXISTS idx_guard_session ON guard_hits (session_id);
 `;
 
+/** Ingest-owned columns: rewritten on every upsert. Summary columns are NOT here. */
 const SESSION_COLS = [
   'session_id', 'project_dir', 'cwd', 'model', 'started_at', 'ended_at',
   'duration_s', 'active_s', 'input_tokens', 'output_tokens', 'cache_read',
   'cache_write_5m', 'cache_write_1h', 'cost_usd', 'turns', 'status', 'raw_ref', 'ingested_at',
+  'git_repo', 'git_branch', 'pr', 'ticket_id', 'ticket_source', 'quality_score', 'quality_detail',
 ];
 
-/** Open (creating if needed) the session store; `path` defaults to the state-dir DB. */
+/** Columns added after phase 1; `openStore` adds them to older DB files in place. */
+const MIGRATION_COLS = {
+  ticket_id: 'TEXT', ticket_source: 'TEXT', pr: 'TEXT',
+  quality_detail: 'TEXT', summary_model: 'TEXT', summarized_at: 'TEXT',
+};
+
+function ensureColumns(db) {
+  const have = new Set(db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name));
+  for (const [col, type] of Object.entries(MIGRATION_COLS)) {
+    if (!have.has(col)) db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
+  }
+}
+
+/**
+ * Open (creating if needed) the session store and bring its schema up to date.
+ * `path` defaults to the state-dir DB; an already-open DatabaseSync is accepted too.
+ */
 export function openStore(path) {
-  const db = new DatabaseSync(path || dataFile(DB_NAME));
-  if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+  const db = path instanceof DatabaseSync ? path : new DatabaseSync(path || dataFile(DB_NAME));
+  if (!(path instanceof DatabaseSync) && path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  ensureColumns(db);
   return db;
 }
 
 export function upsertSession(db, row) {
   const cols = SESSION_COLS.join(', ');
   const ph = SESSION_COLS.map((c) => '@' + c).join(', ');
+  const set = SESSION_COLS.filter((c) => c !== 'session_id').map((c) => `${c} = excluded.${c}`).join(', ');
   const params = {};
   for (const c of SESSION_COLS) params[c] = row[c] ?? null;
-  db.prepare(`INSERT OR REPLACE INTO sessions (${cols}) VALUES (${ph})`).run(params);
+  db.prepare(`INSERT INTO sessions (${cols}) VALUES (${ph}) ON CONFLICT(session_id) DO UPDATE SET ${set}`).run(params);
+}
+
+/** Summary columns live outside the ingest upsert so re-ingests never erase them. */
+export function setSummary(db, sessionId, { summary, model, at }) {
+  db.prepare('UPDATE sessions SET summary = ?, summary_model = ?, summarized_at = ? WHERE session_id = ?')
+    .run(summary ?? null, model ?? null, at ?? new Date().toISOString(), sessionId);
 }
 
 export function replaceTools(db, sessionId, counts) {
