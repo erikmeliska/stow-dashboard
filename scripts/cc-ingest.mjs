@@ -8,7 +8,11 @@
  * into their parent session: tokens, cost, tool and skill counts are summed;
  * turns / duration / active time stay those of the main transcript.
  *
- * Phase 1b: a full re-parse on every run (no incremental skip yet).
+ * Work context (branch/repo/PR/ticket) and the quality score are computed from
+ * the main transcript only (subagents excluded) and rewritten on every run;
+ * AI summaries are NOT touched here (see scripts/cc-eval.mjs).
+ *
+ * A full re-parse on every run (no incremental skip yet).
  *
  *   npm run cc:ingest
  *   CC_CLAUDE_DIR=/x/projects CC_GUARD_AUDIT=/x/audit.jsonl npm run cc:ingest
@@ -20,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits } from '../src/lib/cc/store.mjs';
 import { parseSessionText } from '../src/lib/cc/ingest.mjs';
 import { parseGuardAudit } from '../src/lib/cc/guard-ingest.mjs';
+import { extractContext, ticketRegex } from '../src/lib/cc/context.mjs';
+import { scoreSession, verifyRegex } from '../src/lib/cc/quality.mjs';
 
 async function safeReaddir(dir) {
   try { return await readdir(dir, { withFileTypes: true }); } catch { return []; }
@@ -60,7 +66,9 @@ export function mergeSubagent(parent, sub) {
   return parent;
 }
 
-export async function ingestAll({ claudeDir, guardAudit, db }) {
+export async function ingestAll({ claudeDir, guardAudit, db, env = process.env }) {
+  const ticketPattern = ticketRegex(env);
+  const verifyPattern = verifyRegex(env);
   let guardMap = new Map();
   try { guardMap = parseGuardAudit(await readFile(guardAudit, 'utf8')); } catch { /* no audit yet */ }
 
@@ -75,12 +83,17 @@ export async function ingestAll({ claudeDir, guardAudit, db }) {
       try { st = await readFile(sf, 'utf8'); } catch { continue; }
       mergeSubagent(row, parseSessionText(st, { fileName: basename(sf), rawRef: sf }));
     }
+    const hits = guardMap.get(row.session_id) || [];
+    Object.assign(row, extractContext(row._lines, { ticketPattern }));
+    const q = scoreSession(row._lines, { guardHits: hits, verifyPattern });
+    row.quality_score = q.score;
+    row.quality_detail = JSON.stringify(q.detail);
     db.exec('BEGIN');
     try {
       upsertSession(db, row);
       replaceTools(db, row.session_id, row._tools);
       replaceSkills(db, row.session_id, row._skills, row._editedSkills);
-      replaceGuardHits(db, row.session_id, guardMap.get(row.session_id) || []);
+      replaceGuardHits(db, row.session_id, hits);
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');

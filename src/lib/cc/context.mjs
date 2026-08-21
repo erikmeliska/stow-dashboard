@@ -5,7 +5,14 @@
  */
 import { bashCommands, toolResults, userPrompts } from './transcript.mjs';
 
-export const DEFAULT_TICKET_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
+/**
+ * Default ticket shape: letters-only project key (2–10 chars), optional second
+ * segment (TRI-STOW-0003), then a number. Letters-only keeps hex ids and
+ * `UTF-8`-style tokens out; NOT_TICKETS drops the common false positives that
+ * still fit the shape. Override with CC_TICKET_PATTERN for other conventions.
+ */
+export const DEFAULT_TICKET_RE = /\b[A-Z]{2,10}(?:-[A-Z]{2,10})?-\d+\b/;
+const NOT_TICKETS = /^(?:UTF|ISO|RFC|SHA|CVE|IPV|MD|ECMA|HTTP|TLS|SSL|ID|UUID)-/;
 
 /** Ticket regex from env (CC_TICKET_PATTERN); invalid or unset → default. */
 export function ticketRegex(env = process.env) {
@@ -32,8 +39,14 @@ function mostCommonBranch(lines) {
   return best;
 }
 
-function firstMatch(re, texts) {
-  for (const t of texts) { const m = re.exec(t); if (m) return m[0]; }
+function firstMatch(re, texts, isDefault) {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+  for (const t of texts) {
+    for (const m of String(t).matchAll(g)) {
+      if (isDefault && NOT_TICKETS.test(m[0])) continue;
+      return m[0];
+    }
+  }
   return null;
 }
 
@@ -44,17 +57,18 @@ function firstMatch(re, texts) {
  */
 export function extractContext(lines, { ticketPattern = DEFAULT_TICKET_RE } = {}) {
   const re = new RegExp(ticketPattern.source, ticketPattern.flags.replace('g', ''));
+  const isDefault = re.source === DEFAULT_TICKET_RE.source;
   const branch = mostCommonBranch(lines);
   const cmds = bashCommands(lines);
   const results = toolResults(lines);
   const prompts = userPrompts(lines);
 
   let ticket_id = null, ticket_source = null;
-  if (branch && (ticket_id = firstMatch(re, [branch]))) ticket_source = 'branch';
-  else if ((ticket_id = firstMatch(re, prompts.slice(0, 1)))) ticket_source = 'prompt';
+  if (branch && (ticket_id = firstMatch(re, [branch], isDefault))) ticket_source = 'branch';
+  else if ((ticket_id = firstMatch(re, prompts.slice(0, 1), isDefault))) ticket_source = 'prompt';
   else {
     const commits = cmds.filter((c) => /\bgit\s+commit\b/.test(c));
-    if ((ticket_id = firstMatch(re, commits))) ticket_source = 'commit';
+    if ((ticket_id = firstMatch(re, commits, isDefault))) ticket_source = 'commit';
   }
 
   let git_repo = null;

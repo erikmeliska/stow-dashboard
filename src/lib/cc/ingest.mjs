@@ -10,6 +10,7 @@
  */
 import { newFileState, parseClaudeLines } from '../usage.mjs';
 import { costForClaude } from '../usage-pricing.mjs';
+import { parseLines } from './transcript.mjs';
 
 export const SKILL_PATH_RE = /(?:^|\/)(?:\.claude\/skills|skills)\/[^/]+\//;
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -22,12 +23,13 @@ function toSeconds(a, b) {
 /**
  * @param {string} text   raw JSONL transcript
  * @param {{fileName?: string, rawRef?: string}} meta
- * @returns session row (store.mjs `sessions` keys) + `_tools`, `_skills`, `_editedSkills`
+ * @returns session row (store.mjs `sessions` keys) + `_tools`, `_skills`, `_editedSkills`, `_lines` (parsed lines)
  */
 export function parseSessionText(text, meta = {}) {
   const rawLines = String(text || '').split('\n').filter((l) => l.trim());
   const state = newFileState('claude');
   parseClaudeLines(rawLines, state); // tokens per model + cwd + firstTs/lastTs/activeSeconds
+  const lines = parseLines(text);
 
   const tools = {};
   const skills = {};
@@ -36,9 +38,7 @@ export function parseSessionText(text, meta = {}) {
   let sessionId = null;
   let lastSkill = null;
 
-  for (const raw of rawLines) {
-    let d;
-    try { d = JSON.parse(raw); } catch { continue; }
+  for (const d of lines) {
     if (!sessionId && typeof d.sessionId === 'string') sessionId = d.sessionId;
     if (d.type !== 'assistant') continue;
     turns++;
@@ -81,6 +81,6 @@ export function parseSessionText(text, meta = {}) {
     cache_write_5m: totals.cacheWrite5m, cache_write_1h: totals.cacheWrite1h,
     cost_usd: priced ? cost : null, turns, status: ended ? 'done' : 'unknown',
     raw_ref: meta.rawRef || null, ingested_at: new Date().toISOString(),
-    _tools: tools, _skills: skills, _editedSkills: editedSkills,
+    _tools: tools, _skills: skills, _editedSkills: editedSkills, _lines: lines,
   };
 }

@@ -49,3 +49,11 @@ test('no signals → all null; custom ticket pattern via env', () => {
   const lines = parseLines(J({ type: 'user', gitBranch: 'main', message: { content: 'see #1234' } }));
   assert.equal(extractContext(lines, { ticketPattern: /#(\d+)/ }).ticket_id, '#1234');
 });
+
+test('default pattern: multi-segment keys match whole, hex ids and UTF-8 style tokens do not', () => {
+  const mk = (t) => parseLines(J({ type: 'user', gitBranch: 'main', message: { content: t } }));
+  assert.equal(extractContext(mk('see TRI-STOW-0003 and UTF-8')).ticket_id, 'TRI-STOW-0003');
+  assert.equal(extractContext(mk('encode as UTF-8 or UTF-16')).ticket_id, null);
+  assert.equal(extractContext(mk('id B1D63794-0002 is hex')).ticket_id, null);
+  assert.equal(extractContext(mk('UTF-8 first, then real API-77')).ticket_id, 'API-77');
+});

@@ -66,3 +66,24 @@ test('subagent transcripts are folded into the parent session', async () => {
   assert.equal(got.tools.find((t) => t.tool === 'Bash').count, 2);
   assert.equal(got.tools.find((t) => t.tool === 'Grep').count, 1);
 });
+
+test('ingestAll stores work context and quality score', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ccp-'));
+  const proj = join(root, 'projects', '-p-a');
+  await mkdir(proj, { recursive: true });
+  const lines = [
+    { type: 'user', cwd: '/p/a', sessionId: 'sess-q', gitBranch: 'feat/QA-12-x', timestamp: '2026-08-21T10:00:00Z', message: { content: 'go' } },
+    { type: 'assistant', sessionId: 'sess-q', gitBranch: 'feat/QA-12-x', timestamp: '2026-08-21T10:00:05Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] } },
+    { type: 'user', sessionId: 'sess-q', gitBranch: 'feat/QA-12-x', message: { content: [{ type: 'tool_result', content: 'ok', is_error: false }] } },
+    { type: 'assistant', sessionId: 'sess-q', gitBranch: 'feat/QA-12-x', timestamp: '2026-08-21T10:00:09Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'done' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n');
+  await writeFile(join(proj, 'sess-q.jsonl'), lines, 'utf8');
+  const db = openStore(':memory:');
+  await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope'), db, env: {} });
+  const s = getSession(db, 'sess-q').session;
+  assert.equal(s.git_branch, 'feat/QA-12-x');
+  assert.equal(s.ticket_id, 'QA-12');
+  assert.equal(s.ticket_source, 'branch');
+  assert.equal(s.quality_score, 100);
+  assert.equal(JSON.parse(s.quality_detail).verified, true);
+});
