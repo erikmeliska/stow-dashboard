@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
@@ -27,7 +27,7 @@ const ACTION_CLS = {
   override: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
 }
 
-function DetailPanel({ detail }) {
+function DetailPanel({ detail, onSummarize, summarizing, summaryError }) {
   if (!detail) return <p className="text-sm text-muted-foreground">Select a session to see its tools, skills and guard hits.</p>
   if (!detail.session) return <p className="text-sm text-muted-foreground">Session not found.</p>
   const s = detail.session
@@ -47,6 +47,16 @@ function DetailPanel({ detail }) {
         <dt className="text-muted-foreground">Cache read / write</dt><dd>{fmtTokens(s.cache_read)} / {fmtTokens((s.cache_write_5m || 0) + (s.cache_write_1h || 0))}</dd>
         <dt className="text-muted-foreground">Cost (list price)</dt><dd>{fmtCost(s.cost_usd)}</dd>
       </dl>
+      <Section title="Context" empty="No git/ticket context found in the transcript">
+        {[
+          s.git_repo && <Row key="repo" label="Repo" value={s.git_repo} />,
+          s.git_branch && <Row key="branch" label="Branch" value={s.git_branch} />,
+          s.pr && <Row key="pr" label="PR" value={`#${s.pr}`} />,
+          s.ticket_id && <Row key="ticket" label={<>Ticket <span className="text-muted-foreground">({s.ticket_source})</span></>} value={s.ticket_id} />,
+        ].filter(Boolean)}
+      </Section>
+      <QualityBlock s={s} />
+      <SummaryBlock s={s} onSummarize={onSummarize} summarizing={summarizing} error={summaryError} />
       <Section title="Tools" empty="No tool calls">
         {detail.tools.map((t) => <Row key={t.tool} label={t.tool} value={t.count} />)}
       </Section>
@@ -63,6 +73,56 @@ function DetailPanel({ detail }) {
           </div>
         ))}
       </Section>
+    </div>
+  )
+}
+
+function QualityBlock({ s }) {
+  let d = null
+  try { d = s.quality_detail ? JSON.parse(s.quality_detail) : null } catch { d = null }
+  return (
+    <div>
+      <h3 className="font-medium mb-1">Quality <span className="text-xs font-normal text-muted-foreground">heuristic</span></h3>
+      {s.quality_score == null ? <p className="text-xs text-muted-foreground">Not scored — run <code>npm run cc:ingest</code>.</p> : (
+        <>
+          <div className="text-2xl font-semibold tabular-nums">{s.quality_score}<span className="text-sm font-normal text-muted-foreground">/100</span></div>
+          {d && (
+            <div className="divide-y">
+              <Row label="Verification ran" value={`${d.verified ? 'yes' : 'no'} · ${d.points.verified}`} />
+              <Row label="Clean finish" value={`${d.clean_finish ? 'yes' : 'no'} · ${d.points.clean_finish}`} />
+              <Row label="Tool error rate" value={`${d.error_rate_pct}% · ${d.points.error_rate}`} />
+              <Row label="Loops" value={`${d.loops} · ${d.points.no_loops}`} />
+              <Row label="Guard incidents" value={`${d.guard_incidents} · ${d.points.guard_clean}`} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function SummaryBlock({ s, onSummarize, summarizing, error }) {
+  let sum = null
+  try { sum = s.summary ? JSON.parse(s.summary) : null } catch { sum = null }
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="font-medium">Summary</h3>
+        <Button variant="outline" size="sm" onClick={() => onSummarize(s.session_id)} disabled={summarizing}>
+          <Sparkles className={`h-3.5 w-3.5 mr-1 ${summarizing ? 'animate-pulse' : ''}`} /> {summarizing ? 'Working…' : sum ? 'Regenerate' : 'Generate'}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {!sum && !error && <p className="text-xs text-muted-foreground">No summary yet — uses your local <code>claude</code> CLI (~1k tokens).</p>}
+      {sum && (
+        <div className="space-y-1 text-xs">
+          <p>{sum.what}</p>
+          <Row label="Outcome" value={sum.outcome} />
+          {sum.improvements?.length > 0 && <div><span className="text-muted-foreground">Improvements:</span><ul className="list-disc pl-4">{sum.improvements.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+          {sum.followups?.length > 0 && <div><span className="text-muted-foreground">Follow-ups:</span><ul className="list-disc pl-4">{sum.followups.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+          <p className="text-muted-foreground">{s.summary_model} · {fmtStart(s.summarized_at)}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -91,6 +151,8 @@ export default function SessionsPage() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
+  const [summarizing, setSummarizing] = useState(false)
+  const [summaryError, setSummaryError] = useState(null)
 
   async function load() {
     setLoading(true)
@@ -105,9 +167,24 @@ export default function SessionsPage() {
   useEffect(() => { load() }, [])
 
   async function open(id) {
-    setSelected(id)
+    setSelected(id); setSummaryError(null)
     const r = await fetch(`/api/sessions?id=${encodeURIComponent(id)}`)
     setDetail(await r.json())
+  }
+
+  async function summarize(id) {
+    setSummarizing(true); setSummaryError(null)
+    try {
+      const r = await fetch('/api/sessions/summarize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+      const d = await r.json()
+      if (!r.ok) { setSummaryError(d.error ? `${d.error}${d.detail ? ` — ${d.detail}` : ''}` : `HTTP ${r.status}`); return }
+      setDetail(d)
+      setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, summary: d.session.summary } : s)))
+    } catch (e) {
+      setSummaryError(String(e?.message || e))
+    } finally {
+      setSummarizing(false)
+    }
   }
 
   const totalCost = sessions.reduce((a, s) => a + (s.cost_usd || 0), 0)
@@ -141,11 +218,13 @@ export default function SessionsPage() {
               <tr className="text-left text-xs text-muted-foreground border-b">
                 <th className="py-2 pr-3 font-medium">Started</th>
                 <th className="py-2 pr-3 font-medium">Project</th>
+                <th className="py-2 pr-3 font-medium">Ticket</th>
                 <th className="py-2 pr-3 font-medium">Model</th>
                 <th className="py-2 pr-3 font-medium text-right">Turns</th>
                 <th className="py-2 pr-3 font-medium text-right">Tokens</th>
                 <th className="py-2 pr-3 font-medium text-right">Cost</th>
                 <th className="py-2 pr-3 font-medium text-right">Active</th>
+                <th className="py-2 pr-3 font-medium text-right" title="Quality score (heuristic)">Q</th>
                 <th className="py-2 font-medium"></th>
               </tr>
             </thead>
@@ -158,11 +237,13 @@ export default function SessionsPage() {
                 >
                   <td className="py-1.5 pr-3 whitespace-nowrap tabular-nums">{fmtStart(s.started_at)}</td>
                   <td className="py-1.5 pr-3 truncate max-w-[16rem]" title={s.project_dir || ''}>{projectName(s.project_dir)}</td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap font-mono text-xs" title={s.ticket_source ? `from ${s.ticket_source}` : ''}>{s.ticket_id || ''}</td>
                   <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{s.model || '—'}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums">{s.turns}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens((s.input_tokens || 0) + (s.output_tokens || 0))}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums">{fmtCost(s.cost_usd)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums">{fmtDuration(s.active_s)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">{s.quality_score ?? '—'}</td>
                   <td className="py-1.5">{s.status !== 'done' && <span className="text-xs text-muted-foreground">{s.status}</span>}</td>
                 </tr>
               ))}
@@ -170,7 +251,7 @@ export default function SessionsPage() {
           </table>
         </div>
         <aside className="w-96 flex-none border-l overflow-auto p-4">
-          <DetailPanel detail={detail} />
+          <DetailPanel detail={detail} onSummarize={summarize} summarizing={summarizing} summaryError={summaryError} />
         </aside>
       </div>
     </div>
