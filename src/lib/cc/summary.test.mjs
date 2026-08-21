@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, summarize, summarizeSession, SummaryError } from './summary.mjs';
+import { distill, summarize, summarizeSession, resolveClaudeBin, SummaryError } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -29,7 +29,7 @@ test('distill keeps prompts, tool calls and assistant text, and respects maxChar
 test('summarize calls claude -p with the safety/cost flags and parses structured output', async () => {
   const calls = [];
   const exec = async (cmd, args, opts) => { calls.push([cmd, args, opts]); return fakeExec(okResult)(); };
-  const r = await summarize('text', { exec, model: 'claude-haiku-4-5', cwd: '/tmp/x' });
+  const r = await summarize('text', { exec, model: 'claude-haiku-4-5', cwd: '/tmp/x', bin: 'claude' });
   assert.deepEqual(r, { ...okResult, model: 'claude-haiku-4-5' });
   const [cmd, args, opts] = calls[0];
   assert.equal(cmd, 'claude');
@@ -64,4 +64,11 @@ test('summarizeSession reads raw_ref, stores the summary, and reports a missing 
   assert.equal(JSON.parse(getSession(db, 's').session.summary).outcome, 'done');
   await assert.rejects(summarizeSession(db, 'gone', { exec: fakeExec(okResult) }), (e) => e.kind === 'not-found');
   await assert.rejects(summarizeSession(db, 'nope', { exec: fakeExec(okResult) }), (e) => e.kind === 'not-found');
+});
+
+test('resolveClaudeBin: env override, then well-known paths, then bare name', () => {
+  assert.equal(resolveClaudeBin({ CC_CLAUDE_BIN: '/x/claude' }, '/h', () => false), '/x/claude');
+  assert.equal(resolveClaudeBin({}, '/h', (p) => p === '/h/.local/bin/claude'), '/h/.local/bin/claude');
+  assert.equal(resolveClaudeBin({}, '/h', (p) => p === '/opt/homebrew/bin/claude'), '/opt/homebrew/bin/claude');
+  assert.equal(resolveClaudeBin({}, '/h', () => false), 'claude');
 });

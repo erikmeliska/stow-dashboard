@@ -12,7 +12,9 @@
  * fails (is_error, no tokens) on Claude Code 2.1.x — do not add it.
  */
 import { readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { execClosedStdin } from '../analyzer.mjs';
 import { assistantTexts, parseLines, toolUses, userPrompts } from './transcript.mjs';
 import { getSession, setSummary } from './store.mjs';
@@ -37,6 +39,23 @@ const SYSTEM_PROMPT = `You summarise one Claude Code session from a condensed tr
 Be concrete. No marketing language. Write in the language the user wrote in.`;
 
 const OUTCOMES = new Set(['done', 'partial', 'abandoned']);
+
+/**
+ * Where the `claude` binary usually lives. The desktop app launched from the
+ * Dock gets macOS's minimal GUI PATH (no ~/.local/bin, no Homebrew), so a bare
+ * `claude` fails with ENOENT there even though it works in a terminal.
+ * Resolution: CC_CLAUDE_BIN env → first existing well-known path → 'claude' on PATH.
+ */
+export function resolveClaudeBin(env = process.env, home = homedir(), exists = existsSync) {
+  if (env.CC_CLAUDE_BIN) return env.CC_CLAUDE_BIN;
+  const candidates = [
+    join(home, '.local', 'bin', 'claude'),
+    join(home, '.claude', 'local', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ];
+  return candidates.find((p) => exists(p)) || 'claude';
+}
 
 export class SummaryError extends Error {
   /** @param {'cli-missing'|'cli-failed'|'bad-json'|'not-found'} kind */
@@ -103,13 +122,18 @@ export async function summarize(distillate, {
   model = process.env.CC_SUMMARY_MODEL || 'haiku',
   timeout = 120000,
   cwd = tmpdir(), // never the repo: a project CLAUDE.md would be pulled into context
+  bin = resolveClaudeBin(),
 } = {}) {
   const args = claudeArgs({ model, prompt: `Transcript:\n${distillate}` });
+  // The desktop app's GUI environment has a bare PATH; make sure the CLI's own
+  // dir and the usual tool dirs are visible to whatever it spawns.
+  const PATH = [bin.includes('/') ? dirname(bin) : null, process.env.PATH, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
+    .filter(Boolean).join(':');
   let out;
   try {
-    out = await exec('claude', args, { timeout, maxBuffer: 8 * 1024 * 1024, cwd });
+    out = await exec(bin, args, { timeout, maxBuffer: 8 * 1024 * 1024, cwd, env: { ...process.env, PATH } });
   } catch (e) {
-    if (e?.code === 'ENOENT') throw new SummaryError('cli-missing', 'claude CLI not found on PATH');
+    if (e?.code === 'ENOENT') throw new SummaryError('cli-missing', `claude CLI not found (tried ${bin}); set CC_CLAUDE_BIN in .env.local`);
     throw new SummaryError('cli-failed', `claude exited ${e?.code ?? '?'}`, (e?.stderr || e?.message || '').split('\n')[0]);
   }
   let parsed;
