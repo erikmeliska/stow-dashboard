@@ -18,7 +18,17 @@ function fmtDuration(s) {
   const m = Math.round(s / 60)
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`
 }
-function fmtStart(iso) { return iso ? iso.slice(0, 16).replace('T', ' ') : '—' }
+function fmtStart(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const p = (n) => String(n).padStart(2, '0')
+  // Local time (transcripts store UTC); rendered client-side only, so no hydration mismatch.
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+const ACTIVE_MS = 10 * 60 * 1000
+/** A session is "active" while its transcript is still being written (last activity < 10 min ago). */
+function isActive(s) { return s.ended_at ? Date.now() - Date.parse(s.ended_at) < ACTIVE_MS : false }
 function projectName(dir) { return dir ? dir.split('/').filter(Boolean).slice(-1)[0] : '—' }
 
 const ACTION_CLS = {
@@ -246,7 +256,10 @@ export default function SessionsPage() {
                   <td className="py-1.5 pr-3 text-right tabular-nums">{fmtCost(s.cost_usd)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums">{fmtDuration(s.active_s)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">{s.quality_score ?? '—'}</td>
-                  <td className="py-1.5">{s.status !== 'done' && <span className="text-xs text-muted-foreground">{s.status}</span>}</td>
+                  <td className="py-1.5">
+                    {isActive(s) && <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">active</span>}
+                    {s.status !== 'done' && <span className="text-xs text-muted-foreground">{s.status}</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>

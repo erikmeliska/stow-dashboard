@@ -63,14 +63,15 @@ export async function listTranscripts(claudeDir) {
  * subagent file. mtime is rounded to whole seconds on purpose: Node and Deno
  * report `mtimeMs` with different sub-second precision, and the CLI (Node)
  * and the desktop app (Deno) share one store — with raw ms they kept
- * re-parsing each other's sessions.
+ * re-parsing each other's sessions. Parts are sorted for the same reason:
+ * readdir order differs between runtimes.
  */
 async function signatureOf(file, subagents) {
   const parts = [];
   for (const p of [file, ...subagents]) {
     try { const s = await stat(p); parts.push(`${basename(p)}:${s.size}:${Math.floor(s.mtimeMs / 1000)}`); } catch { parts.push(`${basename(p)}:gone`); }
   }
-  return parts.join('|');
+  return parts.sort().join('|');
 }
 
 const SUM_KEYS = ['input_tokens', 'output_tokens', 'cache_read', 'cache_write_5m', 'cache_write_1h'];
