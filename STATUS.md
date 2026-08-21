@@ -1,9 +1,9 @@
 ---
 status: active
-updated: 2026-07-06
+updated: 2026-08-21
 ---
 
-NEXT: Open-with pickers + settings dialog SHIPPED (spec docs/superpowers/specs/2026-07-06-open-with-picker-settings-design.md). Auto-discovery + unified 60s refresh SHIPPED (spec docs/superpowers/specs/2026-07-05-unified-refresh-auto-discovery-design.md). Deno desktop switch DONE: smoke test passed after tray fixes (win.hide() quirk → off-screen park), ADR 0002 Accepted (Deno shell shipped, Tauri kept as fallback), Deno app installed in /Applications, Tauri app removed. After that: remaining Command Center work — Phase 06 (browser tab triage [needs live browser], Obsidian Command Center mirror `stow mirror` [buildable], Cowork Dispatcher pattern), and the DEFERRED Phase-02 Task E (Innovis vendored rollout — needs your strategy choice). Triage bridge DONE (stow task add CLI + Raycast Triage Intake; _Sandbox excluded). User actions: reconnect stow MCP; `npm run dev` Raycast + set `intakeFile` pref + subscribe phone to ntfy.ixy.sk/claude.
+NEXT: CC observability phase 1b SHIPPED on branch cc-observability (node:sqlite session store + `npm run cc:ingest` + /sessions viewer; plan docs/superpowers/plans/2026-08-21-stow-session-ingest.md). Next: merge cc-observability → main, then phase 2 (AI summaries, quality score, git/Jira work-context) per docs/superpowers/specs/2026-08-21-cc-observability-team-design.md; follow-ups: incremental ingest (size/mtime skip), wire cc:ingest into the refresh cycle, guard_hits for sessions without a transcript yet. Older candidates: fáza 3 AI analýzy, usage follow-upy (formatTokens, usage_* SSE, worktree sessions → unmatched), scanner UTF-16 chip.
 
 ## Links
 - http://localhost:3089 — dev server

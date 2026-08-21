@@ -33,6 +33,7 @@ npm run analyze      # AI project analysis batch (incremental; --force, --retry-
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
+npm run cc:ingest    # Rebuild the Claude Code session store (data/cc-sessions.db) from ~/.claude transcripts + cc-guard audit
 
 # Other
 npm run lint         # Run ESLint
@@ -148,6 +149,11 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
 - `scripts/calibrate-usage.mjs` - Hand-run cross-check of `data/usage.json` cost against `ccusage` (read-only, not part of `npm test`)
+- `src/lib/cc/store.mjs` - `node:sqlite` session store (`data/cc-sessions.db`): sessions, tool_usage, skill_usage, guard_hits
+- `src/lib/cc/ingest.mjs` - Pure per-session transcript parser (reuses `usage.mjs` + `usage-pricing.mjs`; adds tools/skills/`skill_edited`)
+- `src/lib/cc/guard-ingest.mjs` - Parses cc-guard's `~/.claude/cc-guard/audit.jsonl` into per-session guard hits
+- `scripts/cc-ingest.mjs` - CLI that walks `~/.claude/projects` (+ subagent transcripts) and upserts the session store
+- `src/app/api/sessions/route.js` + `src/app/sessions/page.js` - Session list/detail API and the session viewer
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
 - `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
 - `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
@@ -241,6 +247,16 @@ Per-project AI token cost is derived from local CLI transcripts (`npm run usage`
 - Refreshed in every refresh cycle and on demand via `/api/usage/rebuild`
 - After `npm run pricing:sync` (or whenever the `$` figures look off), revalidate against [ccusage](https://github.com/ryoppippi/ccusage) — an independent third-party tool reading the same transcripts — with `node scripts/calibrate-usage.mjs`. It's a hand-run script, not a `node --test` test (it shells out to the `ccusage` binary), and it's read-only: it never rebuilds `data/usage.json`, so run `npm run usage` first if the ledger is stale or missing.
 - Known current FAIL (`TRI-STOW-0003`): the gate reports a large Claude drift against ccusage. This is a pre-existing parse bug the calibration script surfaced, **not** a pricing regression — `parseClaudeLines()` does no cross-file dedup, while ccusage dedups assistant messages by `(message.id, requestId)`, so resumed/sidechain transcript rewrites get double-counted. A second, still-unexplained discrepancy sits alongside it: the ledger's token counts match neither the raw transcripts nor a deduplicated pass, suggesting the incremental tail-parse double-counts some regions across re-parses. Codex is separately excluded from the gate until `npm run usage -- --rebuild` re-derives the ledger. Don't read this FAIL as a pricing-snapshot problem, and scope any fix to `usage.mjs` with regression tests.
+
+### Claude Code Session Store (cc observability, phase 1b)
+
+A second, session-centric view of Claude Code usage lives in `data/cc-sessions.db` (`node:sqlite`, built into Node ≥ 24 and Deno — no dependency; verified in the compiled Deno desktop binary, file-backed with WAL). It is a **new** store, not a migration: `projects_metadata.jsonl` and `usage.json` are untouched.
+
+- `npm run cc:ingest` walks `~/.claude/projects/<slug>/<session>.jsonl`, reuses `parseClaudeLines` + `costForClaude` for tokens/cost, and adds a second pass for tool/skill counts and `skill_edited` (an Edit/Write under a skills dir after a Skill call). Subagent transcripts (`<slug>/<session>/subagents/*.jsonl`) are folded into the parent session's tokens/cost/tool counts; turns and timing come from the main transcript. Full re-parse each run (~5 s for ~250 sessions); idempotent upserts.
+- cc-guard (separate repo `../cc-guard`) appends `{ts, action, rule, command, session_id, cwd}` lines to `~/.claude/cc-guard/audit.jsonl`; that file is the only contract between the two repos and is ingested as `guard_hits`. Missing audit = zero hits, not an error.
+- `GET /api/sessions?project=&limit=` lists, `?id=` returns `{session, tools, skills, guard_hits}`; `/sessions` renders them. The route opens the DB per request (never at module eval — see State Dir).
+- `node:sqlite` still emits an ExperimentalWarning on Node 24, so `npm test` and `cc:ingest` run with `--disable-warning=ExperimentalWarning`.
+- Nullable `sessions` columns (`machine`, `user`, `project_key`, `git_*`, `jira_ticket`, `quality_score`, `summary`) are reserved for phases 2–3; design in `docs/superpowers/specs/2026-08-21-cc-observability-team-design.md`.
 
 ### Quick Filters
 
