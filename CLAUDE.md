@@ -34,6 +34,7 @@ npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
 npm run cc:ingest    # Rebuild the Claude Code session store (data/cc-sessions.db) from ~/.claude transcripts + cc-guard audit
+npm run cc:eval -- --summaries [--limit N] [--id SID]  # On-demand AI summaries for stored sessions via the local `claude` CLI
 
 # Other
 npm run lint         # Run ESLint
@@ -152,8 +153,13 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/cc/store.mjs` - `node:sqlite` session store (`data/cc-sessions.db`): sessions, tool_usage, skill_usage, guard_hits
 - `src/lib/cc/ingest.mjs` - Pure per-session transcript parser (reuses `usage.mjs` + `usage-pricing.mjs`; adds tools/skills/`skill_edited`)
 - `src/lib/cc/guard-ingest.mjs` - Parses cc-guard's `~/.claude/cc-guard/audit.jsonl` into per-session guard hits
-- `scripts/cc-ingest.mjs` - CLI that walks `~/.claude/projects` (+ subagent transcripts) and upserts the session store
-- `src/app/api/sessions/route.js` + `src/app/sessions/page.js` - Session list/detail API and the session viewer
+- `src/lib/cc/transcript.mjs` - Shared parsed-transcript helpers (`parseLines`, `bashCommands`, `toolUses`, `toolResults`, `userPrompts`, `assistantTexts`)
+- `src/lib/cc/context.mjs` - Work context per session: git branch/repo, PR, tool-agnostic `ticket_id` + `ticket_source`
+- `src/lib/cc/quality.mjs` - Quality score v1 (transparent heuristic, components stored as `quality_detail`)
+- `src/lib/cc/summary.mjs` - AI summary engine (`distill` + `summarize` over `claude -p`, injectable exec) and `summarizeSession`
+- `scripts/cc-ingest.mjs` - CLI that walks `~/.claude/projects` (+ subagent transcripts), computes context + quality, upserts the session store
+- `scripts/cc-eval.mjs` - CLI for on-demand AI summaries (`npm run cc:eval -- --summaries`)
+- `src/app/api/sessions/route.js` + `summarize/route.js` + `src/app/sessions/page.js` - Session list/detail API, summarize action, and the session viewer
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
 - `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
 - `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
@@ -256,7 +262,11 @@ A second, session-centric view of Claude Code usage lives in `data/cc-sessions.d
 - cc-guard (separate repo `../cc-guard`) appends `{ts, action, rule, command, session_id, cwd}` lines to `~/.claude/cc-guard/audit.jsonl`; that file is the only contract between the two repos and is ingested as `guard_hits`. Missing audit = zero hits, not an error.
 - `GET /api/sessions?project=&limit=` lists, `?id=` returns `{session, tools, skills, guard_hits}`; `/sessions` renders them. The route opens the DB per request (never at module eval — see State Dir).
 - `node:sqlite` still emits an ExperimentalWarning on Node 24, so `npm test` and `cc:ingest` run with `--disable-warning=ExperimentalWarning`.
-- Nullable `sessions` columns (`machine`, `user`, `project_key`, `git_*`, `jira_ticket`, `quality_score`, `summary`) are reserved for phases 2–3; design in `docs/superpowers/specs/2026-08-21-cc-observability-team-design.md`.
+- **Phase 2 (eval + context)**: every ingest also computes, from the main transcript only:
+  - *Work context* (`context.mjs`): `git_branch` (most common non-`HEAD` `gitBranch` value), `git_repo` (first github/gitlab/bitbucket URL seen in Bash commands or tool results), `pr` (from `gh pr` output), and a **tool-agnostic** `ticket_id` + `ticket_source` (`branch` → first `prompt` → `git commit -m` message, first match wins). Default pattern `\b[A-Z]{2,10}(?:-[A-Z]{2,10})?-\d+\b` with a small stoplist (UTF/ISO/RFC/SHA/CVE…); override via `CC_TICKET_PATTERN` in `.env.local` for Linear/YouTrack/`#123`-style ids. Never call it Jira — it's whatever tracker you use.
+  - *Quality score* (`quality.mjs`): heuristic 0–100 = verification ran (25, `CC_VERIFY_PATTERN`) + clean finish (25) + tool error rate (25 → 0 at ≥20 %) + no loops (15) + no guard deny/override (10). Components are stored in `quality_detail` and shown in the UI, which labels the number "heuristic".
+  - *AI summary* (`summary.mjs`) is **on-demand only** — `npm run cc:eval -- --summaries` or the Generate button → `POST /api/sessions/summarize`. It shells out to the local `claude` CLI with `--no-session-persistence` (mandatory: otherwise each summary writes a transcript that the next ingest indexes), `--tools ""`, no MCP servers, no setting sources and a custom system prompt — ~1k context tokens per summary instead of ~150k for a naive `claude -p` in the repo cwd. `CC_SUMMARY_MODEL` (default `haiku`). `upsertSession` never touches `summary*` columns, so re-ingests keep summaries; `setSummary` is the only writer.
+- Remaining nullable `sessions` columns (`machine`, `user`, `project_key`) are reserved for phase 3 (sync); design in `docs/superpowers/specs/2026-08-21-cc-observability-team-design.md` + `2026-08-21-cc-phase2-eval-context-design.md`.
 
 ### Quick Filters
 
