@@ -54,7 +54,7 @@ export function scoreSession(lines, { guardHits = [], verifyPattern = DEFAULT_VE
   const points = {
     verified: verified ? POINTS.verified : 0,
     clean_finish: clean_finish ? POINTS.clean_finish : 0,
-    error_rate: Math.max(0, POINTS.error_rate * (1 - Math.min(error_rate_pct, ERROR_RATE_FLOOR) / ERROR_RATE_FLOOR)),
+    error_rate: Math.round(Math.max(0, POINTS.error_rate * (1 - Math.min(error_rate_pct, ERROR_RATE_FLOOR) / ERROR_RATE_FLOOR)) * 10) / 10,
     no_loops: loops === 0 ? POINTS.no_loops : 0,
     guard_clean: guard_incidents === 0 ? POINTS.guard_clean : 0,
   };

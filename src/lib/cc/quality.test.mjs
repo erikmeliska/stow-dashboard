@@ -48,6 +48,13 @@ test('empty transcript scores without throwing', () => {
   assert.equal(score, 50); // error_rate 25 + no_loops 15 + guard_clean 10
 });
 
+test('error-rate points are rounded to one decimal', () => {
+  const lines = parseLines([asst([use('Bash', { command: 'ls' })]), res(true), ...Array(6).fill(res())].join('\n'));
+  const { detail } = scoreSession(lines);
+  assert.equal(detail.error_rate_pct, 14.3);
+  assert.equal(detail.points.error_rate, 7.1);
+});
+
 test('verifyRegex honours env and falls back on invalid', () => {
   assert.ok(verifyRegex({ CC_VERIFY_PATTERN: 'make check' }).test('make check'));
   assert.ok(verifyRegex({ CC_VERIFY_PATTERN: '(' }).test('npm test'));
