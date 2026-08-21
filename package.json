@@ -31,14 +31,15 @@
     "deno:run": "deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts && open \"dist/Stow Dashboard Deno.app\"",
     "deno:build": "npm run deno:prepare && deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts",
     "lint": "eslint .",
-    "test": "node --test",
+    "test": "node --disable-warning=ExperimentalWarning --test",
     "scan": "node scripts/scan.mjs -s",
     "scan:force": "node scripts/scan.mjs -s -f",
     "usage": "node scripts/usage.mjs",
     "pricing:sync": "node scripts/pricing-sync.mjs",
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
-    "stow": "node scripts/cli.mjs"
+    "stow": "node scripts/cli.mjs",
+    "cc:ingest": "node --disable-warning=ExperimentalWarning scripts/cc-ingest.mjs"
   },
   "dependencies": {
     "@eslint/eslintrc": "^3.3.3",
