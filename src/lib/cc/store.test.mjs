@@ -69,3 +69,17 @@ test('re-upsert keeps the summary, setSummary writes it', () => {
   assert.equal(s.ticket_id, 'ABC-1');
   assert.equal(s.quality_score, 80);
 });
+
+import { getIngestState, setIngestState, clearIngestState } from './store.mjs';
+
+test('ingest state round-trips and upserts by path', () => {
+  const db = openStore(':memory:');
+  setIngestState(db, '/t/a.jsonl', 'a', 'sig1');
+  setIngestState(db, '/t/a.jsonl', 'a', 'sig2');
+  setIngestState(db, '/t/b.jsonl', 'b', 'sigb');
+  const st = getIngestState(db);
+  assert.equal(st.size, 2);
+  assert.deepEqual(st.get('/t/a.jsonl'), { session_id: 'a', signature: 'sig2' });
+  clearIngestState(db);
+  assert.equal(getIngestState(db).size, 0);
+});

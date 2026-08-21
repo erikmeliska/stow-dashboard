@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS tool_usage (session_id TEXT, tool TEXT, count INTEGER, PRIMARY KEY (session_id, tool));
 CREATE TABLE IF NOT EXISTS skill_usage (session_id TEXT, skill TEXT, count INTEGER, edited INTEGER DEFAULT 0, PRIMARY KEY (session_id, skill));
 CREATE TABLE IF NOT EXISTS guard_hits (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, ts TEXT, command TEXT, rule TEXT, action TEXT);
+CREATE TABLE IF NOT EXISTS ingest_state (path TEXT PRIMARY KEY, session_id TEXT, signature TEXT, ingested_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_dir);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
 CREATE INDEX IF NOT EXISTS idx_guard_session ON guard_hits (session_id);
@@ -115,4 +116,20 @@ export function getSession(db, id) {
   const skills = db.prepare('SELECT skill, count, edited FROM skill_usage WHERE session_id = ? ORDER BY count DESC').all(id);
   const guard_hits = db.prepare('SELECT ts, command, rule, action FROM guard_hits WHERE session_id = ? ORDER BY ts').all(id);
   return { session, tools, skills, guard_hits };
+}
+
+/** Incremental-ingest bookkeeping: transcript path → { session_id, signature }. */
+export function getIngestState(db) {
+  const map = new Map();
+  for (const r of db.prepare('SELECT path, session_id, signature FROM ingest_state').all()) map.set(r.path, { session_id: r.session_id, signature: r.signature });
+  return map;
+}
+
+export function setIngestState(db, path, sessionId, signature) {
+  db.prepare('INSERT INTO ingest_state (path, session_id, signature, ingested_at) VALUES (?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET session_id = excluded.session_id, signature = excluded.signature, ingested_at = excluded.ingested_at')
+    .run(path, sessionId, signature, new Date().toISOString());
+}
+
+export function clearIngestState(db) {
+  db.exec('DELETE FROM ingest_state');
 }

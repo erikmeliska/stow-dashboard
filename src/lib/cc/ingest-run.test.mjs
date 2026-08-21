@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore, getSession, listSessions } from '../src/lib/cc/store.mjs';
-import { ingestAll } from './cc-ingest.mjs';
+import { utimes, readFile } from 'node:fs/promises';
+import { openStore, getSession, listSessions } from './store.mjs';
+import { ingestAll } from './ingest-run.mjs';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'ccp-'));
@@ -86,4 +87,36 @@ test('ingestAll stores work context and quality score', async () => {
   assert.equal(s.ticket_source, 'branch');
   assert.equal(s.quality_score, 100);
   assert.equal(JSON.parse(s.quality_detail).verified, true);
+});
+
+test('incremental: unchanged transcripts are skipped, changed ones re-parsed, guard hits still refreshed', async () => {
+  const { root, guard } = await fixture();
+  const db = openStore(':memory:');
+  const claudeDir = join(root, 'projects');
+  const r1 = await ingestAll({ claudeDir, guardAudit: guard, db, env: {} });
+  assert.deepEqual([r1.changed, r1.skipped], [1, 0]);
+  const r2 = await ingestAll({ claudeDir, guardAudit: guard, db, env: {} });
+  assert.deepEqual([r2.sessions, r2.changed, r2.skipped], [1, 0, 1]);
+
+  // guard audit grows → hits refresh even though the transcript is skipped
+  await writeFile(guard, [
+    JSON.stringify({ ts: 't', action: 'deny', rule: 'r', command: 'x', session_id: 'sess-1' }),
+    JSON.stringify({ ts: 't2', action: 'warn', rule: 'r2', command: 'y', session_id: 'sess-1' }),
+  ].join('\n') + '\n', 'utf8');
+  const r3 = await ingestAll({ claudeDir, guardAudit: guard, db, env: {} });
+  assert.equal(r3.skipped, 1);
+  assert.equal(getSession(db, 'sess-1').guard_hits.length, 2);
+
+  // transcript grows → re-parsed
+  const file = join(claudeDir, '-p-a', 'sess-1.jsonl');
+  const extra = JSON.stringify({ type: 'assistant', sessionId: 'sess-1', timestamp: '2026-08-21T10:00:09Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x' } }] } });
+  await writeFile(file, (await readFile(file, 'utf8')) + '\n' + extra, 'utf8');
+  await utimes(file, new Date(), new Date(Date.now() + 5000));
+  const r4 = await ingestAll({ claudeDir, guardAudit: guard, db, env: {} });
+  assert.deepEqual([r4.changed, r4.skipped], [1, 0]);
+  assert.equal(getSession(db, 'sess-1').tools.find((t) => t.tool === 'Read').count, 1);
+
+  // full=true re-parses everything
+  const r5 = await ingestAll({ claudeDir, guardAudit: guard, db, env: {}, full: true });
+  assert.deepEqual([r5.changed, r5.skipped], [1, 0]);
 });
