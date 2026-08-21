@@ -69,7 +69,13 @@ which is not even running).
 
 Principle: **collect richly locally, decide what leaves the machine only at sync time.**
 
-Local store (SQLite via better-sqlite3, or extend stow's existing state — see Open Questions):
+Local store: **built-in `node:sqlite` (`DatabaseSync`)** — zero third-party dependency, works
+in both runtimes stow uses (Node 24 for MCP/CLIs, Deno for the desktop app, both ship SQLite
+natively). Stow's existing JSON/JSONL ledger (`usage.json`, `projects_metadata.jsonl`) stays as
+is; the new session layer is a separate SQLite DB alongside it. (Node emits an experimental
+warning for `node:sqlite` — suppress at startup.)
+
+Tables:
 
 - **sessions**: session_id, machine, user, project_dir, **project_key**, cwd, model,
   started_at, ended_at, duration, tokens (input/output/cacheRead/cacheWrite5m/cacheWrite1h),
@@ -108,9 +114,12 @@ Client model, analogous to Sentry DSNs:
 
 - On the server, create a **group**; add **projects** to it. A project may aggregate multiple
   local project dirs — even the same project in different dirs, on different machines.
-- Each local project carries a **project config** (DSN-like) in its directory: `project_key`,
-  `ingest_url`, `log_level`. Storage TBD (`.env`, dedicated `.ccobs` file, or stow config).
-- The **synchronizer** walks project dirs, reads that config, and — combined with the
+- Project config (DSN-like: `project_key`, `ingest_url`, `log_level`) lives in a **central stow
+  config** as a mapping `project_dir → { project_key, ingest_url, log_level }` (NOT a per-dir
+  file). Tradeoff: the key does not travel with the repo, so each machine's stow maps its own
+  local dirs to keys — coherent because aggregation is by `project_key` server-side and the same
+  project already lives in different dirs across machines.
+- The **synchronizer** reads that central mapping, and — combined with the
   **egress policy** and `log_level` — decides **what** session data goes **where**.
 - The **server** joins incoming data by `project_key` into logical projects and groups,
   stitching across dirs / machines / users.
@@ -141,7 +150,7 @@ src/lib/
   cc/ingest.mjs        # transcript + lifecycle → normalized events (reuses usage.mjs)
   cc/eval.mjs          # metrics + quality score + AI summary
   cc/context.mjs       # git branch/repo/PR + Jira ticket enrichment
-  cc/store.mjs         # session-centric store (SQLite or extend stow state)
+  cc/store.mjs         # session-centric store (built-in node:sqlite)
   cc/sync.mjs          # egress policy + push adapter (interface; impl phase 3)
 hooks/
   lifecycle.mjs        # SessionStart/Stop/SessionEnd/UserPromptSubmit markers
@@ -158,11 +167,15 @@ New session-centric view is additive to stow's current project-centric UI.
 - **Phase 3**: sync layer + egress policy + per-project DSN config + team server + team dashboard
   (cross-dir / cross-machine / group aggregation).
 
-## 10. Open questions (resolve during planning)
+## 10. Open questions
 
-- Local store: new SQLite table set vs. extend stow's existing JSON state (`usage.json` +
-  `projects_metadata.jsonl`). Leaning SQLite for session-level queries.
-- Per-project sync config location: `.env` vs dedicated `.ccobs` file vs stow config.
-- Server data model & transport (phase 3) — out of scope now, only the aggregation key
+Resolved:
+- **Local store** → built-in `node:sqlite` (`DatabaseSync`), separate session DB alongside
+  stow's JSON ledger. No third-party dependency; works in Node 24 and Deno.
+- **Sync config location** → central stow config mapping `project_dir → {project_key,
+  ingest_url, log_level}` (not a per-dir file).
+
+Deferred:
+- Server data model & transport (phase 3) — out of scope now; only the aggregation key
   (`project_key` → project → group) is fixed.
-- Quality score formula details.
+- Quality score formula details — phase 2; the `quality_score` field exists at MVP.
