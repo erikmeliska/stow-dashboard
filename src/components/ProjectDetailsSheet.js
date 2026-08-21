@@ -962,8 +962,17 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                             </div>
                                         )}
 
-                                        {/* Disclaimer */}
-                                        <p className="text-xs text-muted-foreground italic">List-price value of consumption — not an invoice.</p>
+                                        {/* Disclaimer + link to the session-centric view */}
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="text-xs text-muted-foreground italic">List-price value of consumption — not an invoice.</p>
+                                            <a
+                                                href={`/sessions?project=${encodeURIComponent(project.directory)}`}
+                                                className="text-xs whitespace-nowrap text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                                                title="Per-session detail: tools, skills, quality, summaries"
+                                            >
+                                                View sessions →
+                                            </a>
+                                        </div>
                                     </div>
                                 </Section>
                                 <Separator />

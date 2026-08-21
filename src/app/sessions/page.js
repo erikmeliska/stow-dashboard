@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, RefreshCw, Sparkles } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ArrowLeft, RefreshCw, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
@@ -157,6 +158,14 @@ function Row({ label, value }) {
 }
 
 export default function SessionsPage() {
+  // useSearchParams needs a Suspense boundary for the static prerender.
+  return <Suspense fallback={null}><SessionsView /></Suspense>
+}
+
+function SessionsView() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const project = searchParams.get('project') || null
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -169,14 +178,15 @@ export default function SessionsPage() {
     try {
       // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
       await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
-      const r = await fetch('/api/sessions?limit=1000')
+      const qs = new URLSearchParams({ limit: '1000', ...(project ? { project } : {}) })
+      const r = await fetch(`/api/sessions?${qs}`)
       const d = await r.json()
       setSessions(d.sessions || [])
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function open(id) {
     setSelected(id); setSummaryError(null)
@@ -208,6 +218,15 @@ export default function SessionsPage() {
           <div className="flex items-center gap-4">
             <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors"><ArrowLeft className="h-5 w-5" /></Link>
             <h1 className="text-xl font-bold">Sessions</h1>
+            {project && (
+              <button
+                onClick={() => router.push('/sessions')}
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground hover:bg-muted"
+                title={`${project} — click to clear`}
+              >
+                {projectName(project)} <X className="h-3 w-3" />
+              </button>
+            )}
             <span className="text-sm text-muted-foreground">
               {sessions.length} sessions · {fmtCost(totalCost)} list price
             </span>
@@ -223,7 +242,7 @@ export default function SessionsPage() {
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-auto px-4">
           {!loading && sessions.length === 0 && (
-            <p className="text-sm text-muted-foreground py-6">No sessions yet — run <code>npm run cc:ingest</code>.</p>
+            <p className="text-sm text-muted-foreground py-6">{project ? 'No sessions recorded for this project yet.' : <>No sessions yet — run <code>npm run cc:ingest</code>.</>}</p>
           )}
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background">
