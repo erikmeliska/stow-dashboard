@@ -156,7 +156,10 @@ function TokensByModel({ byModel }) {
   )
 }
 
+const TABS = [['sessions', 'Agentic sessions'], ['portfolio', 'Project portfolio']]
+
 export default function AnalyticsPage() {
+  const [tab, setTab] = useState('sessions')
   const [range, setRange] = useState('30d')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -184,6 +187,14 @@ export default function AnalyticsPage() {
           <div className="flex items-center gap-4">
             <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors"><ArrowLeft className="h-5 w-5" /></Link>
             <h1 className="text-xl font-bold">Analytics</h1>
+            <nav className="flex gap-1">
+              {TABS.map(([id, label]) => (
+                <button key={id} onClick={() => setTab(id)}
+                  className={`px-3 py-1 rounded-md text-sm transition-colors ${tab === id ? 'bg-secondary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                  {label}
+                </button>
+              ))}
+            </nav>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => load(range)} disabled={loading}>
@@ -198,19 +209,16 @@ export default function AnalyticsPage() {
       <div className={`flex-1 overflow-auto p-4 space-y-6 transition-opacity ${loading && data ? 'opacity-60' : ''}`}>
         {!data && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-        {s && (
+        {s && tab === 'sessions' && (
           <section>
-            <div className="flex items-center gap-4 mb-3">
-              <h2 className="text-base font-semibold">Agentic sessions</h2>
-              {/* One filter row above everything it scopes (the session charts) */}
-              <div className="flex rounded-md border overflow-hidden text-xs">
-                {RANGES.map(([r, label]) => (
-                  <button key={r} onClick={() => setRange(r)}
-                    className={`px-2.5 py-1 transition-colors ${range === r ? 'bg-secondary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+            {/* One filter row above everything it scopes (the session charts) */}
+            <div className="flex rounded-md border overflow-hidden text-xs w-fit mb-3">
+              {RANGES.map(([r, label]) => (
+                <button key={r} onClick={() => setRange(r)}
+                  className={`px-2.5 py-1 transition-colors ${range === r ? 'bg-secondary font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
@@ -252,9 +260,8 @@ export default function AnalyticsPage() {
           </section>
         )}
 
-        {p && (
+        {p && tab === 'portfolio' && (
           <section>
-            <h2 className="text-base font-semibold mb-3">Project portfolio</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
               <StatTile label="Projects" value={p.kpis.projects} />
               <StatTile label="Lines of code" value={fmtNum(p.kpis.total_code)} />
