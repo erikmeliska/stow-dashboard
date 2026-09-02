@@ -29,7 +29,7 @@ export async function setupTray(
 
   const tray = new Deno.Tray();
   tray.setIcon(iconBytes);
-  tray.setTooltip("Stow Dashboard (Deno)");
+  tray.setTooltip("Stow Dashboard");
   tray.setMenu([
     { item: { label: "Show Dashboard", id: "show", enabled: true } },
     { item: { label: "Hide Dashboard", id: "hide", enabled: true } },

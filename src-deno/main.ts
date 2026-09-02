@@ -32,7 +32,7 @@ if (!ready) {
 }
 
 const win = new Deno.BrowserWindow({
-  title: "Stow Dashboard (Deno)",
+  title: "Stow Dashboard",
   width: 1400,
   height: 900,
 });

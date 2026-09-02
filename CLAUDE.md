@@ -20,9 +20,9 @@ npm run start        # Start production server (port 3088)
 
 # Desktop App (Deno — shipped shell, requires Deno >= 2.9; see ADR 0002)
 npm run deno:prepare  # Build Next.js + assemble src-deno/standalone
-npm run deno:run      # Compile + launch dist/Stow Dashboard Deno.app
-npm run deno:build    # Build dist/Stow Dashboard Deno.app
-# Install/update: ditto "dist/Stow Dashboard Deno.app" "/Applications/Stow Dashboard Deno.app"
+npm run deno:run      # Compile + launch dist/Stow Dashboard.app
+npm run deno:build    # Build dist/Stow Dashboard.app
+# Install/update: ditto "dist/Stow Dashboard.app" "/Applications/Stow Dashboard.app"
 
 # Desktop App (Tauri — fallback shell, requires Rust)
 npm run tauri:build  # Build native macOS app + DMG
