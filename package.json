@@ -28,8 +28,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",
     "deno:prepare": "npm run build && node scripts/prepare-deno.mjs",
-    "deno:run": "deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts && open \"dist/Stow Dashboard Deno.app\"",
-    "deno:build": "npm run deno:prepare && deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard Deno.app\" src-deno/main.ts",
+    "deno:run": "deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard.app\" src-deno/main.ts && open \"dist/Stow Dashboard.app\"",
+    "deno:build": "npm run deno:prepare && deno desktop -A --unstable-detect-cjs --include src-deno/standalone --include src-deno/icons -o \"dist/Stow Dashboard.app\" src-deno/main.ts",
     "lint": "eslint .",
     "test": "node --disable-warning=ExperimentalWarning --test",
     "scan": "node scripts/scan.mjs -s",
@@ -67,6 +67,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.10.1",
     "simple-git": "^3.30.0",
     "tailwind-merge": "^2.5.4",
     "tailwindcss-animate": "^1.0.7"

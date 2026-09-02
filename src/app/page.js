@@ -121,6 +121,9 @@ export default async function DashboardPage() {
                         <Link href="/sessions" className="text-sm text-muted-foreground hover:text-foreground transition-colors pt-1">
                             Sessions
                         </Link>
+                        <Link href="/analytics" className="text-sm text-muted-foreground hover:text-foreground transition-colors pt-1">
+                            Analytics
+                        </Link>
                     </div>
                     <div className="flex items-start gap-3">
                         <ScanControls lastSyncTime={lastSyncTime} />
