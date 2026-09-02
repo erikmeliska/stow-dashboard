@@ -3,7 +3,7 @@ status: active
 updated: 2026-09-02
 ---
 
-NEXT: /analytics SHIPPED (tabs: Agentic sessions + Project portfolio, recharts, /api/analytics, lib in src/lib/cc/analytics.mjs) and the desktop app renamed to plain "Stow Dashboard" (rebuilt + reinstalled). Next: CC observability phase 3 (sync layer, egress policy, central project_dir → project_key config, team server) per docs/superpowers/specs/2026-08-21-cc-observability-team-design.md §7. Follow-ups: ticket/quality filters in the sessions table, TRI-STOW-0003 usage double-count fix (scope to usage.mjs). Older candidates: fáza 3 AI analýzy, usage follow-upy (formatTokens, usage_* SSE, worktree sessions → unmatched), scanner UTF-16 chip.
+NEXT: /analytics SHIPPED (tabs: Agentic sessions + Project portfolio, recharts, /api/analytics, lib in src/lib/cc/analytics.mjs) and the desktop app renamed to plain "Stow Dashboard" (rebuilt + reinstalled). Next: CC observability phase 3 (sync layer, egress policy, central project_dir → project_key config, team server) per docs/superpowers/specs/2026-08-21-cc-observability-team-design.md §7. Follow-ups: TRI-STOW-0003 usage double-count fix (scope to usage.mjs). Older candidates: fáza 3 AI analýzy, usage follow-upy (formatTokens, usage_* SSE, worktree sessions → unmatched), scanner UTF-16 chip.
 
 ## Links
 - http://localhost:3089 — dev server

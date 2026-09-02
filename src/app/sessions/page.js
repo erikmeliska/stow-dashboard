@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, RefreshCw, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { filterSessions, QUALITY_FILTERS } from '@/lib/cc/session-filters.mjs'
 
 function fmtTokens(n) {
   if (n == null) return '—'
@@ -172,6 +173,8 @@ function SessionsView() {
   const [detail, setDetail] = useState(null)
   const [summarizing, setSummarizing] = useState(false)
   const [summaryError, setSummaryError] = useState(null)
+  const [ticketFilter, setTicketFilter] = useState('')
+  const [qualityFilter, setQualityFilter] = useState('any')
 
   async function load() {
     setLoading(true)
@@ -209,7 +212,9 @@ function SessionsView() {
     }
   }
 
-  const totalCost = sessions.reduce((a, s) => a + (s.cost_usd || 0), 0)
+  const filtered = filterSessions(sessions, { ticket: ticketFilter, quality: qualityFilter })
+  const filtering = ticketFilter.trim() !== '' || qualityFilter !== 'any'
+  const totalCost = filtered.reduce((a, s) => a + (s.cost_usd || 0), 0)
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -227,8 +232,25 @@ function SessionsView() {
                 {projectName(project)} <X className="h-3 w-3" />
               </button>
             )}
+            <input
+              type="search"
+              value={ticketFilter}
+              onChange={(e) => setTicketFilter(e.target.value)}
+              placeholder="Ticket…"
+              className="h-7 w-32 rounded-md border bg-transparent px-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <select
+              value={qualityFilter}
+              onChange={(e) => setQualityFilter(e.target.value)}
+              className="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              title="Quality score (heuristic)"
+            >
+              {Object.entries(QUALITY_FILTERS).map(([key, { label }]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
             <span className="text-sm text-muted-foreground">
-              {sessions.length} sessions · {fmtCost(totalCost)} list price
+              {filtering ? `${filtered.length} of ${sessions.length}` : sessions.length} sessions · {fmtCost(totalCost)} list price
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -243,6 +265,9 @@ function SessionsView() {
         <div className="flex-1 overflow-auto px-4">
           {!loading && sessions.length === 0 && (
             <p className="text-sm text-muted-foreground py-6">{project ? 'No sessions recorded for this project yet.' : <>No sessions yet — run <code>npm run cc:ingest</code>.</>}</p>
+          )}
+          {!loading && sessions.length > 0 && filtered.length === 0 && (
+            <p className="text-sm text-muted-foreground py-6">No sessions match the current filters.</p>
           )}
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background">
@@ -260,7 +285,7 @@ function SessionsView() {
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
+              {filtered.map((s) => (
                 <tr
                   key={s.session_id}
                   onClick={() => open(s.session_id)}
