@@ -1,9 +1,9 @@
 ---
 status: active
-updated: 2026-08-21
+updated: 2026-09-02
 ---
 
-NEXT: CC observability phase 2 SHIPPED on branch cc-phase2 (work context + tool-agnostic ticket id, quality score v1, on-demand claude -p summaries, richer /sessions; plan docs/superpowers/plans/2026-08-21-cc-phase2-eval-context.md). Next: merge cc-phase2 → main; then phase 3 (sync layer, egress policy, central project_dir → project_key config, team server) per docs/superpowers/specs/2026-08-21-cc-observability-team-design.md §7. Follow-ups: incremental ingest (size/mtime skip), wire cc:ingest into the refresh cycle, ticket/quality filters in the sessions table. Older candidates: fáza 3 AI analýzy, usage follow-upy (formatTokens, usage_* SSE, worktree sessions → unmatched), scanner UTF-16 chip.
+NEXT: /analytics SHIPPED (tabs: Agentic sessions + Project portfolio, recharts, /api/analytics, lib in src/lib/cc/analytics.mjs) and the desktop app renamed to plain "Stow Dashboard" (rebuilt + reinstalled). Next: CC observability phase 3 (sync layer, egress policy, central project_dir → project_key config, team server) per docs/superpowers/specs/2026-08-21-cc-observability-team-design.md §7. Follow-ups: ticket/quality filters in the sessions table, TRI-STOW-0003 usage double-count fix (scope to usage.mjs). Older candidates: fáza 3 AI analýzy, usage follow-upy (formatTokens, usage_* SSE, worktree sessions → unmatched), scanner UTF-16 chip.
 
 ## Links
 - http://localhost:3089 — dev server

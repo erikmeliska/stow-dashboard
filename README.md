@@ -20,6 +20,8 @@ Available as a **web app** or **native desktop app** (macOS).
 - **Stack Detection** - Extracts technologies from package.json, requirements.txt, etc.
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
+- **Claude Code Session Viewer** - `/sessions` lists your agentic sessions (tokens, cost, tools, skills, guard hits, quality score, on-demand AI summaries) from a local SQLite store
+- **Analytics** - `/analytics` charts both worlds: agentic sessions (cost, models, tools, skills, quality; 7d–all range) and the project portfolio (categories, languages, AI cost, commit activity)
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
 - **Dark Mode** - Full dark mode support
@@ -96,8 +98,8 @@ as a fallback shell; see [ADR 0002](docs/adr/0002-switch-desktop-shell-to-deno.m
 
 ```bash
 npm run deno:build     # Next build + assemble bundle + compile the .app
-ditto "dist/Stow Dashboard Deno.app" "/Applications/Stow Dashboard Deno.app"
-open "/Applications/Stow Dashboard Deno.app"
+ditto "dist/Stow Dashboard.app" "/Applications/Stow Dashboard.app"
+open "/Applications/Stow Dashboard.app"
 ```
 
 Use `ditto`, not `cp` — it preserves the bundle's structure and signature.
@@ -136,7 +138,7 @@ npm run start         # Start production server on port 3088
 npm run start:bg      # Start production server in background
 
 # Desktop App (Deno — the shipped shell, needs Deno 2.9+)
-npm run deno:build    # Build dist/Stow Dashboard Deno.app (includes deno:prepare)
+npm run deno:build    # Build dist/Stow Dashboard.app (includes deno:prepare)
 npm run deno:prepare  # Rebuild the bundled Next.js server only
 npm run deno:run      # Compile + open the app (skips prepare)
 
@@ -151,6 +153,8 @@ npm run scan:force    # Force rescan all projects
 # AI analysis & usage
 npm run analyze       # AI project analysis batch (incremental)
 npm run usage         # Rebuild the AI usage/cost ledger from CLI transcripts
+npm run cc:ingest     # Update the Claude Code session store from ~/.claude transcripts
+npm run cc:eval -- --summaries   # On-demand AI summaries for stored sessions
 
 # Other
 npm run mcp           # Start MCP server for AI assistants
