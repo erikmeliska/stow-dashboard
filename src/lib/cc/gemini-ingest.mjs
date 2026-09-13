@@ -97,9 +97,14 @@ export function parseGeminiSession(dbOrPath, { projectDirs = [], rawRef = null }
 
     // Steps, timestamps, active time and tool usage
     const tools = {};
+    const skills = {};
+    const editedSkills = new Set();
     const accessedPaths = new Set();
     let stepCount = 0;
     const timestamps = [];
+
+    const SKILL_READ_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-\.]+)\/SKILL\.md$/i;
+    const SKILL_EDIT_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-\.]+)\//i;
 
     try {
       const rows = db.prepare('SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx ASC').all();
@@ -132,6 +137,33 @@ export function parseGeminiSession(dbOrPath, { projectDirs = [], rawRef = null }
               const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-\.\/]+)/g);
               if (pathMatches) {
                 for (const p of pathMatches) accessedPaths.add(p);
+              }
+
+              let targetPath = '';
+              try {
+                const parsed = JSON.parse(argsStr);
+                targetPath = parsed.AbsolutePath || parsed.TargetFile || parsed.file_path || parsed.path || '';
+                if (toolName === 'Skill' && (parsed.skill || parsed.command)) {
+                  const s = parsed.skill || parsed.command;
+                  skills[s] = (skills[s] || 0) + 1;
+                }
+              } catch {
+                if (pathMatches && pathMatches.length > 0) targetPath = pathMatches[0];
+              }
+
+              const isEditTool = ['write_to_file', 'replace_file_content', 'Edit', 'Write', 'MultiEdit'].includes(toolName);
+
+              if (isEditTool) {
+                const editMatch = targetPath.match(SKILL_EDIT_RE);
+                if (editMatch) {
+                  editedSkills.add(editMatch[1]);
+                }
+              } else {
+                const readMatch = targetPath.match(SKILL_READ_RE);
+                if (readMatch) {
+                  const name = readMatch[1];
+                  skills[name] = (skills[name] || 0) + 1;
+                }
               }
             }
           }
@@ -261,8 +293,8 @@ export function parseGeminiSession(dbOrPath, { projectDirs = [], rawRef = null }
       raw_ref: filePath || null,
       ingested_at: new Date().toISOString(),
       _tools: tools,
-      _skills: {},
-      _editedSkills: new Set(),
+      _skills: skills,
+      _editedSkills: editedSkills,
     };
   } finally {
     if (shouldClose && db) {

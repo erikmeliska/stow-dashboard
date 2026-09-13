@@ -125,3 +125,53 @@ test('parseGeminiSession attributes subproject when cwd is parent directory', ()
   assert.equal(parsed.cwd, '/p/parent-dir');
   assert.equal(parsed.project_dir, '/p/parent-dir/repos/my-sub-app');
 });
+
+test('parseGeminiSession extracts skills called via SKILL.md and edited skills', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE trajectory_metadata_blob (id TEXT, data BLOB)');
+  db.exec('CREATE TABLE steps (idx INT, metadata BLOB)');
+  db.exec('CREATE TABLE gen_metadata (idx INT, data BLOB)');
+
+  // Step 1: reading SKILL.md for book-edit
+  const call1 = Buffer.concat([
+    encField(1, 2, 'c1'),
+    encField(2, 2, 'view_file'),
+    encField(3, 2, JSON.stringify({ AbsolutePath: '/home/user/.agents/skills/book-edit/SKILL.md' })),
+  ]);
+  const step1 = Buffer.concat([
+    encField(1, 2, encField(1, 0, 1750000000)),
+    encField(4, 2, call1),
+  ]);
+
+  // Step 2: editing a file inside the book-edit skill
+  const call2 = Buffer.concat([
+    encField(1, 2, 'c2'),
+    encField(2, 2, 'replace_file_content'),
+    encField(3, 2, JSON.stringify({ TargetFile: '/home/user/.agents/skills/book-edit/SKILL.md' })),
+  ]);
+  const step2 = Buffer.concat([
+    encField(1, 2, encField(1, 0, 1750000010)),
+    encField(4, 2, call2),
+  ]);
+
+  // Step 3: reading another skill slovak-book-proofreader
+  const call3 = Buffer.concat([
+    encField(1, 2, 'c3'),
+    encField(2, 2, 'view_file'),
+    encField(3, 2, JSON.stringify({ AbsolutePath: '/home/user/.agents/skills/slovak-book-proofreader/SKILL.md' })),
+  ]);
+  const step3 = Buffer.concat([
+    encField(1, 2, encField(1, 0, 1750000020)),
+    encField(4, 2, call3),
+  ]);
+
+  db.prepare('INSERT INTO steps VALUES (?, ?)').run(0, step1);
+  db.prepare('INSERT INTO steps VALUES (?, ?)').run(1, step2);
+  db.prepare('INSERT INTO steps VALUES (?, ?)').run(2, step3);
+
+  const parsed = parseGeminiSession(db, { rawRef: '/tmp/session-skills.db' });
+  assert.equal(parsed._skills['book-edit'], 1);
+  assert.equal(parsed._skills['slovak-book-proofreader'], 1);
+  assert.ok(parsed._editedSkills.has('book-edit'));
+  assert.equal(parsed._editedSkills.has('slovak-book-proofreader'), false);
+});
