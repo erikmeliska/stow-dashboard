@@ -42,6 +42,7 @@ async function main() {
   console.log(`Parsing usage${rebuild ? ' (rebuild)' : ''} …`)
   console.log(`  claude: ${paths.claudeDir}`)
   console.log(`  codex:  ${paths.codexDir}`)
+  console.log(`  gemini: ${paths.geminiDir}`)
   console.log(`  projects: ${projectDirs.length}`)
   console.log(`  pricing: litellm @ ${src.fetched}, ${src.modelCount} models`)
 
@@ -68,8 +69,10 @@ async function main() {
   const t = out.totals
   const hasUnpriced = Object.values(out.projects).some(p => (p.unpricedModels || []).length > 0)
     || (out.unmatched.unpricedModels || []).length > 0
+  const inTok = t.tokens.input + t.tokens.codexInput + (t.tokens.geminiInput || 0) + (t.tokens.geminiCachedInput || 0)
+  const outTok = t.tokens.output + t.tokens.codexOutput + (t.tokens.geminiOutput || 0)
   console.log('\nTotals (list-price value of consumption, NOT an invoice):')
-  console.log(`  Total   ${hasUnpriced ? '~' : ''}${fmtUsd(t.costUsd)}   (in ${fmtInt(t.tokens.input + t.tokens.codexInput)} / out ${fmtInt(t.tokens.output + t.tokens.codexOutput)} tok)   ·  ${t.sessions} sessions  ·  ${(t.activeMinutes / 60).toFixed(1)} h`)
+  console.log(`  Total   ${hasUnpriced ? '~' : ''}${fmtUsd(t.costUsd)}   (in ${fmtInt(inTok)} / out ${fmtInt(outTok)} tok)   ·  ${t.sessions} sessions  ·  ${(t.activeMinutes / 60).toFixed(1)} h`)
   console.log(`  Unmatched: ${out.unmatched.sessions} sessions · ${(out.unmatched.unpricedModels || []).length > 0 ? '~' : ''}${fmtUsd(out.unmatched.costUsd)}`)
 
   console.log(`\nParsed ${r.filesParsed} · skipped ${r.filesSkipped} · missing ${r.filesMissing} · ${r.durationMs} ms`)

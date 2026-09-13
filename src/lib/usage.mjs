@@ -1,18 +1,35 @@
-// Incremental AI-usage extraction from Claude Code / Codex CLI transcripts.
+// Incremental AI-usage extraction from Claude Code / Codex CLI transcripts / Antigravity DBs.
 // Transcripts are append-only JSONL; parsers work on batches of COMPLETE
 // lines and keep continuation state (prevTs, cumulative codex totals) so a
 // later tail-parse of the same file continues where the last one stopped.
+// Antigravity sessions are SQLite DBs containing token counts and metadata.
 import { open, readFile, writeFile, rename, readdir, stat } from 'node:fs/promises'
 import { Buffer } from 'node:buffer'
 import path from 'node:path'
 import os from 'node:os'
-import { costForClaude, costForCodex } from './usage-pricing.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { costForClaude, costForCodex, costForGemini } from './usage-pricing.mjs'
 import { dataDir } from './state-dir.mjs'
 
 const ACTIVE_GAP_S = 300
 
 export function newFileState(tool) {
-  return { tool, cwd: null, models: {}, codex: null, codexModel: null, codexByModel: {}, firstTs: null, lastTs: null, prevTs: null, activeSeconds: 0, sessions: 1 }
+  return {
+    tool,
+    cwd: null,
+    models: {},
+    codex: null,
+    codexModel: null,
+    codexByModel: {},
+    gemini: null,
+    geminiModel: null,
+    geminiByModel: {},
+    firstTs: null,
+    lastTs: null,
+    prevTs: null,
+    activeSeconds: 0,
+    sessions: 1,
+  }
 }
 
 const ZERO_CODEX = Object.freeze({ input: 0, cachedInput: 0, output: 0 })
@@ -121,6 +138,176 @@ export function splitCompleteLines(buffer) {
   return { lines: text.split('\n').filter(Boolean), consumedBytes: lastNl + 1 }
 }
 
+export function decodeProto(buf) {
+  let pos = 0
+  const fields = {}
+  if (!buf || !(buf instanceof Uint8Array || Buffer.isBuffer(buf))) return fields
+  while (pos < buf.length) {
+    let tag = 0, shift = 0
+    while (pos < buf.length) {
+      const b = buf[pos++]
+      tag |= (b & 0x7f) << shift
+      shift += 7
+      if (!(b & 0x80)) break
+    }
+    const f = tag >> 3
+    const w = tag & 0x07
+    if (w === 0) {
+      let v = 0n, s = 0n
+      while (pos < buf.length) {
+        const b = BigInt(buf[pos++])
+        v |= (b & 0x7fn) << s
+        s += 7n
+        if (!(b & 0x80n)) break
+      }
+      fields[f] = Number(v)
+    } else if (w === 2) {
+      let len = 0, s = 0
+      while (pos < buf.length) {
+        const b = buf[pos++]
+        len |= (b & 0x7f) << s
+        s += 7
+        if (!(b & 0x80)) break
+      }
+      if (pos + len > buf.length) break
+      fields[f] = buf.subarray(pos, pos + len)
+      pos += len
+    } else if (w === 1) {
+      pos += 8
+    } else if (w === 5) {
+      pos += 4
+    } else {
+      break
+    }
+  }
+  return fields
+}
+
+export function extractWorkspaceFromBlob(blob) {
+  if (!blob) return null
+  const top = decodeProto(blob)
+  if (top[7]) {
+    const s = Buffer.from(top[7]).toString('utf8')
+    if (s.startsWith('file://')) {
+      try { return decodeURIComponent(new URL(s).pathname) } catch { /* ignore invalid URL */ }
+    } else if (s.startsWith('/')) {
+      return s
+    }
+  }
+  if (top[1]) {
+    const s = Buffer.from(top[1]).toString('utf8')
+    const m = s.match(/file:\/\/(\/[^\0\s\r\n;"']+)/)
+    if (m) {
+      try { return decodeURIComponent(new URL(`file://${m[1]}`).pathname) } catch { return m[1] }
+    }
+  }
+  return null
+}
+
+export function parseGeminiDb(dbOrPath, state) {
+  state.geminiModel ??= null
+  state.geminiByModel ??= {}
+  state.gemini ??= { input: 0, cachedInput: 0, output: 0, thinking: 0 }
+
+  let db = null
+  let shouldClose = false
+  if (typeof dbOrPath === 'string') {
+    try {
+      db = new DatabaseSync(dbOrPath, { open: true, readOnly: true })
+      shouldClose = true
+    } catch {
+      return state
+    }
+  } else if (dbOrPath && typeof dbOrPath.prepare === 'function') {
+    db = dbOrPath
+  } else {
+    return state
+  }
+
+  try {
+    try {
+      const row = db.prepare("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'").get()
+      const ws = extractWorkspaceFromBlob(row?.data)
+      if (ws && !state.cwd) state.cwd = ws
+    } catch {
+      /* ignore db error or missing table */
+    }
+
+    try {
+      const rows = db.prepare('SELECT metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx ASC').all()
+      for (const r of rows) {
+        if (!r.metadata) continue
+        const top = decodeProto(r.metadata)
+        if (top[1]) {
+          const tsMsg = decodeProto(top[1])
+          const sec = tsMsg[1]
+          if (sec) {
+            const iso = new Date(Number(sec) * 1000).toISOString()
+            tickActive(state, iso)
+          }
+        }
+        if (top[4]) {
+          const f4 = decodeProto(top[4])
+          if (f4[3]) {
+            const argsStr = Buffer.isBuffer(f4[3]) || f4[3] instanceof Uint8Array
+              ? Buffer.from(f4[3]).toString('utf8')
+              : String(f4[3])
+            const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-\.\/]+)/g)
+            if (pathMatches) {
+              state.geminiPaths ??= []
+              for (const p of pathMatches) {
+                if (state.geminiPaths.length < 25 && !state.geminiPaths.includes(p)) {
+                  state.geminiPaths.push(p)
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      /* ignore db error or missing table */
+    }
+
+    try {
+      const rows = db.prepare('SELECT data FROM gen_metadata WHERE data IS NOT NULL ORDER BY idx ASC').all()
+      for (const r of rows) {
+        if (!r.data) continue
+        const top = decodeProto(r.data)
+        const f1 = top[1] ? decodeProto(top[1]) : {}
+        const model = f1[19]
+          ? (Buffer.isBuffer(f1[19]) || f1[19] instanceof Uint8Array ? Buffer.from(f1[19]).toString('utf8') : String(f1[19]))
+          : (state.geminiModel || 'unknown')
+        state.geminiModel = model
+
+        const f4 = f1[4] ? decodeProto(f1[4]) : {}
+        const input = Number(f4[2] || 0)
+        const cachedInput = Number(f4[5] || 0)
+        const output = Number(f4[3] || 0)
+        const thinking = Number(f4[9] || 0)
+
+        state.gemini.input += input
+        state.gemini.cachedInput += cachedInput
+        state.gemini.output += output
+        state.gemini.thinking += thinking
+
+        const b = state.geminiByModel[model] ??= { input: 0, cachedInput: 0, output: 0, thinking: 0 }
+        b.input += input
+        b.cachedInput += cachedInput
+        b.output += output
+        b.thinking += thinking
+      }
+    } catch {
+      /* ignore db error or missing table */
+    }
+  } finally {
+    if (shouldClose && db) {
+      try { db.close() } catch { /* ignore close error */ }
+    }
+  }
+
+  return state
+}
+
 // ── Ledger update + aggregation (fs orchestration) ──────────────────────────
 
 const READ_CHUNK = 4 * 1024 * 1024 // 4 MiB — stream large first-parse files
@@ -136,9 +323,26 @@ export function defaultUsagePaths(opts = {}) {
   return {
     claudeDir: path.join(home, '.claude', 'projects'),
     codexDir: path.join(home, '.codex', 'sessions'),
+    geminiDir: path.join(home, '.gemini', 'antigravity', 'conversations'),
+    geminiCliDir: path.join(home, '.gemini', 'antigravity-cli', 'conversations'),
     cacheFile: path.join(dir, 'usage-cache.json'),
     outFile: path.join(dir, 'usage.json'),
   }
+}
+
+// List Antigravity / Gemini conversation databases: *.db in geminiDir and geminiCliDir.
+async function listGeminiFiles(geminiDir, geminiCliDir) {
+  const out = []
+  const dirs = [geminiDir, geminiCliDir].filter(Boolean)
+  for (const dir of dirs) {
+    let entries
+    try { entries = await readdir(dir, { withFileTypes: true }) } catch { continue }
+    for (const e of entries) {
+      if (!e.isFile() || !e.name.endsWith('.db')) continue
+      out.push(path.join(dir, e.name))
+    }
+  }
+  return out
 }
 
 // List Claude transcripts: one level of per-cwd dirs, each holding *.jsonl.
@@ -212,7 +416,7 @@ async function atomicWriteJson(file, value) {
 // Incremental ledger update: stat every store file, skip unchanged, tail-parse
 // grown files (re-parse shrunk/rebuilt ones from zero), keep deleted files as
 // `missing` ghosts, then aggregate and atomically write cache + usage.json.
-export async function updateUsage({ claudeDir, codexDir, cacheFile, outFile, projectDirs, rebuild = false }) {
+export async function updateUsage({ claudeDir, codexDir, geminiDir, geminiCliDir, cacheFile, outFile, projectDirs, rebuild = false }) {
   const start = Date.now()
 
   let cache
@@ -226,6 +430,7 @@ export async function updateUsage({ claudeDir, codexDir, cacheFile, outFile, pro
   const found = new Map()
   for (const f of await listClaudeFiles(claudeDir)) found.set(f, 'claude')
   for (const f of await listCodexFiles(codexDir)) found.set(f, 'codex')
+  for (const f of await listGeminiFiles(geminiDir, geminiCliDir)) found.set(f, 'gemini')
 
   let filesParsed = 0, filesSkipped = 0, filesMissing = 0
 
@@ -237,12 +442,19 @@ export async function updateUsage({ claudeDir, codexDir, cacheFile, outFile, pro
       filesSkipped += 1
       continue
     }
-    const reuse = !rebuild && prev && !prev.missing && prev.state && st.size >= (prev.offset ?? 0)
-    const state = reuse ? prev.state : newFileState(tool)
-    const offset = reuse ? (prev.offset ?? 0) : 0
-    const newOffset = await parseFileTail(absPath, tool, offset, st.size, state)
-    cache.files[absPath] = { tool, size: st.size, mtimeMs: st.mtimeMs, offset: newOffset, missing: false, state }
-    filesParsed += 1
+    if (tool === 'gemini') {
+      const state = newFileState('gemini')
+      parseGeminiDb(absPath, state)
+      cache.files[absPath] = { tool, size: st.size, mtimeMs: st.mtimeMs, offset: st.size, missing: false, state }
+      filesParsed += 1
+    } else {
+      const reuse = !rebuild && prev && !prev.missing && prev.state && st.size >= (prev.offset ?? 0)
+      const state = reuse ? prev.state : newFileState(tool)
+      const offset = reuse ? (prev.offset ?? 0) : 0
+      const newOffset = await parseFileTail(absPath, tool, offset, st.size, state)
+      cache.files[absPath] = { tool, size: st.size, mtimeMs: st.mtimeMs, offset: newOffset, missing: false, state }
+      filesParsed += 1
+    }
   }
 
   // Files in the ledger but absent on disk → keep as missing ghosts (forever).
@@ -260,7 +472,11 @@ export async function updateUsage({ claudeDir, codexDir, cacheFile, outFile, pro
 }
 
 function emptyTokens() {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, codexInput: 0, codexCachedInput: 0, codexOutput: 0 }
+  return {
+    input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0,
+    codexInput: 0, codexCachedInput: 0, codexOutput: 0,
+    geminiInput: 0, geminiCachedInput: 0, geminiOutput: 0, geminiThinking: 0,
+  }
 }
 
 function newAccumulator() {
@@ -271,6 +487,7 @@ function newAccumulator() {
     costUsd: 0,
     byModel: {},
     byCodexModel: {},
+    byGeminiModel: {},
     unpricedModels: new Set(),
     lastActivity: null,
     sessionList: [],
@@ -346,6 +563,32 @@ function addSession(acc, absPath, entry) {
       if (b.output > bestOut) { bestOut = b.output; model = id }
     }
     tokensIn += t.input; tokensOut += t.output
+  } else if (st.gemini) {
+    const t = {
+      input: st.gemini.input || 0,
+      cachedInput: st.gemini.cachedInput || 0,
+      output: st.gemini.output || 0,
+      thinking: st.gemini.thinking || 0,
+    }
+    acc.tokens.geminiInput += t.input
+    acc.tokens.geminiCachedInput += t.cachedInput
+    acc.tokens.geminiOutput += t.output
+    acc.tokens.geminiThinking += t.thinking
+
+    let bestOut = -1
+    for (const [id, b] of Object.entries(st.geminiByModel || {})) {
+      const bm = acc.byGeminiModel[id] ??= { input: 0, cachedInput: 0, output: 0, thinking: 0, costUsd: 0 }
+      bm.input += b.input || 0
+      bm.cachedInput += b.cachedInput || 0
+      bm.output += b.output || 0
+      bm.thinking += b.thinking || 0
+      const c = costForGemini(b, id)
+      if (c === null) acc.unpricedModels.add(id)
+      else { bm.costUsd += c; acc.costUsd += c; fileCostUsd += c }
+      if ((b.output || 0) > bestOut) { bestOut = b.output; model = id }
+    }
+    tokensIn += t.input + t.cachedInput
+    tokensOut += t.output
   }
 
   acc.sessionList.push({
@@ -379,11 +622,15 @@ export function aggregateUsage(cache, projectDirs) {
     if (!st) continue
     const hasClaude = st.models && Object.keys(st.models).length > 0
     const hasCodex = st.codex != null
-    if (!hasClaude && !hasCodex) continue
+    const hasGemini = st.gemini != null || Object.keys(st.geminiByModel || {}).length > 0
+    if (!hasClaude && !hasCodex && !hasGemini) continue
 
     let target = unmatched
     if (typeof st.cwd === 'string') {
-      const dir = dirs.find(d => st.cwd === d || st.cwd.startsWith(d + '/'))
+      let dir = dirs.find(d => st.cwd === d || st.cwd.startsWith(d + '/'))
+      if (!dir && Array.isArray(st.geminiPaths)) {
+        dir = dirs.find(d => st.geminiPaths.some(p => p === d || p.startsWith(d + '/')))
+      }
       if (dir) target = projects[dir] ??= newAccumulator()
     }
     addSession(target, absPath, entry)

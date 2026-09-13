@@ -56,6 +56,18 @@ export function costForCodex(t, modelId) {
     + t.output * p.out
 }
 
+export function costForGemini(t, modelId) {
+  const p = matchPrice(modelId)
+  if (!p) return null
+  const input = t?.input || 0
+  const cached = t?.cachedInput || 0
+  const output = t?.output || 0
+  return input * p.in
+    + cached * (p.cacheRead || 0)
+    + output * p.out
+}
+
 export function priceSource() {
   return { fetched: PRICING._fetched, modelCount: Object.keys(PRICING.models).length }
 }
+

@@ -849,16 +849,18 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
 
                         const claudeModels = Object.entries(usage.byModel || {})
                         const codexModels = Object.entries(usage.byCodexModel || {})
+                        const geminiModels = Object.entries(usage.byGeminiModel || {})
                         const unpriced = new Set(usage.unpricedModels || [])
                         const hasCodex = codexModels.length > 0
+                        const hasGemini = geminiModels.length > 0
 
                         const totalCost = usage.costUsd ?? 0
                         const hasUnpriced = unpriced.size > 0
                         const activeHours = ((usage.activeMinutes ?? 0) / 60).toFixed(1)
 
-                        const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
-                        const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
-                        const cacheRead = t.cacheRead ?? 0
+                        const inTokens = (t.input ?? 0) + (t.codexInput ?? 0) + (t.geminiInput ?? 0)
+                        const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0) + (t.geminiOutput ?? 0)
+                        const cacheRead = (t.cacheRead ?? 0) + (t.geminiCachedInput ?? 0)
                         const cacheWrite = (t.cacheWrite5m ?? 0) + (t.cacheWrite1h ?? 0)
 
                         const sessions = usage.sessionList || []
@@ -880,7 +882,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                         </div>
 
                                         {/* Per-tool breakdown */}
-                                        {(claudeModels.length > 0 || hasCodex) && (
+                                        {(claudeModels.length > 0 || hasCodex || hasGemini) && (
                                             <div className="space-y-2 bg-muted/50 rounded-lg p-3">
                                                 {claudeModels.length > 0 && (
                                                     <div className="space-y-1.5">
@@ -922,6 +924,25 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                         })}
                                                     </div>
                                                 )}
+                                                {hasGemini && (
+                                                    <div className="space-y-1.5 pt-1">
+                                                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-600 dark:text-sky-400">gemini</span>
+                                                        {geminiModels.map(([id, m]) => {
+                                                            const isUnpriced = unpriced.has(id)
+                                                            return (
+                                                                <div key={id} className="flex items-center justify-between gap-2 text-xs">
+                                                                    <span className="font-mono truncate">{id}</span>
+                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cachedInput ?? 0)}
+                                                                    </span>
+                                                                    <span className="tabular-nums w-16 text-right">
+                                                                        {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
+                                                                    </span>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
@@ -941,7 +962,13 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                     {visibleSessions.map((s, i) => (
                                                         <div key={s.file || i} className="flex items-center gap-2 text-xs">
                                                             <span className="text-muted-foreground flex-1 truncate">{formatTimeAgo(s.lastActivity)} ago</span>
-                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${s.tool === 'claude' ? 'bg-violet-500/20 text-violet-600 dark:text-violet-400' : 'bg-zinc-500/20 text-muted-foreground'}`}>
+                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                                                s.tool === 'claude'
+                                                                    ? 'bg-violet-500/20 text-violet-600 dark:text-violet-400'
+                                                                    : s.tool === 'gemini'
+                                                                    ? 'bg-sky-500/20 text-sky-600 dark:text-sky-400'
+                                                                    : 'bg-zinc-500/20 text-muted-foreground'
+                                                            }`}>
                                                                 {s.tool}
                                                             </span>
                                                             <span className="text-muted-foreground tabular-nums w-12 text-right">{(s.activeMinutes ?? 0).toFixed(0)} min</span>

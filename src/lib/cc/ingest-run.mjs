@@ -28,10 +28,14 @@ import { parseSessionText } from './ingest.mjs';
 import { parseGuardAudit } from './guard-ingest.mjs';
 import { extractContext, ticketRegex } from './context.mjs';
 import { scoreSession, verifyRegex } from './quality.mjs';
+import { ledgerFile } from '../state-dir.mjs';
+import { listGeminiDbs, parseGeminiSession } from './gemini-ingest.mjs';
 
 export function defaultIngestPaths(env = process.env) {
   return {
     claudeDir: env.CC_CLAUDE_DIR || join(homedir(), '.claude', 'projects'),
+    geminiDir: env.CC_GEMINI_DIR || join(homedir(), '.gemini', 'antigravity', 'conversations'),
+    geminiCliDir: env.CC_GEMINI_CLI_DIR || join(homedir(), '.gemini', 'antigravity-cli', 'conversations'),
     guardAudit: env.CC_GUARD_AUDIT || join(homedir(), '.claude', 'cc-guard', 'audit.jsonl'),
   };
 }
@@ -95,7 +99,16 @@ export function mergeSubagent(parent, sub) {
  * @param {{claudeDir: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean}} opts
  * @returns {Promise<{sessions: number, changed: number, skipped: number, ms: number}>}
  */
-export async function ingestAll({ claudeDir, guardAudit, db, env = process.env, full = false }) {
+export async function ingestAll({
+  claudeDir,
+  geminiDir = null,
+  geminiCliDir = null,
+  guardAudit,
+  db,
+  env = process.env,
+  full = false,
+  projectDirs = null,
+}) {
   const t0 = Date.now();
   const ticketPattern = ticketRegex(env);
   const verifyPattern = verifyRegex(env);
@@ -106,44 +119,95 @@ export async function ingestAll({ claudeDir, guardAudit, db, env = process.env, 
   const state = getIngestState(db);
 
   let sessions = 0, changed = 0, skipped = 0;
-  for (const { file, subagents } of await listTranscripts(claudeDir)) {
-    const signature = await signatureOf(file, subagents);
-    const prev = state.get(file);
-    if (prev && prev.signature === signature && prev.session_id) {
-      // Unchanged transcript: only the guard audit may have grown.
-      replaceGuardHits(db, prev.session_id, guardMap.get(prev.session_id) || []);
-      sessions++; skipped++;
-      continue;
-    }
+  if (claudeDir) {
+    for (const { file, subagents } of await listTranscripts(claudeDir)) {
+      const signature = await signatureOf(file, subagents);
+      const prev = state.get(file);
+      if (prev && prev.signature === signature && prev.session_id) {
+        // Unchanged transcript: only the guard audit may have grown.
+        replaceGuardHits(db, prev.session_id, guardMap.get(prev.session_id) || []);
+        sessions++; skipped++;
+        continue;
+      }
 
-    let text;
-    try { text = await readFile(file, 'utf8'); } catch { continue; }
-    const row = parseSessionText(text, { fileName: basename(file), rawRef: file });
-    if (!row.session_id) continue;
-    for (const sf of subagents) {
-      let st;
-      try { st = await readFile(sf, 'utf8'); } catch { continue; }
-      mergeSubagent(row, parseSessionText(st, { fileName: basename(sf), rawRef: sf }));
+      let text;
+      try { text = await readFile(file, 'utf8'); } catch { continue; }
+      const row = parseSessionText(text, { fileName: basename(file), rawRef: file });
+      if (!row.session_id) continue;
+      for (const sf of subagents) {
+        let st;
+        try { st = await readFile(sf, 'utf8'); } catch { continue; }
+        mergeSubagent(row, parseSessionText(st, { fileName: basename(sf), rawRef: sf }));
+      }
+      const hits = guardMap.get(row.session_id) || [];
+      Object.assign(row, extractContext(row._lines, { ticketPattern }));
+      const q = scoreSession(row._lines, { guardHits: hits, verifyPattern });
+      row.quality_score = q.score;
+      row.quality_detail = JSON.stringify(q.detail);
+      db.exec('BEGIN');
+      try {
+        upsertSession(db, row);
+        replaceTools(db, row.session_id, row._tools);
+        replaceSkills(db, row.session_id, row._skills, row._editedSkills);
+        replaceGuardHits(db, row.session_id, hits);
+        setIngestState(db, file, row.session_id, signature);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
+      sessions++; changed++;
     }
-    const hits = guardMap.get(row.session_id) || [];
-    Object.assign(row, extractContext(row._lines, { ticketPattern }));
-    const q = scoreSession(row._lines, { guardHits: hits, verifyPattern });
-    row.quality_score = q.score;
-    row.quality_detail = JSON.stringify(q.detail);
-    db.exec('BEGIN');
-    try {
-      upsertSession(db, row);
-      replaceTools(db, row.session_id, row._tools);
-      replaceSkills(db, row.session_id, row._skills, row._editedSkills);
-      replaceGuardHits(db, row.session_id, hits);
-      setIngestState(db, file, row.session_id, signature);
-      db.exec('COMMIT');
-    } catch (e) {
-      db.exec('ROLLBACK');
-      throw e;
-    }
-    sessions++; changed++;
   }
+
+  if (geminiDir || geminiCliDir) {
+    const geminiDbs = await listGeminiDbs([geminiDir, geminiCliDir]);
+    if (geminiDbs.length > 0) {
+      let projects = projectDirs;
+      if (!projects) {
+        projects = [];
+        try {
+          const text = await readFile(ledgerFile(), 'utf8');
+          for (const line of text.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const d = JSON.parse(line);
+              if (d.directory) projects.push(d.directory);
+            } catch { /* skip */ }
+          }
+        } catch { /* ledger missing */ }
+      }
+
+      for (const file of geminiDbs) {
+        let s;
+        try { s = await stat(file); } catch { continue; }
+        const signature = `${basename(file)}:${s.size}:${Math.floor(s.mtimeMs / 1000)}`;
+        const prev = state.get(file);
+        if (prev && prev.signature === signature && prev.session_id) {
+          sessions++; skipped++;
+          continue;
+        }
+
+        const row = parseGeminiSession(file, { projectDirs: projects, rawRef: file });
+        if (!row || !row.session_id) continue;
+
+        db.exec('BEGIN');
+        try {
+          upsertSession(db, row);
+          replaceTools(db, row.session_id, row._tools);
+          replaceSkills(db, row.session_id, row._skills, row._editedSkills);
+          replaceGuardHits(db, row.session_id, []);
+          setIngestState(db, file, row.session_id, signature);
+          db.exec('COMMIT');
+        } catch (e) {
+          db.exec('ROLLBACK');
+          throw e;
+        }
+        sessions++; changed++;
+      }
+    }
+  }
+
   return { sessions, changed, skipped, ms: Date.now() - t0 };
 }
 

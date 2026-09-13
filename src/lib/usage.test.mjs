@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
-import { newFileState, parseClaudeLines, parseCodexLines, splitCompleteLines } from './usage.mjs'
+import { DatabaseSync } from 'node:sqlite'
+import { newFileState, parseClaudeLines, parseCodexLines, parseGeminiDb, decodeProto, extractWorkspaceFromBlob, splitCompleteLines, updateUsage, aggregateUsage } from './usage.mjs'
 
 const CL = (over = {}) => JSON.stringify({
   type: 'assistant', timestamp: over.ts ?? '2026-07-10T10:00:00Z', cwd: over.cwd,
@@ -147,7 +148,6 @@ test('splitCompleteLines returns only complete lines and correct byte count', ()
 import { mkdtemp, writeFile, appendFile, mkdir, readFile, rm } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { updateUsage, aggregateUsage } from './usage.mjs'
 
 const codexEntry = state => ({ tool: 'codex', state: { ...newFileState('codex'), cwd: '/p/a', ...state } })
 
@@ -341,3 +341,171 @@ test('updateUsage: Codex-only session yields unpricedModels containing "unknown"
     }
   } finally { await rm(w.base, { recursive: true, force: true }) }
 })
+
+function encVarint(v) {
+  const bytes = []
+  let n = BigInt(v)
+  while (n >= 0x80n) {
+    bytes.push(Number((n & 0x7fn) | 0x80n))
+    n >>= 7n
+  }
+  bytes.push(Number(n))
+  return Buffer.from(bytes)
+}
+
+function encField(num, wireType, val) {
+  const tag = encVarint((num << 3) | wireType)
+  if (wireType === 0) return Buffer.concat([tag, encVarint(val)])
+  if (wireType === 2) {
+    const buf = Buffer.isBuffer(val) ? val : Buffer.from(val)
+    return Buffer.concat([tag, encVarint(buf.length), buf])
+  }
+  throw new Error('unsupported wireType')
+}
+
+test('decodeProto and extractWorkspaceFromBlob decode varints and workspace URI', () => {
+  const blob = encField(7, 2, 'file:///p/test-project')
+  const decoded = decodeProto(blob)
+  assert.equal(Buffer.from(decoded[7]).toString('utf8'), 'file:///p/test-project')
+  assert.equal(extractWorkspaceFromBlob(blob), '/p/test-project')
+
+  const blob1 = encField(1, 2, '.;file:///p/sub/repo.git')
+  assert.equal(extractWorkspaceFromBlob(blob1), '/p/sub/repo.git')
+
+  assert.equal(extractWorkspaceFromBlob(null), null)
+  assert.equal(extractWorkspaceFromBlob(Buffer.from([])), null)
+})
+
+test('parseGeminiDb: extracts workspace, timestamps, tokens per model', () => {
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE trajectory_metadata_blob (id TEXT, data BLOB)')
+  db.exec('CREATE TABLE steps (idx INT, metadata BLOB)')
+  db.exec('CREATE TABLE gen_metadata (idx INT, data BLOB)')
+
+  const blob = encField(7, 2, 'file:///p/gemini-app')
+  db.prepare('INSERT INTO trajectory_metadata_blob VALUES (?, ?)').run('main', blob)
+
+  const tsMsg1 = encField(1, 0, 1788700000)
+  const tsMsg2 = encField(1, 0, 1788700060)
+  db.prepare('INSERT INTO steps VALUES (?, ?)').run(0, encField(1, 2, tsMsg1))
+  db.prepare('INSERT INTO steps VALUES (?, ?)').run(1, encField(1, 2, tsMsg2))
+
+  const f4a = Buffer.concat([
+    encField(2, 0, 1000),
+    encField(5, 0, 300),
+    encField(3, 0, 100),
+    encField(9, 0, 40),
+  ])
+  const f1a = Buffer.concat([
+    encField(19, 2, 'gemini-3.8-flash'),
+    encField(4, 2, f4a),
+  ])
+  db.prepare('INSERT INTO gen_metadata VALUES (?, ?)').run(0, encField(1, 2, f1a))
+
+  const s = newFileState('gemini')
+  parseGeminiDb(db, s)
+
+  assert.equal(s.cwd, '/p/gemini-app')
+  assert.equal(s.gemini.input, 1000)
+  assert.equal(s.gemini.cachedInput, 300)
+  assert.equal(s.gemini.output, 100)
+  assert.equal(s.gemini.thinking, 40)
+  assert.equal(s.activeSeconds, 60)
+  assert.deepEqual(s.geminiByModel['gemini-3.8-flash'], {
+    input: 1000,
+    cachedInput: 300,
+    output: 100,
+    thinking: 40,
+  })
+})
+
+test('aggregateUsage: byGeminiModel sums equal gemini token totals and are priced', () => {
+  const entry = {
+    tool: 'gemini',
+    state: {
+      tool: 'gemini',
+      cwd: '/p/a',
+      gemini: { input: 1e6, cachedInput: 2e6, output: 100e3, thinking: 40e3 },
+      geminiByModel: {
+        'gemini-3.8-flash': { input: 1e6, cachedInput: 2e6, output: 100e3, thinking: 40e3 },
+      },
+      firstTs: '2026-07-10T10:00:00Z',
+      lastTs: '2026-07-10T10:10:00Z',
+      activeSeconds: 600,
+      sessions: 1,
+    },
+  }
+  const agg = aggregateUsage({ files: { '/f/gem.db': entry } }, ['/p/a'])
+  const proj = agg.projects['/p/a']
+  assert.ok(proj)
+  assert.equal(proj.sessions, 1)
+  assert.equal(proj.tokens.geminiInput, 1e6)
+  assert.equal(proj.tokens.geminiCachedInput, 2e6)
+  assert.equal(proj.tokens.geminiOutput, 100e3)
+  assert.equal(proj.tokens.geminiThinking, 40e3)
+  assert.ok(Math.abs(proj.byGeminiModel['gemini-3.8-flash'].costUsd - 1.275) < 1e-6)
+  assert.ok(Math.abs(proj.costUsd - 1.275) < 1e-6)
+  assert.equal(proj.sessionList.length, 1)
+  assert.equal(proj.sessionList[0].tool, 'gemini')
+  assert.equal(proj.sessionList[0].model, 'gemini-3.8-flash')
+  assert.ok(Math.abs(proj.sessionList[0].costUsd - 1.275) < 1e-6)
+})
+
+test('updateUsage: discovers and parses gemini conversation database', async () => {
+  const w = await makeStores()
+  const geminiDir = path.join(w.base, 'gemini-convos')
+  await mkdir(geminiDir, { recursive: true })
+  const dbPath = path.join(geminiDir, 'conv-1.db')
+
+  try {
+    const db = new DatabaseSync(dbPath)
+    db.exec('CREATE TABLE trajectory_metadata_blob (id TEXT, data BLOB)')
+    db.exec('CREATE TABLE steps (idx INT, metadata BLOB)')
+    db.exec('CREATE TABLE gen_metadata (idx INT, data BLOB)')
+
+    const blob = encField(7, 2, 'file:///p/a')
+    db.prepare('INSERT INTO trajectory_metadata_blob VALUES (?, ?)').run('main', blob)
+
+    const tsMsg = encField(1, 0, 1788700000)
+    db.prepare('INSERT INTO steps VALUES (?, ?)').run(0, encField(1, 2, tsMsg))
+
+    const f4 = Buffer.concat([
+      encField(2, 0, 5000),
+      encField(5, 0, 1000),
+      encField(3, 0, 200),
+      encField(9, 0, 50),
+    ])
+    const f1 = Buffer.concat([
+      encField(19, 2, 'gemini-3.8-flash'),
+      encField(4, 2, f4),
+    ])
+    db.prepare('INSERT INTO gen_metadata VALUES (?, ?)').run(0, encField(1, 2, f1))
+    db.close()
+
+    const opts = {
+      claudeDir: w.claudeDir,
+      codexDir: w.codexDir,
+      geminiDir,
+      cacheFile: w.cacheFile,
+      outFile: w.outFile,
+      projectDirs: ['/p/a'],
+    }
+    const r1 = await updateUsage(opts)
+    assert.equal(r1.filesParsed, 1)
+
+    const r2 = await updateUsage(opts)
+    assert.equal(r2.filesParsed, 0)
+    assert.equal(r2.filesSkipped, 1)
+
+    const out = JSON.parse(await readFile(w.outFile, 'utf8'))
+    const proj = out.projects['/p/a']
+    assert.ok(proj)
+    assert.equal(proj.tokens.geminiInput, 5000)
+    assert.equal(proj.tokens.geminiCachedInput, 1000)
+    assert.equal(proj.tokens.geminiOutput, 200)
+    assert.equal(proj.sessionList[0].tool, 'gemini')
+  } finally {
+    await rm(w.base, { recursive: true, force: true })
+  }
+})
+

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { matchPrice, matchInTable, costForClaude, costForCodex, priceSource } from './usage-pricing.mjs'
+import { matchPrice, matchInTable, costForClaude, costForCodex, costForGemini, priceSource } from './usage-pricing.mjs'
 import snapshot from './pricing-data.json' with { type: 'json' }
 
 test('matchPrice longest-prefix matches dated model ids', () => {
@@ -52,6 +52,21 @@ test('costForCodex: gpt-5.6-sol, 1M input (800k cached, 100k out) = $4.40', () =
 test('costForCodex returns null for an unknown model id (unpriced, never $0)', () => {
   assert.equal(costForCodex({ input: 2e6, cachedInput: 1e6, output: 1e6 }, 'unknown-codex-model'), null)
   assert.equal(costForCodex({ input: 2e6, cachedInput: 1e6, output: 1e6 }), null)
+})
+
+test('costForGemini: gemini-3.8-flash, 1M input (2M cached, 100k out) = $1.275', () => {
+  const c = costForGemini({ input: 1e6, cachedInput: 2e6, output: 100e3 }, 'gemini-3.8-flash')
+  assert.ok(Math.abs(c - 1.275) < 1e-9)
+})
+
+test('costForGemini: gemini-3.8-flash-tiered matches gemini-3.8-flash prefix', () => {
+  const c = costForGemini({ input: 1e6, cachedInput: 0, output: 0 }, 'gemini-3.8-flash-tiered')
+  assert.ok(Math.abs(c - 0.75) < 1e-9)
+})
+
+test('costForGemini returns null for an unknown model id (unpriced, never $0)', () => {
+  assert.equal(costForGemini({ input: 1e6, output: 1e6 }, 'unknown-gemini-model'), null)
+  assert.equal(costForGemini({ input: 1e6, output: 1e6 }), null)
 })
 
 test('priceSource reports the snapshot freshness and model count', () => {

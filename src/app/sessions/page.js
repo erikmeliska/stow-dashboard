@@ -173,7 +173,8 @@ function SessionsView() {
   const [detail, setDetail] = useState(null)
   const [summarizing, setSummarizing] = useState(false)
   const [summaryError, setSummaryError] = useState(null)
-  const [ticketFilter, setTicketFilter] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [modelFilter, setModelFilter] = useState('any')
   const [qualityFilter, setQualityFilter] = useState('any')
 
   async function load() {
@@ -212,8 +213,9 @@ function SessionsView() {
     }
   }
 
-  const filtered = filterSessions(sessions, { ticket: ticketFilter, quality: qualityFilter })
-  const filtering = ticketFilter.trim() !== '' || qualityFilter !== 'any'
+  const availableModels = Array.from(new Set(sessions.map((s) => s.model).filter(Boolean))).sort()
+  const filtered = filterSessions(sessions, { search: searchQuery, model: modelFilter, quality: qualityFilter })
+  const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any'
   const totalCost = filtered.reduce((a, s) => a + (s.cost_usd || 0), 0)
 
   return (
@@ -234,11 +236,22 @@ function SessionsView() {
             )}
             <input
               type="search"
-              value={ticketFilter}
-              onChange={(e) => setTicketFilter(e.target.value)}
-              placeholder="Ticket…"
-              className="h-7 w-32 rounded-md border bg-transparent px-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search ticket or project…"
+              className="h-7 w-48 rounded-md border bg-transparent px-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
+            <select
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+              className="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              title="Model"
+            >
+              <option value="any">Model: any</option>
+              {availableModels.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
             <select
               value={qualityFilter}
               onChange={(e) => setQualityFilter(e.target.value)}

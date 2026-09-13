@@ -15,8 +15,10 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { execClosedStdin } from '../analyzer.mjs';
 import { assistantTexts, parseLines, toolUses, userPrompts } from './transcript.mjs';
+import { decodeProto } from '../usage.mjs';
 import { getSession, setSummary } from './store.mjs';
 
 export const SUMMARY_SCHEMA = {
@@ -31,7 +33,7 @@ export const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM_PROMPT = `You summarise one Claude Code session from a condensed transcript. Answer ONLY with JSON matching the schema.
+const SYSTEM_PROMPT = `You summarise one AI coding session from a condensed transcript. Answer ONLY with JSON matching the schema.
 "what": 1-3 plain sentences on what was worked on and what the result was.
 "outcome": done | partial | abandoned.
 "improvements": skills, tools or process that were improved or created (empty if none).
@@ -67,12 +69,192 @@ export class SummaryError extends Error {
 }
 
 function clip(s, n) {
-  s = String(s).replace(/\s+/g, ' ').trim();
+  s = String(s || '').replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-/** Condensed, ordered transcript: prompts, tool calls (short), assistant text. */
-export function distill(lines, { maxChars = 30000 } = {}) {
+function limitChars(text, maxChars) {
+  if (text.length > maxChars) {
+    // keep the head (what was asked) and the tail (how it ended)
+    const head = Math.floor(maxChars * 0.4);
+    const tail = maxChars - head - 7;
+    return text.slice(0, head) + '\n[...]\n' + text.slice(-tail);
+  }
+  return text;
+}
+
+function cleanUserPrompt(content) {
+  if (!content || typeof content !== 'string') return '';
+  const reqMatch = content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+  let text = reqMatch ? reqMatch[1] : content;
+  return text
+    .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, '')
+    .replace(/<system_instructions>[\s\S]*?<\/system_instructions>/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanToolArg(args) {
+  if (args == null) return '';
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return args.replace(/^["']|["']$/g, '').trim();
+    }
+  }
+  if (typeof args === 'object' && args !== null) {
+    const val = args.CommandLine || args.AbsolutePath || args.TargetFile || args.DirectoryPath ||
+                args.Query || args.SearchPath || args.Recipient || args.Message || args.Prompt ||
+                args.command || args.file_path || args.path;
+    if (val) return String(val).replace(/^["']|["']$/g, '').replace(/\s+/g, ' ').trim();
+    for (const v of Object.values(args)) {
+      if (typeof v === 'string' && v) return v.replace(/^["']|["']$/g, '').replace(/\s+/g, ' ').trim();
+    }
+    return JSON.stringify(args).replace(/\s+/g, ' ').trim();
+  }
+  return String(args).replace(/^["']|["']$/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Condensed, ordered transcript for Gemini / Antigravity JSONL lines. */
+export function distillGemini(lines, { maxChars = 30000 } = {}) {
+  const parts = [];
+  for (const d of lines) {
+    if (!d) continue;
+    if (d.type === 'USER_INPUT') {
+      const p = cleanUserPrompt(d.content);
+      if (p) parts.push(`USER: ${clip(p, 1200)}`);
+    } else if (d.type === 'PLANNER_RESPONSE') {
+      if (Array.isArray(d.tool_calls)) {
+        for (const tc of d.tool_calls) {
+          const arg = cleanToolArg(tc.args);
+          parts.push(`TOOL ${tc.name}: ${clip(arg, 160)}`);
+        }
+      }
+      if (d.content && typeof d.content === 'string') {
+        const t = d.content.replace(/\s+/g, ' ').trim();
+        if (t) parts.push(`ASSISTANT: ${clip(t, 600)}`);
+      }
+    }
+  }
+  return limitChars(parts.join('\n'), maxChars);
+}
+
+/** Fallback extractor: read steps from SQLite database directly. */
+export function distillGeminiDb(dbOrPath, { maxChars = 30000 } = {}) {
+  let db = null;
+  let shouldClose = false;
+  if (typeof dbOrPath === 'string') {
+    try {
+      db = new DatabaseSync(dbOrPath, { open: true, readOnly: true });
+      shouldClose = true;
+    } catch {
+      return '';
+    }
+  } else if (dbOrPath && typeof dbOrPath.prepare === 'function') {
+    db = dbOrPath;
+  } else {
+    return '';
+  }
+
+  const parts = [];
+  try {
+    const rows = db.prepare('SELECT idx, step_type, step_payload, metadata FROM steps ORDER BY idx ASC').all();
+    for (const r of rows) {
+      if (r.step_payload) {
+        try {
+          const p = decodeProto(r.step_payload);
+          if (p[19]) {
+            const p19 = decodeProto(p[19]);
+            if (p19[2]) {
+              const text = Buffer.isBuffer(p19[2]) || p19[2] instanceof Uint8Array
+                ? Buffer.from(p19[2]).toString('utf8')
+                : String(p19[2]);
+              const cleaned = cleanUserPrompt(text);
+              if (cleaned) parts.push(`USER: ${clip(cleaned, 1200)}`);
+            }
+          }
+          if (p[20]) {
+            const p20 = decodeProto(p[20]);
+            if (p20[1]) {
+              const text = Buffer.isBuffer(p20[1]) || p20[1] instanceof Uint8Array
+                ? Buffer.from(p20[1]).toString('utf8')
+                : String(p20[1]);
+              const cleaned = String(text).replace(/\s+/g, ' ').trim();
+              if (cleaned) parts.push(`ASSISTANT: ${clip(cleaned, 600)}`);
+            }
+          }
+        } catch {
+          /* ignore proto decode errors */
+        }
+      }
+      if (r.metadata) {
+        try {
+          const top = decodeProto(r.metadata);
+          if (top[4]) {
+            const f4 = decodeProto(top[4]);
+            if (f4[2]) {
+              const toolName = Buffer.isBuffer(f4[2]) || f4[2] instanceof Uint8Array
+                ? Buffer.from(f4[2]).toString('utf8')
+                : String(f4[2]);
+              let arg = '';
+              if (f4[3]) {
+                const argsRaw = Buffer.isBuffer(f4[3]) || f4[3] instanceof Uint8Array
+                  ? Buffer.from(f4[3]).toString('utf8')
+                  : String(f4[3]);
+                arg = cleanToolArg(argsRaw);
+              }
+              parts.push(`TOOL ${toolName}: ${clip(arg, 160)}`);
+            }
+          }
+        } catch {
+          /* ignore proto decode errors */
+        }
+      }
+    }
+  } catch {
+    /* ignore missing table or other query error */
+  } finally {
+    if (shouldClose && db) {
+      try { db.close(); } catch {}
+    }
+  }
+  return limitChars(parts.join('\n'), maxChars);
+}
+
+/** Resolves the transcript.jsonl path for a Gemini session. */
+export function resolveGeminiTranscriptPath(rawRef, id, exists = existsSync) {
+  if (rawRef && !rawRef.endsWith('.db') && exists(rawRef)) return rawRef;
+  const candidates = [];
+  if (rawRef) {
+    const d = dirname(rawRef);
+    candidates.push(
+      join(d, 'transcript.jsonl'),
+      join(d, `${id}.jsonl`),
+      join(dirname(d), 'brain', id, '.system_generated', 'logs', 'transcript.jsonl'),
+      join(dirname(d), 'brain', id, '.system_generated', 'logs', 'transcript_full.jsonl'),
+    );
+  }
+  const home = homedir();
+  candidates.push(
+    join(home, '.gemini', 'antigravity', 'brain', id, '.system_generated', 'logs', 'transcript.jsonl'),
+    join(home, '.gemini', 'antigravity', 'brain', id, '.system_generated', 'logs', 'transcript_full.jsonl'),
+    join(home, '.gemini', 'antigravity-cli', 'brain', id, '.system_generated', 'logs', 'transcript.jsonl'),
+    join(home, '.gemini', 'antigravity-cli', 'brain', id, '.system_generated', 'logs', 'transcript_full.jsonl'),
+  );
+  for (const c of candidates) {
+    if (exists(c)) return c;
+  }
+  return null;
+}
+
+/** Condensed, ordered transcript: prompts, tool calls (short), assistant text. Supports Claude & Gemini lines. */
+export function distill(lines, opts = {}) {
+  if (!Array.isArray(lines) || lines.length === 0) return '';
+  if (lines.some((d) => d && (d.type === 'USER_INPUT' || d.type === 'PLANNER_RESPONSE'))) {
+    return distillGemini(lines, opts);
+  }
+  const { maxChars = 30000 } = opts;
   const parts = [];
   for (const d of lines) {
     if (d.type === 'user') for (const p of userPrompts([d])) parts.push(`USER: ${clip(p, 1200)}`);
@@ -86,14 +268,7 @@ export function distill(lines, { maxChars = 30000 } = {}) {
       for (const t of assistantTexts([d])) parts.push(`ASSISTANT: ${clip(t, 600)}`);
     }
   }
-  let text = parts.join('\n');
-  if (text.length > maxChars) {
-    // keep the head (what was asked) and the tail (how it ended)
-    const head = Math.floor(maxChars * 0.4);
-    const tail = maxChars - head - 7;
-    text = text.slice(0, head) + '\n[...]\n' + text.slice(-tail);
-  }
-  return text;
+  return limitChars(parts.join('\n'), maxChars);
 }
 
 /** The exact argv we hand to `claude`; exported so tests and docs stay in sync. */
@@ -148,9 +323,43 @@ export async function summarize(distillate, {
 export async function summarizeSession(db, id, opts = {}) {
   const got = getSession(db, id);
   if (!got) throw new SummaryError('not-found', `session ${id} not in store`);
-  let text;
-  try { text = await readFile(got.session.raw_ref, 'utf8'); } catch { throw new SummaryError('not-found', `transcript missing: ${got.session.raw_ref}`); }
-  const result = await summarize(distill(parseLines(text)), opts);
+
+  const rawRef = got.session.raw_ref;
+  const isGemini = rawRef?.endsWith('.db') || got.session.model?.startsWith('gemini');
+
+  let distillate = '';
+  if (isGemini) {
+    const transcriptPath = resolveGeminiTranscriptPath(rawRef, id);
+    if (transcriptPath) {
+      try {
+        const text = await readFile(transcriptPath, 'utf8');
+        const lines = [];
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue;
+          try { lines.push(JSON.parse(line)); } catch {}
+        }
+        distillate = distillGemini(lines, opts);
+      } catch {
+        /* fall back to SQLite */
+      }
+    }
+    if (!distillate && rawRef && rawRef.endsWith('.db') && existsSync(rawRef)) {
+      distillate = distillGeminiDb(rawRef, opts);
+    }
+    if (!distillate || !distillate.trim()) {
+      throw new SummaryError('not-found', `transcript missing for gemini session: ${id}`);
+    }
+  } else {
+    let text;
+    try {
+      text = await readFile(rawRef, 'utf8');
+    } catch {
+      throw new SummaryError('not-found', `transcript missing: ${rawRef}`);
+    }
+    distillate = distill(parseLines(text), opts);
+  }
+
+  const result = await summarize(distillate, opts);
   setSummary(db, id, { summary: JSON.stringify(result), model: result.model });
   return getSession(db, id);
 }

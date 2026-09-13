@@ -970,8 +970,8 @@ export function ProjectTable({ projects, ownRepos }) {
                 const usage = row.original.usage
                 const hasUnpriced = (usage.unpricedModels || []).length > 0
                 const t = usage.tokens || {}
-                const inTokens = (t.input ?? 0) + (t.codexInput ?? 0)
-                const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0)
+                const inTokens = (t.input ?? 0) + (t.codexInput ?? 0) + (t.geminiInput ?? 0)
+                const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0) + (t.geminiOutput ?? 0)
                 const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`
                 const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtTokens(inTokens)} out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
                 return (

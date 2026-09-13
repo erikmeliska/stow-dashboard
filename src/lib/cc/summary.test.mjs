@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, summarize, summarizeSession, resolveClaudeBin, SummaryError } from './summary.mjs';
+import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -72,3 +72,98 @@ test('resolveClaudeBin: env override, then well-known paths, then bare name', ()
   assert.equal(resolveClaudeBin({}, '/h', (p) => p === '/opt/homebrew/bin/claude'), '/opt/homebrew/bin/claude');
   assert.equal(resolveClaudeBin({}, '/h', () => false), 'claude');
 });
+
+const geminiLines = [
+  { step_index: 0, type: 'USER_INPUT', content: '<USER_REQUEST>\nFix the authentication redirect bug\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>' },
+  { step_index: 1, type: 'PLANNER_RESPONSE', tool_calls: [{ name: 'run_command', args: { CommandLine: 'npm test' } }] },
+  { step_index: 2, type: 'PLANNER_RESPONSE', content: 'Tests now pass and redirect is resolved.' },
+];
+
+test('distillGemini and polymorphic distill extract prompt, tool calls and assistant text', () => {
+  const d = distill(geminiLines);
+  assert.match(d, /USER: Fix the authentication redirect bug/);
+  assert.match(d, /TOOL run_command: npm test/);
+  assert.match(d, /ASSISTANT: Tests now pass and redirect is resolved\./);
+});
+
+test('resolveGeminiTranscriptPath finds candidate files', () => {
+  const p = resolveGeminiTranscriptPath('/tmp/test.db', 'sess-123', (candidate) => candidate.endsWith('transcript.jsonl'));
+  assert.ok(p);
+  assert.ok(p.endsWith('transcript.jsonl'));
+});
+
+test('distillGeminiDb extracts steps directly from sqlite database', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  function encodeVarint(n) {
+    const bytes = [];
+    while (n > 0x7f) {
+      bytes.push((n & 0x7f) | 0x80);
+      n >>>= 7;
+    }
+    bytes.push(n & 0x7f);
+    return Buffer.from(bytes);
+  }
+
+  function makeProtoField(fieldNum, val) {
+    const buf = Buffer.isBuffer(val) ? val : Buffer.from(val);
+    const tag = (fieldNum << 3) | 2;
+    return Buffer.concat([encodeVarint(tag), encodeVarint(buf.length), buf]);
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-db-'));
+  const dbFile = join(dir, 'gem-session.db');
+  const db = new DatabaseSync(dbFile);
+  db.exec(`
+    CREATE TABLE steps (
+      idx INTEGER PRIMARY KEY,
+      step_type INTEGER,
+      step_payload BLOB,
+      metadata BLOB
+    );
+  `);
+
+  const p19 = makeProtoField(2, '<USER_REQUEST>Add dark mode toggle</USER_REQUEST>');
+  const payloadUser = makeProtoField(19, p19);
+
+  const f4 = Buffer.concat([makeProtoField(2, 'write_to_file'), makeProtoField(3, JSON.stringify({ TargetFile: 'styles.css' }))]);
+  const metaTool = makeProtoField(4, f4);
+
+  const p20 = makeProtoField(1, 'Dark mode toggle added.');
+  const payloadAssistant = makeProtoField(20, p20);
+
+  db.prepare('INSERT INTO steps (idx, step_type, step_payload, metadata) VALUES (?, ?, ?, ?)').run(0, 14, payloadUser, null);
+  db.prepare('INSERT INTO steps (idx, step_type, step_payload, metadata) VALUES (?, ?, ?, ?)').run(1, 15, null, metaTool);
+  db.prepare('INSERT INTO steps (idx, step_type, step_payload, metadata) VALUES (?, ?, ?, ?)').run(2, 15, payloadAssistant, null);
+  db.close();
+
+  const { distillGeminiDb } = await import('./summary.mjs');
+  const d = distillGeminiDb(dbFile);
+  assert.match(d, /USER: Add dark mode toggle/);
+  assert.match(d, /TOOL write_to_file: styles\.css/);
+  assert.match(d, /ASSISTANT: Dark mode toggle added\./);
+});
+
+test('summarizeSession handles Gemini sessions from disk', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = await mkdtemp(join(tmpdir(), 'gem-sess-'));
+  const transcriptFile = join(dir, 'transcript.jsonl');
+  await writeFile(transcriptFile, geminiLines.map((l) => JSON.stringify(l)).join('\n'), 'utf8');
+
+  const dbFile = join(dir, 'sess-gemini.db');
+  const sdb = new DatabaseSync(dbFile);
+  sdb.exec('CREATE TABLE dummy (id INT)');
+  sdb.close();
+
+  const store = openStore(':memory:');
+  upsertSession(store, {
+    session_id: 'sess-gemini',
+    raw_ref: dbFile,
+    model: 'gemini-3.8-flash',
+  });
+
+  const got = await summarizeSession(store, 'sess-gemini', { exec: fakeExec(okResult), model: 'haiku' });
+  assert.equal(JSON.parse(got.session.summary).what, 'Added login');
+  assert.equal(got.session.summary_model, 'haiku');
+  assert.ok(got.session.summarized_at);
+});
+

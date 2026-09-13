@@ -31,6 +31,10 @@ export const WANTED = [
   'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-haiku-4-5',
+  'gemini-3.8-flash',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
 ]
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
