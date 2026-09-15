@@ -27,3 +27,19 @@ test('detail returns one session by id, null when unknown', () => {
   assert.deepEqual(res.tools, []);
   assert.equal(handle(new URLSearchParams('id=zzz'), db1()).session, null);
 });
+
+import { replaceSubagents, setParent } from '../../../lib/cc/store.mjs';
+
+test('list returns children of returned parents and their nested agents', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, { session_id: 'p', project_dir: '/p/a', started_at: '2026-09-15T10:00:00Z', kind: 'main' });
+  upsertSession(db, { session_id: 'c', project_dir: '/p/a', started_at: '2026-09-15T10:30:00Z', kind: 'security-review' });
+  setParent(db, 'c', 'p');
+  replaceSubagents(db, 'p', [{ agent_id: 'agent-1', agent_type: 'Explore' }]);
+  const r = handle(new URLSearchParams('limit=1'), db);
+  assert.deepEqual(r.sessions.map((s) => s.session_id), ['p', 'c']);
+  assert.deepEqual(r.agents.map((a) => a.agent_id), ['agent-1']);
+  const d = handle(new URLSearchParams('id=c'), db);
+  assert.equal(d.parent.session_id, 'p');
+  assert.equal(handle(new URLSearchParams('id=p'), db).children[0].session_id, 'c');
+});

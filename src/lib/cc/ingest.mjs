@@ -10,7 +10,8 @@
  */
 import { newFileState, parseClaudeLines } from '../usage.mjs';
 import { costForClaude } from '../usage-pricing.mjs';
-import { parseLines } from './transcript.mjs';
+import { parseLines, userPrompts } from './transcript.mjs';
+import { classifyKind } from './session-link.mjs';
 
 export const SKILL_PATH_RE = /(?:^|\/)(?:\.claude\/skills|skills)\/[^/]+\//;
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -23,7 +24,7 @@ function toSeconds(a, b) {
 /**
  * @param {string} text   raw JSONL transcript
  * @param {{fileName?: string, rawRef?: string}} meta
- * @returns session row (store.mjs `sessions` keys) + `_tools`, `_skills`, `_editedSkills`, `_lines` (parsed lines)
+ * @returns session row (store.mjs `sessions` keys, incl. `kind` + `entrypoint`) + `_tools`, `_skills`, `_editedSkills`, `_lines` (parsed lines)
  */
 export function parseSessionText(text, meta = {}) {
   const rawLines = String(text || '').split('\n').filter((l) => l.trim());
@@ -36,10 +37,12 @@ export function parseSessionText(text, meta = {}) {
   const editedSkills = new Set();
   let turns = 0;
   let sessionId = null;
+  let entrypoint = null;
   let lastSkill = null;
 
   for (const d of lines) {
     if (!sessionId && typeof d.sessionId === 'string') sessionId = d.sessionId;
+    if (!entrypoint && typeof d.entrypoint === 'string') entrypoint = d.entrypoint;
     if (d.type !== 'assistant') continue;
     turns++;
     for (const b of d.message?.content || []) {
@@ -71,6 +74,10 @@ export function parseSessionText(text, meta = {}) {
   const started = state.firstTs || null;
   const ended = state.lastTs || null;
 
+  // First human prompt: hook-spawned SDK sessions announce themselves in it.
+  const firstPrompt = userPrompts(lines)[0] || lines.find((d) => d.type === 'queue-operation' && typeof d.content === 'string')?.content || '';
+  const kind = classifyKind({ entrypoint, firstPrompt });
+
   return {
     session_id: sessionId || (meta.fileName ? meta.fileName.replace(/\.jsonl$/, '') : null),
     project_dir: state.cwd, cwd: state.cwd, model: primaryModel,
@@ -80,6 +87,7 @@ export function parseSessionText(text, meta = {}) {
     input_tokens: totals.input, output_tokens: totals.output, cache_read: totals.cacheRead,
     cache_write_5m: totals.cacheWrite5m, cache_write_1h: totals.cacheWrite1h,
     cost_usd: priced ? cost : null, turns, status: ended ? 'done' : 'unknown',
+    kind, entrypoint,
     raw_ref: meta.rawRef || null, ingested_at: new Date().toISOString(),
     _tools: tools, _skills: skills, _editedSkills: editedSkills, _lines: lines,
   };

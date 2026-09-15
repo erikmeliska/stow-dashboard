@@ -174,3 +174,87 @@ test('ingestAll ingests Gemini conversation SQLite databases', async () => {
   assert.equal(s.tools.find((t) => t.tool === 'view_file').count, 1);
 });
 
+
+import { listSubagents } from './store.mjs';
+
+test('nested agents are recorded in the subagents table with meta.json type + description', async () => {
+  const { root } = await fixture();
+  const sa = join(root, 'projects', '-p-a', 'sess-1', 'subagents');
+  await mkdir(sa, { recursive: true });
+  const sub = [
+    { type: 'user', sessionId: 'sess-1', isSidechain: true, agentId: 'a1', timestamp: '2026-08-21T10:00:06Z' },
+    { type: 'assistant', sessionId: 'sess-1', timestamp: '2026-08-21T10:00:16Z', message: { model: 'claude-haiku-4-5-20251001', usage: { input_tokens: 100, output_tokens: 50 }, content: [{ type: 'text', text: 'x' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n');
+  await writeFile(join(sa, 'agent-a1.jsonl'), sub, 'utf8');
+  await writeFile(join(sa, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Find callers', spawnDepth: 1 }), 'utf8');
+  const db = openStore(':memory:');
+  await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope'), db });
+  const [a] = listSubagents(db, ['sess-1']);
+  assert.equal(a.agent_id, 'agent-a1');
+  assert.equal(a.agent_type, 'Explore');
+  assert.equal(a.description, 'Find callers');
+  assert.equal(a.model, 'claude-haiku-4-5-20251001');
+  assert.equal(a.output_tokens, 50);
+  assert.equal(a.active_s, 10);
+  assert.equal(getSession(db, 'sess-1').agents.length, 1);
+});
+
+/** A main session + a hook-spawned review inside its window, in the same project. */
+async function familyFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'ccf-'));
+  const proj = join(root, 'projects', '-p-a');
+  await mkdir(proj, { recursive: true });
+  const write = (id, lines) => writeFile(join(proj, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n'), 'utf8');
+  const asst = (id, ts, entrypoint = 'cli') => ({ type: 'assistant', sessionId: id, entrypoint, timestamp: ts, message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'x' }] } });
+  await write('main-a', [
+    { type: 'user', cwd: '/p/a', sessionId: 'main-a', entrypoint: 'cli', timestamp: '2026-09-15T10:00:00Z', message: { content: 'build it' } },
+    asst('main-a', '2026-09-15T10:00:05Z'), asst('main-a', '2026-09-15T10:09:59Z'), asst('main-a', '2026-09-15T10:20:00Z'),
+  ]);
+  await write('main-b', [
+    { type: 'user', cwd: '/p/b', sessionId: 'main-b', entrypoint: 'claude-desktop', timestamp: '2026-09-15T09:00:00Z', message: { content: 'other work' } },
+    asst('main-b', '2026-09-15T09:00:05Z', 'claude-desktop'), asst('main-b', '2026-09-15T10:05:00Z', 'claude-desktop'), asst('main-b', '2026-09-15T10:30:00Z', 'claude-desktop'),
+  ]);
+  await write('rev-1', [
+    { type: 'user', cwd: '/p/a', sessionId: 'rev-1', entrypoint: 'sdk-py', timestamp: '2026-09-15T10:10:00Z', message: { content: 'Review this change for security vulnerabilities.\n\nChanged files' } },
+    asst('rev-1', '2026-09-15T10:10:03Z', 'sdk-py'),
+  ]);
+  return { root, claudeDir: join(root, 'projects') };
+}
+
+test('ingestAll links a hook-spawned review to the parent whose turn ended right before it', async () => {
+  const { root, claudeDir } = await familyFixture();
+  const db = openStore(':memory:');
+  const r = await ingestAll({ claudeDir, guardAudit: join(root, 'nope'), db, env: {}, full: true });
+  assert.equal(r.sessions, 3);
+  assert.equal(r.linked, 1);
+  const rev = getSession(db, 'rev-1');
+  assert.equal(rev.session.kind, 'security-review');
+  assert.equal(rev.session.parent_session_id, 'main-a', 'main-a stopped a turn 1 s before the review, main-b was mid-turn');
+  assert.equal(getSession(db, 'main-a').children[0].session_id, 'rev-1');
+  assert.equal(listSessions(db).filter((s) => !s.parent_session_id).length, 2, 'two top-level sessions');
+  const again = await ingestAll({ claudeDir, guardAudit: join(root, 'nope'), db, env: {}, full: true });
+  assert.equal(again.linked, 0, 'nothing left to link on the next run');
+  assert.equal(getSession(db, 'rev-1').session.parent_session_id, 'main-a');
+});
+
+test('a first (or post-migration) ingest links children older than the retry window', async () => {
+  const { root, claudeDir } = await familyFixture(); // fixture dates are 2026-09-15, far outside any 24 h window
+  const db = openStore(':memory:');
+  const r = await ingestAll({ claudeDir, guardAudit: join(root, 'nope'), db, env: {} });
+  assert.equal(r.linked, 1);
+});
+
+test('a review in a sibling repo links to the session whose line preceded it (timing beats directory)', async () => {
+  const { root, claudeDir } = await familyFixture();
+  const proj = join(claudeDir, '-p-b');
+  await mkdir(proj, { recursive: true });
+  // rev-2 runs in /p/b at 10:05:01 — main-b's line at 10:05:00 is the trigger; main-a (same dir as nothing) is idle.
+  await writeFile(join(proj, 'rev-2.jsonl'), [
+    { type: 'user', cwd: '/p/b', sessionId: 'rev-2', entrypoint: 'sdk-py', timestamp: '2026-09-15T10:05:01Z', message: { content: 'Review this change for security vulnerabilities.' } },
+    { type: 'assistant', sessionId: 'rev-2', entrypoint: 'sdk-py', timestamp: '2026-09-15T10:05:03Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'x' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n'), 'utf8');
+  const db = openStore(':memory:');
+  await ingestAll({ claudeDir, guardAudit: join(root, 'nope'), db, env: {}, full: true });
+  assert.equal(getSession(db, 'rev-2').session.parent_session_id, 'main-b');
+  assert.equal(getSession(db, 'rev-1').session.parent_session_id, 'main-a');
+});

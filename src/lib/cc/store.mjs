@@ -25,7 +25,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   turns INTEGER, status TEXT, git_repo TEXT, git_branch TEXT, pr TEXT,
   ticket_id TEXT, ticket_source TEXT,
   quality_score REAL, quality_detail TEXT, summary TEXT, summary_model TEXT, summarized_at TEXT,
-  raw_ref TEXT, ingested_at TEXT
+  raw_ref TEXT, ingested_at TEXT,
+  parent_session_id TEXT, kind TEXT, entrypoint TEXT
+);
+CREATE TABLE IF NOT EXISTS subagents (
+  agent_id TEXT PRIMARY KEY, session_id TEXT, agent_type TEXT, description TEXT, model TEXT,
+  started_at TEXT, ended_at TEXT, active_s REAL, turns INTEGER,
+  input_tokens INTEGER, output_tokens INTEGER, cache_read INTEGER, cache_write INTEGER, cost_usd REAL, raw_ref TEXT
 );
 CREATE TABLE IF NOT EXISTS tool_usage (session_id TEXT, tool TEXT, count INTEGER, PRIMARY KEY (session_id, tool));
 CREATE TABLE IF NOT EXISTS skill_usage (session_id TEXT, skill TEXT, count INTEGER, edited INTEGER DEFAULT 0, PRIMARY KEY (session_id, skill));
@@ -34,6 +40,7 @@ CREATE TABLE IF NOT EXISTS ingest_state (path TEXT PRIMARY KEY, session_id TEXT,
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_dir);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
 CREATE INDEX IF NOT EXISTS idx_guard_session ON guard_hits (session_id);
+CREATE INDEX IF NOT EXISTS idx_subagents_session ON subagents (session_id);
 `;
 
 /** Ingest-owned columns: rewritten on every upsert. Summary columns are NOT here. */
@@ -42,12 +49,20 @@ const SESSION_COLS = [
   'duration_s', 'active_s', 'input_tokens', 'output_tokens', 'cache_read',
   'cache_write_5m', 'cache_write_1h', 'cost_usd', 'turns', 'status', 'raw_ref', 'ingested_at',
   'git_repo', 'git_branch', 'pr', 'ticket_id', 'ticket_source', 'quality_score', 'quality_detail',
+  'kind', 'entrypoint',
+];
+
+/** Columns of the `subagents` table, in insert order. */
+const SUBAGENT_COLS = [
+  'agent_id', 'session_id', 'agent_type', 'description', 'model', 'started_at', 'ended_at', 'active_s', 'turns',
+  'input_tokens', 'output_tokens', 'cache_read', 'cache_write', 'cost_usd', 'raw_ref',
 ];
 
 /** Columns added after phase 1; `openStore` adds them to older DB files in place. */
 const MIGRATION_COLS = {
   ticket_id: 'TEXT', ticket_source: 'TEXT', pr: 'TEXT',
   quality_detail: 'TEXT', summary_model: 'TEXT', summarized_at: 'TEXT',
+  parent_session_id: 'TEXT', kind: 'TEXT', entrypoint: 'TEXT',
 };
 
 function ensureColumns(db) {
@@ -55,6 +70,11 @@ function ensureColumns(db) {
   for (const [col, type] of Object.entries(MIGRATION_COLS)) {
     if (!have.has(col)) db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
   }
+  // kind/entrypoint only get filled by a re-parse: forget the incremental
+  // signatures so the next ingest walks every transcript once.
+  if (!have.has('kind') && have.size > 0) db.exec('DELETE FROM ingest_state');
+  // Indexes on migrated columns can only be created once the column exists.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions (parent_session_id)');
 }
 
 /**
@@ -76,6 +96,40 @@ export function upsertSession(db, row) {
   const params = {};
   for (const c of SESSION_COLS) params[c] = row[c] ?? null;
   db.prepare(`INSERT INTO sessions (${cols}) VALUES (${ph}) ON CONFLICT(session_id) DO UPDATE SET ${set}`).run(params);
+}
+
+/**
+ * `parent_session_id` is written by the link pass (ingest-run.mjs), not by the
+ * upsert: a re-parse of a child transcript must not drop a link that was
+ * already inferred. `null` clears it.
+ */
+export function setParent(db, sessionId, parentId) {
+  db.prepare('UPDATE sessions SET parent_session_id = ? WHERE session_id = ?').run(parentId ?? null, sessionId);
+}
+
+/** Nested Agent-tool runs of one session; replaced whole on every re-parse of the parent. */
+export function replaceSubagents(db, sessionId, agents) {
+  db.prepare('DELETE FROM subagents WHERE session_id = ?').run(sessionId);
+  const cols = SUBAGENT_COLS.join(', ');
+  const ph = SUBAGENT_COLS.map((c) => '@' + c).join(', ');
+  const ins = db.prepare(`INSERT OR REPLACE INTO subagents (${cols}) VALUES (${ph})`);
+  for (const a of agents || []) {
+    const params = { session_id: sessionId };
+    for (const c of SUBAGENT_COLS) if (c !== 'session_id') params[c] = a[c] ?? null;
+    ins.run(params);
+  }
+}
+
+/** Nested agents of the given sessions (all sessions when `ids` is omitted). */
+export function listSubagents(db, ids = null) {
+  if (ids == null) return db.prepare('SELECT * FROM subagents ORDER BY started_at').all();
+  if (ids.length === 0) return [];
+  const out = [];
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    out.push(...db.prepare(`SELECT * FROM subagents WHERE session_id IN (${chunk.map(() => '?').join(',')}) ORDER BY started_at`).all(...chunk));
+  }
+  return out;
 }
 
 /** Summary columns live outside the ingest upsert so re-ingests never erase them. */
@@ -102,11 +156,24 @@ export function replaceGuardHits(db, sessionId, hits) {
   for (const h of hits || []) ins.run(sessionId, h.ts ?? null, h.command ?? null, h.rule ?? null, h.action ?? null);
 }
 
+/**
+ * Newest-first session rows. `limit` applies to top-level sessions (no parent);
+ * every linked child of a returned parent is included on top of that, so the
+ * caller can always build complete families (see session-tree.mjs).
+ */
 export function listSessions(db, { project, limit = 200 } = {}) {
-  if (project) {
-    return db.prepare('SELECT * FROM sessions WHERE project_dir = ? ORDER BY started_at DESC LIMIT ?').all(project, limit);
+  // `guard_hits` (a count) rides along so the list can filter on it without a second query.
+  const select = 'SELECT s.*, (SELECT count(*) FROM guard_hits g WHERE g.session_id = s.session_id) guard_hits FROM sessions s';
+  const where = project ? 'WHERE s.project_dir = ? AND s.parent_session_id IS NULL' : 'WHERE s.parent_session_id IS NULL';
+  const args = project ? [project, limit] : [limit];
+  const parents = db.prepare(`${select} ${where} ORDER BY s.started_at DESC LIMIT ?`).all(...args);
+  const ids = parents.map((p) => p.session_id);
+  const children = [];
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    children.push(...db.prepare(`${select} WHERE s.parent_session_id IN (${chunk.map(() => '?').join(',')}) ORDER BY s.started_at DESC`).all(...chunk));
   }
-  return db.prepare('SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?').all(limit);
+  return [...parents, ...children];
 }
 
 export function getSession(db, id) {
@@ -115,7 +182,42 @@ export function getSession(db, id) {
   const tools = db.prepare('SELECT tool, count FROM tool_usage WHERE session_id = ? ORDER BY count DESC').all(id);
   const skills = db.prepare('SELECT skill, count, edited FROM skill_usage WHERE session_id = ? ORDER BY count DESC').all(id);
   const guard_hits = db.prepare('SELECT ts, command, rule, action FROM guard_hits WHERE session_id = ? ORDER BY ts').all(id);
-  return { session, tools, skills, guard_hits };
+  const agents = db.prepare('SELECT * FROM subagents WHERE session_id = ? ORDER BY started_at').all(id);
+  const children = db.prepare('SELECT * FROM sessions WHERE parent_session_id = ? ORDER BY started_at').all(id);
+  const parent = session.parent_session_id
+    ? db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(session.parent_session_id) || null
+    : null;
+  return { session, tools, skills, guard_hits, agents, children, parent };
+}
+
+/**
+ * Rows that still need a parent: linkable kinds without a link. `since` bounds
+ * the retry window (a child whose parent never shows up would otherwise be
+ * re-examined on every 60 s cycle); pass null to retry everything.
+ */
+export function listUnlinked(db, kinds, { since = null } = {}) {
+  if (!kinds.length) return [];
+  const ph = kinds.map(() => '?').join(',');
+  if (since) return db.prepare(`SELECT * FROM sessions WHERE parent_session_id IS NULL AND kind IN (${ph}) AND started_at >= ?`).all(...kinds, since);
+  return db.prepare(`SELECT * FROM sessions WHERE parent_session_id IS NULL AND kind IN (${ph})`).all(...kinds);
+}
+
+/**
+ * Candidate parents for a child: every Claude Code main session (hooks don't
+ * run in Gemini/Antigravity) that had started before the child and was still
+ * running at the child's start, allowing `slackS` seconds past the recorded
+ * end since a parent's transcript is only appended after the hook that spawned
+ * the child returns. Not restricted to the child's directory: the reviewer runs
+ * in the repo root of the edited files, and the parent may sit in a sibling or
+ * ancestor directory. session-link.mjs ranks them by timing.
+ */
+export function listParentCandidates(db, { started_at }, slackS = 120) {
+  if (!started_at) return [];
+  const t = Date.parse(started_at);
+  if (!Number.isFinite(t)) return [];
+  const lower = new Date(t - slackS * 1000).toISOString();
+  return db.prepare(`SELECT * FROM sessions WHERE kind = 'main' AND coalesce(entrypoint, '') NOT LIKE 'antigravity%' AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?) ORDER BY started_at DESC`)
+    .all(started_at, lower);
 }
 
 /** Incremental-ingest bookkeeping: transcript path → { session_id, signature }. */

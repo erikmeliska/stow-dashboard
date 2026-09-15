@@ -57,3 +57,17 @@ test('SKILL_PATH_RE matches skill dirs only', () => {
   assert.ok(SKILL_PATH_RE.test('/r/skills/foo/scripts/x.sh'));
   assert.ok(!SKILL_PATH_RE.test('/r/src/skills.mjs'));
 });
+
+test('parseSessionText records entrypoint and classifies hook-spawned SDK reviews as children', () => {
+  const sdk = [
+    { type: 'queue-operation', operation: 'enqueue', sessionId: 'rev-1', content: 'Review this change for security vulnerabilities.\n\nChanged files' },
+    { type: 'user', cwd: '/p/a', sessionId: 'rev-1', entrypoint: 'sdk-py', timestamp: '2026-09-15T10:00:00Z', message: { role: 'user', content: 'Review this change for security vulnerabilities.\n\nChanged files' } },
+    { type: 'assistant', sessionId: 'rev-1', entrypoint: 'sdk-py', timestamp: '2026-09-15T10:00:05Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }] } },
+  ].map((l) => JSON.stringify(l)).join('\n');
+  const r = parseSessionText(sdk, { fileName: 'rev-1.jsonl' });
+  assert.equal(r.entrypoint, 'sdk-py');
+  assert.equal(r.kind, 'security-review');
+  const main = parseSessionText(text, { fileName: 'sess-1.jsonl' });
+  assert.equal(main.kind, 'main');
+  assert.equal(main.entrypoint, null);
+});

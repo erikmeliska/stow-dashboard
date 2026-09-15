@@ -6,7 +6,12 @@
  *
  * Subagent transcripts (`<slug>/<sessionId>/subagents/*.jsonl`) are folded
  * into their parent session: tokens, cost, tool and skill counts are summed;
- * turns / duration / active time stay those of the main transcript.
+ * turns / duration / active time stay those of the main transcript. Each one
+ * is also recorded on its own in the `subagents` table (type + description
+ * from the sibling `.meta.json`) so the UI can break the family down.
+ *
+ * Hook-spawned SDK sessions (see session-link.mjs) get a `kind` from the
+ * parser and are attached to a parent by `linkChildren` after every walk.
  *
  * Work context (branch/repo/PR/ticket) and the quality score are computed from
  * the main transcript only (subagents excluded). AI summaries are NOT touched
@@ -21,9 +26,10 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
-  openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits,
-  getIngestState, setIngestState, clearIngestState,
+  openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, replaceSubagents,
+  getIngestState, setIngestState, clearIngestState, listUnlinked, listParentCandidates, setParent,
 } from './store.mjs';
+import { CHILD_KIND_NAMES, pickParent, turnEndTimestamps } from './session-link.mjs';
 import { parseSessionText } from './ingest.mjs';
 import { parseGuardAudit } from './guard-ingest.mjs';
 import { extractContext, ticketRegex } from './context.mjs';
@@ -95,9 +101,69 @@ export function mergeSubagent(parent, sub) {
   return parent;
 }
 
+/** `agent-<id>.jsonl` → its `.meta.json` ({agentType, description, …}) or {} when absent. */
+async function readAgentMeta(file) {
+  try { return JSON.parse(await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')); } catch { return {}; }
+}
+
+/** The `subagents` row for one nested agent transcript. */
+export function subagentRow(sub, meta = {}, file = null) {
+  return {
+    agent_id: file ? basename(file).replace(/\.jsonl$/, '') : null,
+    agent_type: meta.agentType ?? null, description: meta.description ?? null,
+    model: sub.model, started_at: sub.started_at, ended_at: sub.ended_at, active_s: sub.active_s, turns: sub.turns,
+    input_tokens: sub.input_tokens, output_tokens: sub.output_tokens, cache_read: sub.cache_read,
+    cache_write: (sub.cache_write_5m || 0) + (sub.cache_write_1h || 0), cost_usd: sub.cost_usd, raw_ref: file,
+  };
+}
+
+/** Subagent transcript paths of a session, given its main transcript path. */
+async function subagentFilesOf(file) {
+  const dir = join(file.replace(/\.jsonl$/, ''), 'subagents');
+  return (await safeReaddir(dir)).filter((a) => a.isFile() && a.name.endsWith('.jsonl')).map((a) => join(dir, a.name));
+}
+
+/**
+ * Attach every still-unlinked child session to a parent. Re-run on each
+ * ingest: a child that appeared while its parent was mid-turn finds the parent
+ * once the parent's transcript has caught up. Candidate turn times are read
+ * from disk (cached per run); without `full`, only children from the last
+ * `RETRY_WINDOW_MS` are retried so permanent orphans don't cost a transcript
+ * read every cycle.
+ * @returns {Promise<number>} sessions linked in this pass
+ */
+export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export async function linkChildren(db, { readText = (f) => readFile(f, 'utf8'), full = false, now = Date.now() } = {}) {
+  const cache = new Map();
+  const load = async (row) => {
+    if (cache.has(row.session_id)) return cache.get(row.session_id);
+    const ends = [];
+    const files = row.raw_ref ? [row.raw_ref, ...(await subagentFilesOf(row.raw_ref))] : [];
+    for (const f of files) {
+      try { ends.push(...turnEndTimestamps(await readText(f))); } catch { /* transcript gone */ }
+    }
+    ends.sort((a, b) => a - b);
+    cache.set(row.session_id, ends);
+    return ends;
+  };
+  let linked = 0;
+  const since = full ? null : new Date(now - RETRY_WINDOW_MS).toISOString();
+  for (const child of listUnlinked(db, CHILD_KIND_NAMES, { since })) {
+    const candidates = listParentCandidates(db, child);
+    const ends = new Map();
+    for (const c of candidates) ends.set(c.session_id, await load(c));
+    const pick = pickParent(child, candidates, { turnEndsOf: (c) => ends.get(c.session_id) });
+    if (!pick) continue;
+    setParent(db, child.session_id, pick.parent_session_id);
+    linked++;
+  }
+  return linked;
+}
+
 /**
  * @param {{claudeDir: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean}} opts
- * @returns {Promise<{sessions: number, changed: number, skipped: number, ms: number}>}
+ * @returns {Promise<{sessions: number, changed: number, skipped: number, linked: number, ms: number}>}
  */
 export async function ingestAll({
   claudeDir,
@@ -117,6 +183,9 @@ export async function ingestAll({
 
   if (full) clearIngestState(db);
   const state = getIngestState(db);
+  // No signatures at all means everything gets (re-)parsed — a fresh store or
+  // a schema migration — so the link pass must also look past its retry window.
+  const linkAll = full || state.size === 0;
 
   let sessions = 0, changed = 0, skipped = 0;
   if (claudeDir) {
@@ -134,10 +203,13 @@ export async function ingestAll({
       try { text = await readFile(file, 'utf8'); } catch { continue; }
       const row = parseSessionText(text, { fileName: basename(file), rawRef: file });
       if (!row.session_id) continue;
+      const agents = [];
       for (const sf of subagents) {
         let st;
         try { st = await readFile(sf, 'utf8'); } catch { continue; }
-        mergeSubagent(row, parseSessionText(st, { fileName: basename(sf), rawRef: sf }));
+        const sub = parseSessionText(st, { fileName: basename(sf), rawRef: sf });
+        mergeSubagent(row, sub);
+        agents.push(subagentRow(sub, await readAgentMeta(sf), sf));
       }
       const hits = guardMap.get(row.session_id) || [];
       Object.assign(row, extractContext(row._lines, { ticketPattern }));
@@ -150,6 +222,7 @@ export async function ingestAll({
         replaceTools(db, row.session_id, row._tools);
         replaceSkills(db, row.session_id, row._skills, row._editedSkills);
         replaceGuardHits(db, row.session_id, hits);
+        replaceSubagents(db, row.session_id, agents);
         setIngestState(db, file, row.session_id, signature);
         db.exec('COMMIT');
       } catch (e) {
@@ -190,6 +263,8 @@ export async function ingestAll({
 
         const row = parseGeminiSession(file, { projectDirs: projects, rawRef: file });
         if (!row || !row.session_id) continue;
+        row.kind = 'main';
+        row.entrypoint = file.includes('antigravity-cli') ? 'antigravity-cli' : 'antigravity';
 
         db.exec('BEGIN');
         try {
@@ -208,7 +283,8 @@ export async function ingestAll({
     }
   }
 
-  return { sessions, changed, skipped, ms: Date.now() - t0 };
+  const linked = await linkChildren(db, { full: linkAll });
+  return { sessions, changed, skipped, linked, ms: Date.now() - t0 };
 }
 
 let inFlight = null;

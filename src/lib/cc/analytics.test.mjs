@@ -194,3 +194,16 @@ test('portfolioAnalytics survives missing usage', () => {
   assert.equal(a.kpis.ai_cost, 0)
   assert.deepEqual(a.topAiCost, [])
 })
+
+test('sessionAnalytics counts only top-level sessions but keeps child cost in the sums', () => {
+  const db = openStore(':memory:')
+  upsertSession(db, { session_id: 'p', project_dir: '/p/a', started_at: '2026-09-15T10:00:00Z', cost_usd: 10, input_tokens: 1, output_tokens: 1, turns: 1, kind: 'main' })
+  upsertSession(db, { session_id: 'c', project_dir: '/p/a', started_at: '2026-09-15T10:30:00Z', cost_usd: 2, input_tokens: 1, output_tokens: 1, turns: 1, kind: 'security-review' })
+  db.prepare("UPDATE sessions SET parent_session_id = 'p' WHERE session_id = 'c'").run()
+  const a = sessionAnalytics(db)
+  assert.equal(a.kpis.sessions, 1)
+  assert.equal(a.kpis.cost_usd, 12)
+  assert.deepEqual(a.perDay.map((d) => d.sessions), [1])
+  assert.equal(a.topProjects[0].sessions, 1)
+  assert.equal(a.topProjects[0].cost_usd, 12)
+})

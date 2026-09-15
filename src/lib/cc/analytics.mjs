@@ -21,8 +21,10 @@ export function sessionAnalytics(db, { since = null } = {}) {
   const one = (sql) => db.prepare(sql).get(...args)
   const all = (sql) => db.prepare(sql).all(...args)
 
+  // `sessions` counts top-level sessions only: hook-spawned children (security
+  // reviews) would inflate it, while their cost/tokens still belong in the sums.
   const k = one(`
-    SELECT count(*) sessions,
+    SELECT sum(parent_session_id IS NULL) sessions,
            coalesce(sum(cost_usd), 0) cost_usd,
            coalesce(sum(input_tokens), 0) input_tokens,
            coalesce(sum(output_tokens), 0) output_tokens,
@@ -38,7 +40,7 @@ export function sessionAnalytics(db, { since = null } = {}) {
     FROM guard_hits g JOIN sessions s ON s.session_id = g.session_id ${where}`)
 
   const perDayRaw = all(`
-    SELECT substr(s.started_at, 1, 10) day, count(*) sessions,
+    SELECT substr(s.started_at, 1, 10) day, sum(parent_session_id IS NULL) sessions,
            coalesce(sum(cost_usd), 0) cost_usd,
            coalesce(sum(input_tokens + output_tokens), 0) tokens
     FROM sessions s ${where} GROUP BY day ORDER BY day`)
@@ -61,7 +63,7 @@ export function sessionAnalytics(db, { since = null } = {}) {
     GROUP BY k.skill ORDER BY count DESC LIMIT 10`)
 
   const topProjects = all(`
-    SELECT s.project_dir, count(*) sessions, coalesce(sum(cost_usd), 0) cost_usd
+    SELECT s.project_dir, sum(parent_session_id IS NULL) sessions, coalesce(sum(cost_usd), 0) cost_usd
     FROM sessions s ${where} GROUP BY s.project_dir ORDER BY cost_usd DESC LIMIT 8`)
     .map((r) => ({
       project: (r.project_dir || '').split('/').filter(Boolean).at(-1) || '—',

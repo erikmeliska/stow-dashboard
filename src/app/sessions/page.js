@@ -1,12 +1,14 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, RefreshCw, Sparkles, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Bot, ChevronDown, ChevronRight, CornerDownRight, Filter, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
-import { filterSessions, QUALITY_FILTERS } from '@/lib/cc/session-filters.mjs'
+import { filterSessions, QUALITY_FILTERS, QUICK_FILTERS, SOURCE_FILTERS } from '@/lib/cc/session-filters.mjs'
+import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } from '@/lib/cc/session-tree.mjs'
+import { CHILD_KINDS } from '@/lib/cc/session-link.mjs'
 
 function fmtTokens(n) {
   if (n == null) return '—'
@@ -32,6 +34,17 @@ const ACTIVE_MS = 10 * 60 * 1000
 /** A session is "active" while its transcript is still being written (last activity < 10 min ago). */
 function isActive(s) { return s.ended_at ? Date.now() - Date.parse(s.ended_at) < ACTIVE_MS : false }
 function projectName(dir) { return dir ? dir.split('/').filter(Boolean).slice(-1)[0] : '—' }
+function kindLabel(kind) { return CHILD_KINDS[kind]?.label || kind || 'main' }
+function fmtAgent(a) { return [a.agent_type, a.description].filter(Boolean).join(' — ') || a.agent_id }
+/** "3 subagents · 12 security reviews" for tooltips and the header line. */
+function describeSubs(agents, children) {
+  const parts = []
+  if (agents) parts.push(`${agents} subagent${agents === 1 ? '' : 's'}`)
+  const byKind = new Map()
+  for (const c of children || []) byKind.set(c.kind, (byKind.get(c.kind) || 0) + 1)
+  for (const [k, n] of byKind) parts.push(`${n} ${kindLabel(k)}${n === 1 ? '' : 's'}`)
+  return parts.join(' · ')
+}
 
 const ACTION_CLS = {
   deny: 'bg-red-500/20 text-red-600 dark:text-red-400',
@@ -39,17 +52,40 @@ const ACTION_CLS = {
   override: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
 }
 
-function DetailPanel({ detail, onSummarize, summarizing, summaryError }) {
+function DetailPanel({ detail, project, onFilterProject, onOpen, onSummarize, summarizing, summaryError }) {
   if (!detail) return <p className="text-sm text-muted-foreground">Select a session to see its tools, skills and guard hits.</p>
   if (!detail.session) return <p className="text-sm text-muted-foreground">Session not found.</p>
   const s = detail.session
+  const fam = familyOf(s, detail.agents || [], detail.children || [])
+  const isChild = s.kind && s.kind !== 'main'
   return (
     <div className="space-y-4 text-sm">
       <div>
         <div className="font-mono text-xs text-muted-foreground break-all">{s.session_id}</div>
-        <div className="font-medium mt-1">{projectName(s.project_dir)}</div>
+        <div className="font-medium mt-1 flex items-center gap-2 flex-wrap">
+          {projectName(s.project_dir)}
+          {isChild && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" />{kindLabel(s.kind)}</span>}
+          {s.entrypoint && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Entrypoint (how the session was started)">{s.entrypoint}</span>}
+        </div>
         <div className="text-xs text-muted-foreground break-all">{s.project_dir}</div>
+        {s.project_dir && (
+          project === s.project_dir ? (
+            <button onClick={() => onFilterProject(null)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
+              <X className="h-3 w-3" /> Clear directory filter
+            </button>
+          ) : (
+            <button onClick={() => onFilterProject(s.project_dir)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
+              <Filter className="h-3 w-3" /> Only sessions from this directory
+            </button>
+          )
+        )}
+        {detail.parent && (
+          <button onClick={() => onOpen(detail.parent.session_id)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline" title={detail.parent.session_id}>
+            <CornerDownRight className="h-3 w-3" /> part of {projectName(detail.parent.project_dir)} · {fmtStart(detail.parent.started_at)}
+          </button>
+        )}
       </div>
+      {fam.sub_count > 0 && <PackageBlock fam={fam} onOpen={onOpen} />}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">Model</dt><dd>{s.model || '—'}</dd>
         <dt className="text-muted-foreground">Started</dt><dd>{fmtStart(s.started_at)}</dd>
@@ -58,6 +94,7 @@ function DetailPanel({ detail, onSummarize, summarizing, summaryError }) {
         <dt className="text-muted-foreground">Input / output</dt><dd>{fmtTokens(s.input_tokens)} / {fmtTokens(s.output_tokens)}</dd>
         <dt className="text-muted-foreground">Cache read / write</dt><dd>{fmtTokens(s.cache_read)} / {fmtTokens((s.cache_write_5m || 0) + (s.cache_write_1h || 0))}</dd>
         <dt className="text-muted-foreground">Cost (list price)</dt><dd>{fmtCost(s.cost_usd)}</dd>
+        {fam.agents.length > 0 && <dd className="col-span-2 text-muted-foreground">Figures above include the nested subagents; the Package block splits them out.</dd>}
       </dl>
       <Section title="Context" empty="No git/ticket context found in the transcript">
         {[
@@ -85,6 +122,66 @@ function DetailPanel({ detail, onSummarize, summarizing, summaryError }) {
           </div>
         ))}
       </Section>
+    </div>
+  )
+}
+
+/** Whole family at a glance: total, this transcript only, nested subagents, linked child sessions. */
+function PackageBlock({ fam, onOpen }) {
+  const rows = [
+    ['Total', fam.rollup, 'font-medium'],
+    ['Main only', fam.own, ''],
+    fam.agents.length > 0 && [<span key="a" className="inline-flex items-center gap-1"><Bot className="h-3 w-3" />Subagents · {fam.agents.length}</span>, fam.agents_sum, ''],
+    fam.children.length > 0 && [<span key="c" className="inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" />Linked · {fam.children.length}</span>, fam.children_sum, ''],
+  ].filter(Boolean)
+  return (
+    <div className="rounded-md border p-2 space-y-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="font-medium">Package <span className="text-xs font-normal text-muted-foreground">{describeSubs(fam.agents.length, fam.children)}</span></h3>
+        <span className="text-lg font-semibold tabular-nums">{fmtCost(fam.rollup.cost_usd)}</span>
+      </div>
+      <table className="w-full text-xs tabular-nums">
+        <thead>
+          <tr className="text-muted-foreground">
+            <th className="text-left font-normal py-0.5"></th>
+            <th className="text-right font-normal py-0.5">Cost</th>
+            <th className="text-right font-normal py-0.5">Active</th>
+            <th className="text-right font-normal py-0.5">Tokens</th>
+            <th className="text-right font-normal py-0.5">Turns</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {rows.map(([label, x, cls], i) => (
+            <tr key={i} className={cls}>
+              <td className="py-0.5 whitespace-nowrap">{label}</td>
+              <td className="py-0.5 text-right">{fmtCost(x.cost_usd)}</td>
+              <td className="py-0.5 text-right">{fmtDuration(x.active_s)}</td>
+              <td className="py-0.5 text-right">{fmtTokens(x.input_tokens + x.output_tokens)}</td>
+              <td className="py-0.5 text-right">{x.turns}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {fam.agents.length > 0 && (
+        <Section title="Subagents" empty="">
+          {fam.agents.map((a) => (
+            <div key={a.agent_id} className="flex justify-between gap-2 py-0.5 text-xs" title={`${a.agent_id} · ${a.model || ''} · ${a.turns ?? 0} turns`}>
+              <span className="truncate"><Bot className="inline h-3 w-3 mr-1 text-muted-foreground" />{fmtAgent(a)}</span>
+              <span className="tabular-nums text-muted-foreground whitespace-nowrap">{fmtCost(a.cost_usd)} · {fmtDuration(a.active_s)}</span>
+            </div>
+          ))}
+        </Section>
+      )}
+      {fam.children.length > 0 && (
+        <Section title="Linked sessions" empty="">
+          {fam.children.map((c) => (
+            <button key={c.session_id} onClick={() => onOpen(c.session_id)} className="w-full flex justify-between gap-2 py-0.5 text-xs text-left hover:text-primary" title={c.session_id}>
+              <span className="truncate"><ShieldCheck className="inline h-3 w-3 mr-1 text-muted-foreground" />{kindLabel(c.kind)} · {fmtStart(c.started_at)}</span>
+              <span className="tabular-nums text-muted-foreground whitespace-nowrap">{fmtCost(c.cost_usd)} · {fmtDuration(c.active_s)}</span>
+            </button>
+          ))}
+        </Section>
+      )}
     </div>
   )
 }
@@ -158,6 +255,128 @@ function Row({ label, value }) {
   )
 }
 
+/** Sortable header cell: click toggles direction, arrow shows the active sort. */
+function Th({ sortKey, sort, onSort, right, title, children }) {
+  const active = sort.key === sortKey
+  return (
+    <th className={`py-2 pr-3 font-medium ${right ? 'text-right' : ''}`} title={title}>
+      <button onClick={() => onSort(sortKey)} className={`inline-flex items-center gap-0.5 hover:text-foreground ${active ? 'text-foreground' : ''}`}>
+        {children}
+        {active && (sort.dir === 'desc' ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
+      </button>
+    </th>
+  )
+}
+
+/** Group header row with subtotals (count, cost, active, tokens), then the group's family rows. */
+function GroupRows({ group, showHeader, children }) {
+  return (
+    <>
+      {showHeader && (
+        <tr className="bg-muted/50 text-xs">
+          <td colSpan={5} className="py-1 pr-3 pl-1 font-medium">{group.label} <span className="font-normal text-muted-foreground">· {group.count} session{group.count === 1 ? '' : 's'}</span></td>
+          <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{group.sum.turns}</td>
+          <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{fmtTokens(group.sum.input_tokens + group.sum.output_tokens)}</td>
+          <td className="py-1 pr-3 text-right tabular-nums font-medium">{fmtCost(group.sum.cost_usd)}</td>
+          <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{fmtDuration(group.sum.active_s)}</td>
+          <td colSpan={2}></td>
+        </tr>
+      )}
+      {children}
+    </>
+  )
+}
+
+const CELL = 'py-1.5 pr-3'
+const NUM = `${CELL} text-right tabular-nums whitespace-nowrap`
+
+/** One family: the head row (rollup numbers) and, when expanded, its subagents and linked sessions. */
+function FamilyRows({ fam, selected, expanded, onToggle, onOpen }) {
+  const s = fam
+  const hasSubs = fam.sub_count > 0
+  const r = fam.rollup
+  const breakdown = hasSubs
+    ? `main ${fmtCost(fam.own.cost_usd)} · subagents ${fmtCost(fam.agents_sum.cost_usd)} · linked ${fmtCost(fam.children_sum.cost_usd)}`
+    : ''
+  const isChildHead = s.kind && s.kind !== 'main' // orphan child shown at top level
+  return (
+    <>
+      <tr
+        onClick={() => onOpen(s.session_id)}
+        className={`border-b cursor-pointer hover:bg-muted/40 ${selected === s.session_id ? 'bg-muted/60' : ''}`}
+      >
+        <td className={`${CELL} whitespace-nowrap tabular-nums`}>
+          <span className="inline-flex items-center gap-1">
+            {hasSubs ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggle() }}
+                className="h-4 w-4 -ml-1 inline-flex items-center justify-center rounded leading-none align-middle text-muted-foreground hover:text-foreground hover:bg-muted"
+                title={expanded ? 'Collapse' : 'Expand subagents and linked sessions'}
+                aria-label={expanded ? 'Collapse' : 'Expand'}
+              >
+                {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            ) : <span className="inline-block h-4 w-4 -ml-1 align-middle" />}
+            {fmtStart(s.started_at)}
+          </span>
+        </td>
+        <td className={`${CELL} truncate max-w-[16rem]`} title={s.project_dir || ''}>
+          {projectName(s.project_dir)}
+          {isChildHead && <span className="ml-1 text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">{kindLabel(s.kind)}</span>}
+        </td>
+        <td className={`${CELL} whitespace-nowrap font-mono text-xs`} title={s.ticket_source ? `from ${s.ticket_source}` : ''}>{s.ticket_id || ''}</td>
+        <td className={`${CELL} text-muted-foreground whitespace-nowrap`}>{s.model || '—'}</td>
+        <td className={`${CELL} whitespace-nowrap text-xs`} title={hasSubs ? describeSubs(fam.agents.length, fam.children) : ''}>
+          {fam.agents.length > 0 && <span className="inline-flex items-center gap-0.5 mr-1.5 text-muted-foreground"><Bot className="h-3.5 w-3.5" />{fam.agents.length}</span>}
+          {fam.children.length > 0 && <span className="inline-flex items-center gap-0.5 text-amber-700 dark:text-amber-400"><ShieldCheck className="h-3.5 w-3.5" />{fam.children.length}</span>}
+        </td>
+        <td className={NUM} title={hasSubs ? `main ${fam.own.turns} · subagents ${fam.agents_sum.turns} · linked ${fam.children_sum.turns}` : ''}>{r.turns}</td>
+        <td className={NUM}>{fmtTokens(r.input_tokens + r.output_tokens)}</td>
+        <td className={`${NUM} ${hasSubs ? 'font-medium' : ''}`} title={breakdown}>{fmtCost(s.cost_usd == null && !hasSubs ? null : r.cost_usd)}</td>
+        <td className={NUM} title={hasSubs ? `main ${fmtDuration(fam.own.active_s)} · subagents ${fmtDuration(fam.agents_sum.active_s)} · linked ${fmtDuration(fam.children_sum.active_s)}` : ''}>{fmtDuration(r.active_s)}</td>
+        <td className={`${NUM} text-muted-foreground`}>{s.quality_score ?? '—'}</td>
+        <td className="py-1.5">
+          {isActive(s) && <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">active</span>}
+          {s.status !== 'done' && <span className="text-xs text-muted-foreground">{s.status}</span>}
+        </td>
+      </tr>
+      {expanded && fam.agents.map((a) => (
+        <tr key={a.agent_id} className="border-b bg-muted/20 text-xs text-muted-foreground" title={`${a.agent_id} · ${a.model || ''}`}>
+          <td className={`${CELL} whitespace-nowrap tabular-nums pl-6`}><span className="inline-flex items-center gap-1"><CornerDownRight className="h-3 w-3" />{fmtStart(a.started_at)}</span></td>
+          <td className={`${CELL} truncate max-w-[24rem] text-foreground`} colSpan={2}><Bot className="inline h-3 w-3 mr-1 text-muted-foreground" />{fmtAgent(a)}</td>
+          <td className={`${CELL} whitespace-nowrap`}>{a.model || '—'}</td>
+          <td className={CELL}>subagent</td>
+          <td className={NUM}>{a.turns ?? '—'}</td>
+          <td className={NUM}>{fmtTokens((a.input_tokens || 0) + (a.output_tokens || 0))}</td>
+          <td className={NUM}>{fmtCost(a.cost_usd)}</td>
+          <td className={NUM}>{fmtDuration(a.active_s)}</td>
+          <td className={NUM}></td>
+          <td></td>
+        </tr>
+      ))}
+      {expanded && fam.children.map((c) => (
+        <tr
+          key={c.session_id}
+          onClick={() => onOpen(c.session_id)}
+          className={`border-b cursor-pointer text-xs hover:bg-muted/40 ${selected === c.session_id ? 'bg-muted/60' : 'bg-muted/20'}`}
+          title={c.session_id}
+        >
+          <td className={`${CELL} whitespace-nowrap tabular-nums pl-6`}><span className="inline-flex items-center gap-1"><CornerDownRight className="h-3 w-3 text-muted-foreground" />{fmtStart(c.started_at)}</span></td>
+          <td className={`${CELL} truncate max-w-[24rem]`} colSpan={2}><ShieldCheck className="inline h-3 w-3 mr-1 text-amber-700 dark:text-amber-400" />{kindLabel(c.kind)}</td>
+          <td className={`${CELL} text-muted-foreground whitespace-nowrap`}>{c.model || '—'}</td>
+          <td className={`${CELL} text-muted-foreground`}>{c.entrypoint || 'linked'}</td>
+          <td className={NUM}>{c.turns}</td>
+          <td className={NUM}>{fmtTokens((c.input_tokens || 0) + (c.output_tokens || 0))}</td>
+          <td className={NUM}>{fmtCost(c.cost_usd)}</td>
+          <td className={NUM}>{fmtDuration(c.active_s)}</td>
+          <td className={`${NUM} text-muted-foreground`}>{c.quality_score ?? '—'}</td>
+          <td className="py-1.5">{isActive(c) && <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">active</span>}</td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
 export default function SessionsPage() {
   // useSearchParams needs a Suspense boundary for the static prerender.
   return <Suspense fallback={null}><SessionsView /></Suspense>
@@ -168,6 +387,8 @@ function SessionsView() {
   const searchParams = useSearchParams()
   const project = searchParams.get('project') || null
   const [sessions, setSessions] = useState([])
+  const [agents, setAgents] = useState([])
+  const [expanded, setExpanded] = useState(() => new Set())
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
@@ -176,6 +397,10 @@ function SessionsView() {
   const [searchQuery, setSearchQuery] = useState('')
   const [modelFilter, setModelFilter] = useState('any')
   const [qualityFilter, setQualityFilter] = useState('any')
+  const [sourceFilter, setSourceFilter] = useState('any')
+  const [quick, setQuick] = useState(() => new Set())
+  const [groupBy, setGroupBy] = useState('none')
+  const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
 
   async function load() {
     setLoading(true)
@@ -186,6 +411,7 @@ function SessionsView() {
       const r = await fetch(`/api/sessions?${qs}`)
       const d = await r.json()
       setSessions(d.sessions || [])
+      setAgents(d.agents || [])
     } finally {
       setLoading(false)
     }
@@ -213,10 +439,27 @@ function SessionsView() {
     }
   }
 
+  const families = useMemo(() => buildSessionTree(sessions, agents), [sessions, agents])
   const availableModels = Array.from(new Set(sessions.map((s) => s.model).filter(Boolean))).sort()
-  const filtered = filterSessions(sessions, { search: searchQuery, model: modelFilter, quality: qualityFilter })
-  const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any'
-  const totalCost = filtered.reduce((a, s) => a + (s.cost_usd || 0), 0)
+  // Filters apply to the family head; its subagents and linked sessions ride along.
+  const filtered = filterSessions(families, { search: searchQuery, model: modelFilter, quality: qualityFilter, source: sourceFilter, quick: [...quick] })
+  const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any' || sourceFilter !== 'any' || quick.size > 0
+  const groups = useMemo(() => groupFamilies(sortFamilies(filtered, sort), groupBy), [filtered, sort, groupBy])
+  const totalCost = filtered.reduce((a, f) => a + (f.rollup.cost_usd || 0), 0)
+  const subAgents = filtered.reduce((a, f) => a + f.agents.length, 0)
+  const subChildren = filtered.flatMap((f) => f.children)
+  const subsLine = describeSubs(subAgents, subChildren)
+
+  function toggle(id) {
+    setExpanded((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
+  }
+  function toggleQuick(k) {
+    setQuick((prev) => { const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k); return next })
+  }
+  function sortBy(key) {
+    setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: key === 'started_at' ? 'desc' : 'desc' }))
+  }
+  const SEL = 'h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring'
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -262,8 +505,14 @@ function SessionsView() {
                 <option key={key} value={key}>{label}</option>
               ))}
             </select>
+            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className={SEL} title="Where the session was started">
+              {Object.entries(SOURCE_FILTERS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className={SEL} title="Group rows with subtotals">
+              {Object.entries(GROUP_BY).map(([key, { label }]) => <option key={key} value={key}>{key === 'none' ? label : `Group: ${label}`}</option>)}
+            </select>
             <span className="text-sm text-muted-foreground">
-              {filtering ? `${filtered.length} of ${sessions.length}` : sessions.length} sessions · {fmtCost(totalCost)} list price
+              {filtering ? `${filtered.length} of ${families.length}` : families.length} sessions{subsLine ? ` (+ ${subsLine})` : ''} · {fmtCost(totalCost)} list price
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -272,6 +521,21 @@ function SessionsView() {
             </Button>
             <ThemeToggle />
           </div>
+        </div>
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          {Object.entries(QUICK_FILTERS).map(([key, { label, title }]) => (
+            <button
+              key={key}
+              onClick={() => toggleQuick(key)}
+              title={title}
+              className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${quick.has(key) ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+            >
+              {label}
+            </button>
+          ))}
+          {quick.size > 0 && (
+            <button onClick={() => setQuick(new Set())} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5"><X className="h-3 w-3" /> clear</button>
+          )}
         </div>
       </div>
       <div className="flex-1 flex overflow-hidden">
@@ -285,45 +549,40 @@ function SessionsView() {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background">
               <tr className="text-left text-xs text-muted-foreground border-b">
-                <th className="py-2 pr-3 font-medium">Started</th>
+                <Th sortKey="started_at" sort={sort} onSort={sortBy}>Started</Th>
                 <th className="py-2 pr-3 font-medium">Project</th>
                 <th className="py-2 pr-3 font-medium">Ticket</th>
                 <th className="py-2 pr-3 font-medium">Model</th>
-                <th className="py-2 pr-3 font-medium text-right">Turns</th>
-                <th className="py-2 pr-3 font-medium text-right">Tokens</th>
-                <th className="py-2 pr-3 font-medium text-right">Cost</th>
-                <th className="py-2 pr-3 font-medium text-right">Active</th>
-                <th className="py-2 pr-3 font-medium text-right" title="Quality score (heuristic)">Q</th>
+                <Th sortKey="sub_count" sort={sort} onSort={sortBy} title="Subagents and linked sessions (security reviews) — numbers on the row include them">Sub</Th>
+                <Th sortKey="turns" sort={sort} onSort={sortBy} right>Turns</Th>
+                <Th sortKey="tokens" sort={sort} onSort={sortBy} right>Tokens</Th>
+                <Th sortKey="cost_usd" sort={sort} onSort={sortBy} right>Cost</Th>
+                <Th sortKey="active_s" sort={sort} onSort={sortBy} right>Active</Th>
+                <Th sortKey="quality_score" sort={sort} onSort={sortBy} right title="Quality score (heuristic)">Q</Th>
                 <th className="py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s) => (
-                <tr
-                  key={s.session_id}
-                  onClick={() => open(s.session_id)}
-                  className={`border-b cursor-pointer hover:bg-muted/40 ${selected === s.session_id ? 'bg-muted/60' : ''}`}
-                >
-                  <td className="py-1.5 pr-3 whitespace-nowrap tabular-nums">{fmtStart(s.started_at)}</td>
-                  <td className="py-1.5 pr-3 truncate max-w-[16rem]" title={s.project_dir || ''}>{projectName(s.project_dir)}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap font-mono text-xs" title={s.ticket_source ? `from ${s.ticket_source}` : ''}>{s.ticket_id || ''}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{s.model || '—'}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">{s.turns}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">{fmtTokens((s.input_tokens || 0) + (s.output_tokens || 0))}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">{fmtCost(s.cost_usd)}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums">{fmtDuration(s.active_s)}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">{s.quality_score ?? '—'}</td>
-                  <td className="py-1.5">
-                    {isActive(s) && <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">active</span>}
-                    {s.status !== 'done' && <span className="text-xs text-muted-foreground">{s.status}</span>}
-                  </td>
-                </tr>
+              {groups.map((g) => (
+                <GroupRows key={g.key} group={g} showHeader={groupBy !== 'none'}>
+                  {g.items.map((f) => (
+                    <FamilyRows key={f.session_id} fam={f} selected={selected} expanded={expanded.has(f.session_id)} onToggle={() => toggle(f.session_id)} onOpen={open} />
+                  ))}
+                </GroupRows>
               ))}
             </tbody>
           </table>
         </div>
         <aside className="w-96 flex-none border-l overflow-auto p-4">
-          <DetailPanel detail={detail} onSummarize={summarize} summarizing={summarizing} summaryError={summaryError} />
+          <DetailPanel
+            detail={detail}
+            project={project}
+            onFilterProject={(dir) => router.push(dir ? `/sessions?project=${encodeURIComponent(dir)}` : '/sessions')}
+            onOpen={open}
+            onSummarize={summarize}
+            summarizing={summarizing}
+            summaryError={summaryError}
+          />
         </aside>
       </div>
     </div>

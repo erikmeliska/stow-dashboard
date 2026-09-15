@@ -3,6 +3,35 @@
 Notable changes, newest first. Dates instead of versions — the app isn't
 versioned; the desktop build ships whatever `main` holds.
 
+## 2026-09-15
+
+- **Session families on `/sessions`**: the table now shows one row per
+  *main* session with a Sub column (subagent and security-review counts) and a
+  chevron that expands the family — nested Agent-tool runs (type, description,
+  model, cost, active time) and linked child sessions (clickable). Row
+  numbers are the whole package; hover shows the main/subagents/linked split.
+  The details panel gets a *Package* table (total, main only, subagents,
+  linked) plus subagent and linked-session lists; a child shows a "part of"
+  link back to its parent. Header counts read "N sessions (+ M subagents ·
+  K security reviews)". The panel also offers "Only sessions from this
+  directory" / "Clear directory filter" (same `?project=` filter as the chip).
+- **Filters, grouping, sorting on `/sessions`**: Source select (CLI / Desktop
+  app / SDK & hooks / Antigravity), quick-filter chips (Has subagents, Guard
+  hits, > $50, > 2h active, No summary, Active now), Group by day / week /
+  project / branch / ticket / model with subtotal rows (count, turns, tokens,
+  cost, active), and sortable column headers (Started, Sub, Turns, Tokens,
+  Cost, Active, Q). Search now also matches the branch. Package numbers drive
+  "expensive"/"long" and the sort. Pure helpers in `session-filters.mjs` and
+  `session-tree.mjs`; the list API adds a `guard_hits` count per row.
+- **Why**: the security-guidance plugin's Stop hook spawns its reviewer as a
+  separate Agent-SDK transcript (`entrypoint: sdk-py`), so every review was
+  listed as a session of its own. Nothing on disk records the parent, so
+  `session-link.mjs` infers it from timing (the Claude session whose last
+  line came right before the review started, any directory, same directory
+  preferred). New `subagents` table and `parent_session_id`/`kind`/
+  `entrypoint` columns; the migration forces one full re-parse. Analytics
+  counts top-level sessions only; cost still includes children.
+
 ## 2026-09-02
 
 - **Analytics page** (`/analytics`): two tabs of charts. *Agentic sessions* —

@@ -83,3 +83,75 @@ test('ingest state round-trips and upserts by path', () => {
   clearIngestState(db);
   assert.equal(getIngestState(db).size, 0);
 });
+
+import { replaceSubagents, listSubagents, setParent, listUnlinked, listParentCandidates } from './store.mjs';
+
+function row(id, extra = {}) {
+  return { session_id: id, project_dir: '/p/a', cwd: '/p/a', model: 'x', started_at: '2026-09-15T10:00:00Z', ended_at: '2026-09-15T11:00:00Z', duration_s: 3600, active_s: 100, input_tokens: 1, output_tokens: 1, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, cost_usd: 1, turns: 1, status: 'done', raw_ref: `/t/${id}.jsonl`, ingested_at: 'now', kind: 'main', entrypoint: 'cli', ...extra };
+}
+
+test('subagents are stored per session and replaced whole', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, row('s1'));
+  replaceSubagents(db, 's1', [{ agent_id: 'agent-a1', agent_type: 'Explore', description: 'find callers', model: 'claude-haiku-4-5', cost_usd: 0.1, active_s: 30, turns: 4, input_tokens: 10, output_tokens: 5, cache_read: 0, cache_write: 0, started_at: '2026-09-15T10:05:00Z', ended_at: '2026-09-15T10:05:30Z', raw_ref: '/t/a1' }]);
+  assert.equal(getSession(db, 's1').agents[0].description, 'find callers');
+  replaceSubagents(db, 's1', [{ agent_id: 'agent-a2', agent_type: 'general-purpose' }]);
+  assert.deepEqual(listSubagents(db, ['s1']).map((a) => a.agent_id), ['agent-a2']);
+  assert.deepEqual(listSubagents(db, []), []);
+});
+
+test('parent links: upsert never clears them, listSessions returns children alongside parents', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, row('p'));
+  upsertSession(db, row('c', { kind: 'security-review', entrypoint: 'sdk-py', started_at: '2026-09-15T10:30:00Z', ended_at: '2026-09-15T10:30:40Z' }));
+  assert.deepEqual(listUnlinked(db, ['security-review']).map((s) => s.session_id), ['c']);
+  setParent(db, 'c', 'p');
+  upsertSession(db, row('c', { kind: 'security-review', entrypoint: 'sdk-py' }));
+  assert.equal(getSession(db, 'c').session.parent_session_id, 'p', 're-parse keeps the link');
+  assert.equal(getSession(db, 'c').parent.session_id, 'p');
+  assert.deepEqual(getSession(db, 'p').children.map((s) => s.session_id), ['c']);
+  assert.deepEqual(listUnlinked(db, ['security-review']), []);
+
+  upsertSession(db, row('other', { project_dir: '/p/b', started_at: '2026-09-16T10:00:00Z' }));
+  const list = listSessions(db, { limit: 1 });
+  assert.deepEqual(list.map((s) => s.session_id), ['other'], 'limit counts top-level rows only');
+  const forA = listSessions(db, { project: '/p/a' });
+  assert.deepEqual(forA.map((s) => s.session_id).sort(), ['c', 'p'], 'children ride along with their parent');
+});
+
+test('listParentCandidates: Claude main sessions running at the child start, any directory, with slack past ended_at', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, row('running', { started_at: '2026-09-15T09:00:00Z', ended_at: '2026-09-15T12:00:00Z' }));
+  upsertSession(db, row('just-ended', { started_at: '2026-09-15T09:00:00Z', ended_at: '2026-09-15T10:29:30Z' }));
+  upsertSession(db, row('long-ended', { started_at: '2026-09-15T08:00:00Z', ended_at: '2026-09-15T09:00:00Z' }));
+  upsertSession(db, row('later', { started_at: '2026-09-15T10:45:00Z', ended_at: '2026-09-15T12:00:00Z' }));
+  upsertSession(db, row('elsewhere', { project_dir: '/p/b', started_at: '2026-09-15T09:00:00Z', ended_at: '2026-09-15T12:00:00Z' }));
+  upsertSession(db, row('gemini', { entrypoint: 'antigravity', started_at: '2026-09-15T09:00:00Z', ended_at: '2026-09-15T12:00:00Z' }));
+  upsertSession(db, row('sibling-child', { kind: 'security-review', started_at: '2026-09-15T09:00:00Z', ended_at: '2026-09-15T12:00:00Z' }));
+  const c = listParentCandidates(db, { project_dir: '/p/a', started_at: '2026-09-15T10:30:00Z' });
+  assert.deepEqual(c.map((s) => s.session_id).sort(), ['elsewhere', 'just-ended', 'running']);
+  assert.deepEqual(listParentCandidates(db, { started_at: 'x' }), []);
+});
+
+test('listUnlinked honours the retry window', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, row('old', { kind: 'security-review', started_at: '2026-09-01T10:00:00Z' }));
+  upsertSession(db, row('new', { kind: 'security-review', started_at: '2026-09-15T10:00:00Z' }));
+  assert.deepEqual(listUnlinked(db, ['security-review']).map((s) => s.session_id).sort(), ['new', 'old']);
+  assert.deepEqual(listUnlinked(db, ['security-review'], { since: '2026-09-10T00:00:00Z' }).map((s) => s.session_id), ['new']);
+});
+
+test('openStore adding the kind column forgets incremental ingest state (forces one re-parse)', () => {
+  const raw = new DatabaseSync(':memory:');
+  raw.exec('CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_dir TEXT, started_at TEXT, quality_score REAL, summary TEXT)');
+  raw.exec("CREATE TABLE ingest_state (path TEXT PRIMARY KEY, session_id TEXT, signature TEXT, ingested_at TEXT)");
+  raw.exec("INSERT INTO ingest_state VALUES ('/t/x', 'x', 'sig', 'now')");
+  const db = openStore(raw);
+  assert.equal(db.prepare('SELECT count(*) n FROM ingest_state').get().n, 0);
+  assert.ok(db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'parent_session_id'));
+});
+
+test('listSessions carries a guard_hits count per row', () => {
+  const db = seed();
+  assert.equal(listSessions(db)[0].guard_hits, 1);
+});

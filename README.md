@@ -20,7 +20,7 @@ Available as a **web app** or **native desktop app** (macOS).
 - **Stack Detection** - Extracts technologies from package.json, requirements.txt, etc.
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
-- **Claude Code Session Viewer** - `/sessions` lists your agentic sessions (tokens, cost, tools, skills, guard hits, quality score, on-demand AI summaries) from a local SQLite store
+- **Claude Code Session Viewer** - `/sessions` lists your agentic sessions (tokens, cost, tools, skills, guard hits, quality score, on-demand AI summaries) from a local SQLite store, grouped into families: expand a session to see its subagents and hook-spawned child sessions, with the whole package rolled up
 - **Analytics** - `/analytics` charts both worlds: agentic sessions (cost, models, tools, skills, quality; 7d–all range) and the project portfolio (categories, languages, AI cost, commit activity)
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
