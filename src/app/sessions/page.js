@@ -164,25 +164,46 @@ function PackageBlock({ fam, onOpen }) {
       </table>
       {fam.agents.length > 0 && (
         <Section title="Subagents" empty="">
-          {fam.agents.map((a) => (
+          <Collapsible items={fam.agents} render={(a) => (
             <div key={a.agent_id} className="flex justify-between gap-2 py-0.5 text-xs" title={`${a.agent_id} · ${a.model || ''} · ${a.turns ?? 0} turns`}>
               <span className="truncate"><Bot className="inline h-3 w-3 mr-1 text-muted-foreground" />{fmtAgent(a)}</span>
               <span className="tabular-nums text-muted-foreground whitespace-nowrap">{fmtCost(a.cost_usd)} · {fmtDuration(a.active_s)}</span>
             </div>
-          ))}
+          )} />
         </Section>
       )}
       {fam.children.length > 0 && (
         <Section title="Linked sessions" empty="">
-          {fam.children.map((c) => (
+          <Collapsible items={fam.children} render={(c) => (
             <button key={c.session_id} onClick={() => onOpen(c.session_id)} className="w-full flex justify-between gap-2 py-0.5 text-xs text-left hover:text-primary" title={c.session_id}>
               <span className="truncate"><ShieldCheck className="inline h-3 w-3 mr-1 text-muted-foreground" />{kindLabel(c.kind)} · {fmtStart(c.started_at)}</span>
               <span className="tabular-nums text-muted-foreground whitespace-nowrap">{fmtCost(c.cost_usd)} · {fmtDuration(c.active_s)}</span>
             </button>
-          ))}
+          )} />
         </Section>
       )}
     </div>
+  )
+}
+
+const PREVIEW_ROWS = 3
+
+/** First PREVIEW_ROWS items, then a "Show N more" / "Show less" toggle. Resets when the item set changes. */
+function Collapsible({ items, render }) {
+  const [open, setOpen] = useState(false)
+  const key = items.map((x) => x.agent_id || x.session_id).join('|')
+  useEffect(() => { setOpen(false) }, [key])
+  const shown = open ? items : items.slice(0, PREVIEW_ROWS)
+  const hidden = items.length - PREVIEW_ROWS
+  return (
+    <>
+      {shown.map(render)}
+      {hidden > 0 && (
+        <button onClick={() => setOpen((v) => !v)} className="py-0.5 text-xs text-primary hover:underline inline-flex items-center gap-1">
+          {open ? <><ChevronDown className="h-3 w-3" /> Show less</> : <><ChevronRight className="h-3 w-3" /> Show {hidden} more</>}
+        </button>
+      )}
+    </>
   )
 }
 

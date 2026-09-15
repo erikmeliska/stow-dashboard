@@ -11,8 +11,8 @@ versioned; the desktop build ships whatever `main` holds.
   model, cost, active time) and linked child sessions (clickable). Row
   numbers are the whole package; hover shows the main/subagents/linked split.
   The details panel gets a *Package* table (total, main only, subagents,
-  linked) plus subagent and linked-session lists; a child shows a "part of"
-  link back to its parent. Header counts read "N sessions (+ M subagents ·
+  linked) plus subagent and linked-session lists (first 3 rows, then
+  "Show N more"); a child shows a "part of" link back to its parent. Header counts read "N sessions (+ M subagents ·
   K security reviews)". The panel also offers "Only sessions from this
   directory" / "Clear directory filter" (same `?project=` filter as the chip).
 - **Filters, grouping, sorting on `/sessions`**: Source select (CLI / Desktop
