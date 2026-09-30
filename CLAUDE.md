@@ -288,13 +288,14 @@ The project includes an MCP server (`src/mcp/server.mjs`) that exposes project d
 npm run mcp  # Start MCP server on stdio
 ```
 
-Tools (21):
+Tools (23):
 - `search_projects` (supports AI facet params: `category`, `type`, `domain`, `tech`, `maturity`, `misplaced`), `get_project_details` (includes `ai` + `aiUsage`), `get_project_readme`, `open_project`
 - `list_dirty_projects`, `get_project_stats`, `list_recent_projects`
 - `list_running_projects`, `get_project_processes`, `stop_process`
 - `get_status`, `set_status`, `list_scripts`, `run_script`
 - `list_tasks`, `add_task`, `verify_task`, `completed_tasks`, `dispatch_task`, `generate_changelog`
 - `find_reusable_assets` — search AI-discovered harvestable building blocks across all projects
+- `list_sessions` (period + kind filter, rollup numbers, summary), `summarize_sessions` (background batch, cross-process job state)
 
 ## Data Requirements
 

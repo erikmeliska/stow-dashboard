@@ -22,7 +22,12 @@ import { verifyTask, auditTasks, generateChangelog } from '../lib/history.mjs'
 import { writeBrief, openInClaudeDesktop } from '../lib/dispatch.mjs'
 import { readOpenWithEnv } from '../lib/open-with.mjs'
 import { defaultUsagePaths } from '../lib/usage.mjs'
-import { ledgerFile, envFile } from '../lib/state-dir.mjs'
+import { ledgerFile, envFile, dataFile } from '../lib/state-dir.mjs'
+import { openStore, DB_NAME, listSessions, listSubagents } from '../lib/cc/store.mjs'
+import { buildSessionTree } from '../lib/cc/session-tree.mjs'
+import { effectiveKind } from '../lib/cc/session-link.mjs'
+import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
+import { batchModel, estimateBatch, selectMissing, startBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
@@ -38,6 +43,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..')
 // desktop app's app-data dir still wins when it holds the live ledger, which
 // is what keeps the MCP tools and the Deno app on one dataset.
 const STATE = { base: PROJECT_ROOT }
+
+// Opened per call: the state dir is resolved against the repo root (STATE), like the ledger.
+const openSessionStore = () => openStore(dataFile(DB_NAME, STATE))
+const dayIso = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00`).toISOString() : d || null)
 const DATA_FILE = ledgerFile(STATE)
 
 // Load environment from .env.local
@@ -534,6 +543,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         query: { type: 'string', description: 'Case-insensitive substring to match against asset text (omit for all)' },
                         limit: { type: 'number', description: 'Maximum number of results (default: 20)' },
                     },
+                },
+            },
+            {
+                name: 'list_sessions',
+                description: 'List AI coding sessions (Claude Code, Codex, Antigravity) started in a period, with their AI summary. Use for "what did I work on" reports. Subagent/linked sessions are rolled into their parent.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO)' },
+                        until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
+                        project: { type: 'string', description: 'Exact project directory (optional)' },
+                        kind: { type: 'string', enum: ['work', 'scheduled', 'agent-spawn', 'trivial', 'all'], description: 'Default work' },
+                        limit: { type: 'number', description: 'Maximum sessions (default 500)' },
+                    },
+                    required: ['since', 'until'],
+                },
+            },
+            {
+                name: 'summarize_sessions',
+                description: 'Generate missing AI summaries for work sessions in a period (runs the local claude CLI in the background, Sonnet by default). Call again to see progress.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO)' },
+                        until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
+                        force: { description: "true = redo all, 'upgrade' = redo old v1 summaries" },
+                    },
+                    required: ['since', 'until'],
                 },
             },
         ]
@@ -1033,6 +1070,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 if (out.length >= limit) break
             }
             return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+        }
+
+        case 'list_sessions': {
+            const db = openSessionStore()
+            try {
+                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, limit: 5000 })
+                const fams = buildSessionTree(rows, listSubagents(db, rows.map((r) => r.session_id)))
+                const want = args.kind || 'work'
+                const out = fams
+                    .filter((f) => want === 'all' || effectiveKind(f) === want)
+                    .slice(0, args.limit || 500)
+                    .map((f) => {
+                        const s = parseSummary(f)
+                        return {
+                            session_id: f.session_id, started_at: f.started_at, ended_at: f.ended_at,
+                            project: f.project_dir ? path.basename(f.project_dir) : null, project_dir: f.project_dir,
+                            harness: f.entrypoint, model: f.model,
+                            active_min: Math.round((f.rollup.active_s || 0) / 60), turns: f.rollup.turns,
+                            cost_usd: Number((f.rollup.cost_usd || 0).toFixed(2)), sub_sessions: f.sub_count,
+                            git_branch: f.git_branch, ticket_id: f.ticket_id,
+                            kind: effectiveKind(f), title: displayTitle(f),
+                            summary: s ? { what: s.what, outcome: s.outcome, improvements: s.improvements || [], followups: s.followups || [] } : null,
+                        }
+                    })
+                return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] }
+            } finally {
+                db.close()
+            }
+        }
+
+        case 'summarize_sessions': {
+            const db = openSessionStore()
+            try {
+                const ids = selectMissing(db, { since: dayIso(args.since), until: dayIso(args.until), force: args.force ?? false })
+                const { job, started } = startBatch(db, { ids, model: batchModel(), openDb: openSessionStore })
+                const estimateSeconds = estimateBatch(db, { count: job.total - job.done - job.failed.length }).seconds
+                const note = started
+                    ? `Started: ${job.total} sessions. Call summarize_sessions again to see progress.`
+                    : `A batch is already running (${job.done}/${job.total}); this call did not start another.`
+                return { content: [{ type: 'text', text: JSON.stringify({ started, job: { job_id: job.job_id, status: job.status, done: job.done, total: job.total, failed: job.failed }, estimateSeconds, note }, null, 2) }] }
+            } finally {
+                db.close()
+            }
         }
 
         default:
