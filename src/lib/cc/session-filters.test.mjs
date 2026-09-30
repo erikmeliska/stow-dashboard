@@ -102,3 +102,9 @@ test('sourceOf buckets Codex entrypoints', () => {
   assert.equal(SOURCE_FILTERS.codex, 'Codex')
   assert.equal(filterSessions([{ entrypoint: 'codex-cli' }, { entrypoint: 'cli' }], { source: 'codex' }).length, 1)
 })
+
+test('search also matches the display title', () => {
+  const rows = [{ session_id: 'a', title: 'Fix login redirect', title_source: 'prompt' }, { session_id: 'b', summary: JSON.stringify({ v: 2, title: 'Pricing sync' }) }];
+  assert.deepEqual(filterSessions(rows, { search: 'login' }).map((r) => r.session_id), ['a']);
+  assert.deepEqual(filterSessions(rows, { search: 'pricing' }).map((r) => r.session_id), ['b']);
+});

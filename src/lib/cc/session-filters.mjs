@@ -4,6 +4,8 @@
  * rows too: rollup/agents/children fall back to the row's own fields.
  */
 
+import { displayTitle } from './summary-view.mjs'
+
 /** Menu order matters: rendered top-to-bottom in the quality <select>. */
 export const QUALITY_FILTERS = {
   any: { label: 'Quality: any', test: () => true },
@@ -57,7 +59,8 @@ export function filterSessions(sessions, { search = '', ticket = '', quality = '
       const matchTicket = (s.ticket_id || '').toLowerCase().includes(needle)
       const matchProject = (s.project_dir || '').toLowerCase().includes(needle)
       const matchBranch = (s.git_branch || '').toLowerCase().includes(needle)
-      if (!matchTicket && !matchProject && !matchBranch) return false
+      const matchTitle = (displayTitle(s) || '').toLowerCase().includes(needle)
+      if (!matchTicket && !matchProject && !matchBranch && !matchTitle) return false
     }
     if (matchModel && (s.model || '').toLowerCase() !== matchModel) return false
     if (matchSource && sourceOf(s) !== matchSource) return false

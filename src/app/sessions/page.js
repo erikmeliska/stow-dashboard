@@ -3,12 +3,16 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowDown, ArrowLeft, ArrowUp, Bot, ChevronDown, ChevronRight, CornerDownRight, Filter, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Bot, CalendarDays, ChevronDown, ChevronRight, CornerDownRight, Filter, RefreshCw, ShieldCheck, Sparkles, Table2, X } from 'lucide-react'
+import { format, parse, isValid } from 'date-fns'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { filterSessions, QUALITY_FILTERS, QUICK_FILTERS, SOURCE_FILTERS } from '@/lib/cc/session-filters.mjs'
 import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } from '@/lib/cc/session-tree.mjs'
-import { CHILD_KINDS } from '@/lib/cc/session-link.mjs'
+import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
+import { periodRange } from '@/lib/cc/session-calendar.mjs'
+import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
+import { CalendarView } from './calendar-view'
 
 function fmtTokens(n) {
   if (n == null) return '—'
@@ -35,6 +39,7 @@ const ACTIVE_MS = 10 * 60 * 1000
 function isActive(s) { return s.ended_at ? Date.now() - Date.parse(s.ended_at) < ACTIVE_MS : false }
 function projectName(dir) { return dir ? dir.split('/').filter(Boolean).slice(-1)[0] : '—' }
 function kindLabel(kind) { return CHILD_KINDS[kind]?.label || kind || 'main' }
+const SCHEDULED_BADGE = <span className="text-xs px-1 py-0.5 rounded bg-secondary text-secondary-foreground">scheduled</span>
 function fmtAgent(a) { return [a.agent_type, a.description].filter(Boolean).join(' — ') || a.agent_id }
 /** "3 subagents · 12 security reviews" for tooltips and the header line. */
 function describeSubs(agents, children) {
@@ -57,13 +62,14 @@ function DetailPanel({ detail, project, onFilterProject, onOpen, onSummarize, su
   if (!detail.session) return <p className="text-sm text-muted-foreground">Session not found.</p>
   const s = detail.session
   const fam = familyOf(s, detail.agents || [], detail.children || [])
-  const isChild = s.kind && s.kind !== 'main'
+  const isChild = Boolean(CHILD_KINDS[s.kind])
   return (
     <div className="space-y-4 text-sm">
       <div>
         <div className="font-mono text-xs text-muted-foreground break-all">{s.session_id}</div>
         <div className="font-medium mt-1 flex items-center gap-2 flex-wrap">
           {projectName(s.project_dir)}
+          {s.kind === 'scheduled' && SCHEDULED_BADGE}
           {isChild && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" />{kindLabel(s.kind)}</span>}
           {s.entrypoint && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Entrypoint (how the session was started)">{s.entrypoint}</span>}
         </div>
@@ -232,8 +238,10 @@ function QualityBlock({ s }) {
 }
 
 function SummaryBlock({ s, onSummarize, summarizing, error }) {
-  let sum = null
-  try { sum = s.summary ? JSON.parse(s.summary) : null } catch { sum = null }
+  const sum = parseSummary(s)
+  const v = summaryVersion(s)
+  const title = displayTitle(s)
+  const kind = effectiveKind(s)
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
@@ -242,15 +250,17 @@ function SummaryBlock({ s, onSummarize, summarizing, error }) {
           <Sparkles className={`h-3.5 w-3.5 mr-1 ${summarizing ? 'animate-pulse' : ''}`} /> {summarizing ? 'Working…' : sum ? 'Regenerate' : 'Generate'}
         </Button>
       </div>
+      {title && <p className="text-sm font-medium mb-1">{title}</p>}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       {!sum && !error && <p className="text-xs text-muted-foreground">No summary yet — uses your local <code>claude</code> CLI (~1k tokens).</p>}
       {sum && (
         <div className="space-y-1 text-xs">
           <p>{sum.what}</p>
-          <Row label="Outcome" value={sum.outcome} />
+          <Row label="Outcome" value={sum.outcome ? `${OUTCOME_ICON[sum.outcome] || ''} ${sum.outcome}` : '—'} />
+          <Row label="Kind" value={kind} />
           {sum.improvements?.length > 0 && <div><span className="text-muted-foreground">Improvements:</span><ul className="list-disc pl-4">{sum.improvements.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
           {sum.followups?.length > 0 && <div><span className="text-muted-foreground">Follow-ups:</span><ul className="list-disc pl-4">{sum.followups.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
-          <p className="text-muted-foreground">{s.summary_model} · {fmtStart(s.summarized_at)}</p>
+          <p className="text-muted-foreground">{s.summary_model} · {fmtStart(s.summarized_at)}{v === 1 ? ' · older format, Regenerate to add a title' : ''}</p>
         </div>
       )}
     </div>
@@ -319,7 +329,7 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen }) {
   const breakdown = hasSubs
     ? `main ${fmtCost(fam.own.cost_usd)} · subagents ${fmtCost(fam.agents_sum.cost_usd)} · linked ${fmtCost(fam.children_sum.cost_usd)}`
     : ''
-  const isChildHead = s.kind && s.kind !== 'main' // orphan child shown at top level
+  const isChildHead = Boolean(CHILD_KINDS[s.kind]) // orphan child shown at top level
   return (
     <>
       <tr
@@ -343,6 +353,7 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen }) {
         </td>
         <td className={`${CELL} truncate max-w-[16rem]`} title={s.project_dir || ''}>
           {projectName(s.project_dir)}
+          {s.kind === 'scheduled' && <span className="ml-1">{SCHEDULED_BADGE}</span>}
           {isChildHead && <span className="ml-1 text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">{kindLabel(s.kind)}</span>}
         </td>
         <td className={`${CELL} whitespace-nowrap font-mono text-xs`} title={s.ticket_source ? `from ${s.ticket_source}` : ''}>{s.ticket_id || ''}</td>
@@ -422,13 +433,32 @@ function SessionsView() {
   const [quick, setQuick] = useState(() => new Set())
   const [groupBy, setGroupBy] = useState('none')
   const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
+  const view = searchParams.get('view') === 'calendar' ? 'calendar' : 'table'
+  const span = searchParams.get('span') === 'month' ? 'month' : 'week'
+  const dateParam = searchParams.get('date') || ''
+  const date = useMemo(() => {
+    const d = dateParam ? parse(dateParam, 'yyyy-MM-dd', new Date()) : new Date()
+    return isValid(d) ? d : new Date()
+  }, [dateParam])
+  const range = useMemo(() => periodRange(date, span), [date, span])
+  const rangeKey = `${range.since.toISOString()}|${range.until.toISOString()}`
 
-  async function load() {
+  /** Merge into the current query string (null deletes) and replace the URL. */
+  function setParams(patch) {
+    const qs = new URLSearchParams(searchParams.toString())
+    for (const [k, v] of Object.entries(patch)) (v == null ? qs.delete(k) : qs.set(k, v))
+    const s = qs.toString() // not qs.size: older WebKit (desktop shell) lacks it
+    router.replace(`/sessions${s ? `?${s}` : ''}`)
+  }
+
+  async function load({ ingest = true } = {}) {
     setLoading(true)
     try {
       // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
-      await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
-      const qs = new URLSearchParams({ limit: '1000', ...(project ? { project } : {}) })
+      if (ingest) await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
+      const qs = new URLSearchParams(project ? { project } : {})
+      if (view === 'calendar') { qs.set('since', range.since.toISOString()); qs.set('until', range.until.toISOString()) }
+      else qs.set('limit', '1000')
       const r = await fetch(`/api/sessions?${qs}`)
       const d = await r.json()
       setSessions(d.sessions || [])
@@ -437,7 +467,7 @@ function SessionsView() {
       setLoading(false)
     }
   }
-  useEffect(() => { load() }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [project, view, rangeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function open(id) {
     setSelected(id); setSummaryError(null)
@@ -452,7 +482,7 @@ function SessionsView() {
       const d = await r.json()
       if (!r.ok) { setSummaryError(d.error ? `${d.error}${d.detail ? ` — ${d.detail}` : ''}` : `HTTP ${r.status}`); return }
       setDetail(d)
-      setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, summary: d.session.summary } : s)))
+      setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, ...d.session } : s)))
     } catch (e) {
       setSummaryError(String(e?.message || e))
     } finally {
@@ -489,9 +519,18 @@ function SessionsView() {
           <div className="flex items-center gap-4">
             <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors"><ArrowLeft className="h-5 w-5" /></Link>
             <h1 className="text-xl font-bold">Sessions</h1>
+            <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label="View">
+              {[['table', Table2, 'Table'], ['calendar', CalendarDays, 'Calendar']].map(([v, Icon, label]) => (
+                <button key={v} role="tab" aria-selected={view === v}
+                  onClick={() => setParams({ view: v === 'table' ? null : v })}
+                  className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${view === v ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                  <Icon className="h-3.5 w-3.5" /> {label}
+                </button>
+              ))}
+            </div>
             {project && (
               <button
-                onClick={() => router.push('/sessions')}
+                onClick={() => setParams({ project: null })}
                 className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground hover:bg-muted"
                 title={`${project} — click to clear`}
               >
@@ -529,15 +568,15 @@ function SessionsView() {
             <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className={SEL} title="Where the session was started">
               {Object.entries(SOURCE_FILTERS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
-            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className={SEL} title="Group rows with subtotals">
+            {view === 'table' && <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className={SEL} title="Group rows with subtotals">
               {Object.entries(GROUP_BY).map(([key, { label }]) => <option key={key} value={key}>{key === 'none' ? label : `Group: ${label}`}</option>)}
-            </select>
+            </select>}
             <span className="text-sm text-muted-foreground">
               {filtering ? `${filtered.length} of ${families.length}` : families.length} sessions{subsLine ? ` (+ ${subsLine})` : ''} · {fmtCost(totalCost)} list price
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => load()} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} /> Reload
             </Button>
             <ThemeToggle />
@@ -561,6 +600,7 @@ function SessionsView() {
       </div>
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-auto px-4">
+          {view === 'table' && (<>
           {!loading && sessions.length === 0 && (
             <p className="text-sm text-muted-foreground py-6">{project ? 'No sessions recorded for this project yet.' : <>No sessions yet — run <code>npm run cc:ingest</code>.</>}</p>
           )}
@@ -593,12 +633,24 @@ function SessionsView() {
               ))}
             </tbody>
           </table>
+          </>)}
+          {view === 'calendar' && (
+            <CalendarView
+              families={filtered}
+              range={range}
+              selected={selected}
+              onOpen={open}
+              onNavigate={(d) => setParams({ date: format(d, 'yyyy-MM-dd') })}
+              onSpan={(s) => setParams({ span: s === 'week' ? null : s })}
+              onRefresh={() => load({ ingest: false })}
+            />
+          )}
         </div>
         <aside className="w-96 flex-none border-l overflow-auto p-4">
           <DetailPanel
             detail={detail}
             project={project}
-            onFilterProject={(dir) => router.push(dir ? `/sessions?project=${encodeURIComponent(dir)}` : '/sessions')}
+            onFilterProject={(dir) => setParams({ project: dir || null })}
             onOpen={open}
             onSummarize={summarize}
             summarizing={summarizing}
