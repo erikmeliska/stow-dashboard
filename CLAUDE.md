@@ -34,7 +34,8 @@ npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
 npm run cc:ingest    # Update the Claude Code session store (data/cc-sessions.db) from ~/.claude transcripts + cc-guard audit (incremental; --full re-parses)
-npm run cc:eval -- --summaries [--limit N] [--id SID]  # On-demand AI summaries for stored sessions via the local `claude` CLI
+npm run cc:eval -- --summaries [--limit N] [--id SID] [--since D --until D --concurrency N --model M --upgrade]  # AI summaries via the local `claude` CLI (batch over a period with --since/--until; live heartbeat clock)
+npm run cc:import-summaries -- <sessions.json> [--dry-run]  # One-off import of PoC session descriptions as v2 summaries (keeps existing v2)
 
 # Other
 npm run lint         # Run ESLint
@@ -80,6 +81,8 @@ IDE_COMMANDS=code,cursor,zed        # Comma-separated IDE CLI commands (first = 
 TERMINAL_APPS=Terminal,Warp,cmux    # Comma-separated terminal apps (first = default; legacy TERMINAL_APP still honored)
 OLLAMA_URL=http://localhost:11434   # AI-analysis fallback engine for language-rejected/oversized projects (default)
 OLLAMA_MODEL=llama3                 # Ollama model for the fallback (default)
+CC_CODEX_DIR=~/.codex/sessions      # Codex rollouts dir ingested as a third session source (default)
+CC_SUMMARY_BATCH_MODEL=claude-sonnet-5-5  # Model for batch summaries (single Generate keeps CC_SUMMARY_MODEL, default haiku)
 ```
 
 `STOW_STATE_DIR` is set in the *process env*, not `.env.local` (it decides which `.env.local` gets read): it overrides where `data/` and `.env.local` live — see "State Dir" under Data Requirements.
@@ -163,6 +166,13 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/cc/ingest-run.mjs` - Ingest runner (`ingestAll`, serialised `runIngest`): walks `~/.claude/projects` (+ subagent transcripts), computes context + quality, upserts the store; incremental via `ingest_state` signatures
 - `scripts/cc-ingest.mjs` - Thin CLI over `ingest-run.mjs` (`--full`)
 - `src/app/api/sessions/ingest/route.js` - `POST` runs the incremental ingest (called by the `/sessions` page on load/Reload and by the refresh cycle)
+- `src/lib/cc/codex-ingest.mjs` - Codex rollout parser (`~/.codex/sessions`): sessions, tokens/cost, subagents linked to the root thread via `session_meta`
+- `src/lib/cc/summary-view.mjs` - Summary v1/v2 normaliser, display-title priority, `effectiveKind`
+- `src/lib/cc/summary-batch.mjs` - Batch summary runner (never rejects; marks job `stopped` on fatal errors), estimate, job state in `summary_jobs`
+- `src/lib/cc/session-calendar.mjs` - Pure calendar logic: local-day ranges, event placement, week/month layout, period stats
+- `src/app/sessions/calendar-view.js` + `summary-banner.js` - Week/month calendar UI and the "fill in missing summaries" banner
+- `src/app/api/sessions/summarize-batch/route.js` (+ `estimate/`) - Start/poll/stop batch job, pre-run estimate
+- `scripts/cc-import-summaries.mjs` - CLI for the PoC summary import
 - `scripts/cc-eval.mjs` - CLI for on-demand AI summaries (`npm run cc:eval -- --summaries`)
 - `src/app/api/sessions/route.js` + `summarize/route.js` + `src/app/sessions/page.js` - Session list/detail API, summarize action, and the session viewer
 - `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
@@ -274,6 +284,13 @@ A second, session-centric view of Claude Code usage lives in `data/cc-sessions.d
   - *AI summary* (`summary.mjs`) is **on-demand only** — `npm run cc:eval -- --summaries` or the Generate button → `POST /api/sessions/summarize`. It shells out to the local `claude` CLI with `--no-session-persistence` (mandatory: otherwise each summary writes a transcript that the next ingest indexes), `--tools ""`, no MCP servers, no setting sources and a custom system prompt — ~1k context tokens per summary instead of ~150k for a naive `claude -p` in the repo cwd. `CC_SUMMARY_MODEL` (default `haiku`). `upsertSession` never touches `summary*` columns, so re-ingests keep summaries; `setSummary` is the only writer.
 - **Session families** (parents, nested subagents, hook-spawned children): every Agent-tool run under `<session>/subagents/` is folded into the parent row (as before) *and* recorded in the `subagents` table (`agent_type` + `description` from the sibling `.meta.json`, model, tokens, cost, active time). Separately, the security-guidance plugin's Stop/SubagentStop hook spawns **its own top-level transcripts** through the Agent SDK (`entrypoint: sdk-py`, first prompt "Review this change for security vulnerabilities…"); nothing on disk names their parent. `session-link.mjs` classifies them (`kind = 'security-review'`, table-driven — add a kind there when another hook starts spawning sessions) and `linkChildren` in `ingest-run.mjs` attaches each to a parent **by timing**: among Claude main sessions running at the child's start (any directory — the reviewer runs in the repo root of the edited files, and the parent may sit in a sibling or ancestor dir), the one whose assistant/tool line came closest before the child (≤ 5 min; a same-directory candidate with a plausible gap wins over a closer one elsewhere). No plausible gap → stays unlinked and is shown as its own row with a badge; unlinked children are retried every run for 24 h (all of them on `--full` or when `ingest_state` is empty, e.g. right after the schema migration). Child rows keep their **own** numbers and nested agents stay folded, so analytics never double-counts; rollups are computed at read time (`session-tree.mjs`). `listSessions` returns top-level rows (the limit applies to those) plus every linked child of them; `GET /api/sessions` adds `agents`, `?id=` adds `agents`, `children`, `parent`. The analytics "sessions" KPI counts top-level sessions only; cost/tokens include children. Verified on ~530 real sessions: all 136 reviews linked, 78 of them across directories; incremental run stays ~0.1 s.
 - Remaining nullable `sessions` columns (`machine`, `user`, `project_key`) are reserved for phase 3 (sync); design in `docs/superpowers/specs/2026-08-21-cc-observability-team-design.md` + `2026-08-21-cc-phase2-eval-context-design.md`.
+
+#### Session calendar & batch summaries
+
+- **Sources**: Claude transcripts, `cc-guard` audit, and Codex rollouts (`CC_CODEX_DIR`, default `~/.codex/sessions`, `codex-ingest.mjs`). Codex subagents link to the **root** thread (`session_meta.payload.session_id`, flat families, shown in the parent's rollup). New `sessions` columns `title`/`title_source`/`user_prompts`; `kind` may now be `scheduled`. `effectiveKind` (`summary-view.mjs`) resolves to `work|agent|scheduled|trivial`. Display title priority: `custom` > `summary.title` > `ai` > first prompt.
+- **Summary v2**: `{v:2, title, what, outcome: done|partial|abandoned|exploration, improvements (≤5), followups (≤4), kind_hint, model, ms}`; v1 rows stay readable. Titles are never overwritten by summaries.
+- **Batch**: `POST /api/sessions/summarize-batch` (+ `estimate/`, range GET). Model `CC_SUMMARY_BATCH_MODEL` (default `claude-sonnet-5-5`), concurrency 3. Job state lives in SQLite `summary_jobs` (cross-process with the MCP server `summarize_sessions`, 60 s stale heartbeat). The runner never rejects and marks the job `stopped` on fatal errors; sessions whose last write is < 10 min old are skipped (10-min rule). `cc:eval` drives it with a live heartbeat clock. `openStore` sets `PRAGMA busy_timeout = 5000` for file DBs so the web app, CLI and MCP can share the DB. Estimate: `ceil(count/concurrency) x median(ms of last 50)`, fallback 30 s (Sonnet) / 10 s (haiku) per session.
+- **Calendar** (`/sessions?view=calendar&span=week|month&date=YYYY-MM-DD`): Table|Calendar toggle, local time, Monday first, max span one month, default shows only `work` (chip reveals agent/scheduled/trivial muted; `scheduled` gets a neutral badge). Placement: `end = ended_at` if span <= 5 h else `start + max(active_s, 30 min)`, min height 15 min. Banner scope = visible events missing a v2 summary. The page ignores stale load responses (latest request wins). One-off PoC import: `npm run cc:import-summaries`.
 
 ### Quick Filters
 
