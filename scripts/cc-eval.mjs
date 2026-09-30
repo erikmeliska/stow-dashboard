@@ -15,7 +15,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { openStore } from '../src/lib/cc/store.mjs';
 import { summarizeSession } from '../src/lib/cc/summary.mjs';
-import { batchModel, DEFAULT_CONCURRENCY, selectMissing, startBatch } from '../src/lib/cc/summary-batch.mjs';
+import { batchModel, clampConcurrency, DEFAULT_CONCURRENCY, selectMissing, startBatch } from '../src/lib/cc/summary-batch.mjs';
 
 const iso = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00`).toISOString() : d || null);
 
@@ -71,7 +71,7 @@ if (invokedDirectly) {
     limit: Number(values.limit) || 5, id: values.id || null,
     since: values.since || null, until: values.until || null,
     force: values.force ? true : values.upgrade ? 'upgrade' : false,
-    concurrency: Math.max(1, Math.floor(Number(values.concurrency) || DEFAULT_CONCURRENCY)), model: values.model,
+    concurrency: clampConcurrency(values.concurrency), model: values.model,
   });
   db.close();
   console.log(`cc-eval: ${r.ok} summarised, ${r.failed} failed of ${r.total}`);

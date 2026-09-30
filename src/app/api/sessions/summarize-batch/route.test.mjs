@@ -26,3 +26,11 @@ test('POST with ids starts a job over the ids that still need a summary', async 
   assert.equal(r.total, 1);
   assert.throws(() => handlePost({}, db, deps(db)), /ids or since\/until required/);
 });
+
+test('POST clamps concurrency to an integer in 1..8', async () => {
+  for (const [given, want] of [[-1, 1], [0, 3], [2.7, 2], [100, 8], ['x', 3]]) {
+    const db = db1();
+    const r = handlePost({ ids: ['a', 'b'], concurrency: given }, db, deps(db));
+    assert.equal(r.job.concurrency, want, `concurrency ${given}`);
+  }
+});

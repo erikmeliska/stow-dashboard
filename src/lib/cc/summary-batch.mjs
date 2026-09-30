@@ -19,6 +19,14 @@ import { effectiveKind } from './session-link.mjs';
 export const STALE_MS = 60_000;
 export const HEARTBEAT_MS = 10_000;
 export const DEFAULT_CONCURRENCY = 3;
+export const MAX_CONCURRENCY = 8;
+
+/** Parallel CLI calls for a batch: an integer in 1..MAX_CONCURRENCY; junk/0 → the default. */
+export function clampConcurrency(n) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v) || v === 0) return DEFAULT_CONCURRENCY;
+  return Math.min(MAX_CONCURRENCY, Math.max(1, v));
+}
 
 export function batchModel(env = process.env) {
   return env.CC_SUMMARY_BATCH_MODEL || 'claude-sonnet-5-5';
@@ -100,6 +108,7 @@ export function startBatch(db, {
   now = Date.now,
 } = {}) {
   const list = [...new Set(ids || [])];
+  concurrency = clampConcurrency(concurrency);
   let row;
   db.exec('BEGIN IMMEDIATE');
   try {

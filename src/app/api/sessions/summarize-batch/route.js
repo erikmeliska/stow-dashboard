@@ -1,10 +1,10 @@
 import { openStore } from '../../../../lib/cc/store.mjs'
-import { batchModel, DEFAULT_CONCURRENCY, estimateBatch, readJob, selectMissing, startBatch } from '../../../../lib/cc/summary-batch.mjs'
+import { batchModel, clampConcurrency, estimateBatch, readJob, selectMissing, startBatch } from '../../../../lib/cc/summary-batch.mjs'
 
 /**
  * GET  /api/sessions/summarize-batch                    → { job }   (latest job, any status; `alive` + `status: 'stale'` for a dead runner)
  * GET  /api/sessions/summarize-batch?since=&until=      → { job, missing, estimateSeconds, model }   (CLI/MCP-style range)
- * POST /api/sessions/summarize-batch { ids } | { since, until } (+ force, model, concurrency)
+ * POST /api/sessions/summarize-batch { ids } | { since, until } (+ force, model, concurrency 1..8)
  *                                                       → { job, started, total }; a live job is returned with started=false
  * The job runs in this server process and keeps its state in summary_jobs
  * (see src/lib/cc/summary-batch.mjs), so a job started by the MCP server shows up here too.
@@ -31,7 +31,7 @@ export function handlePost(body, db, deps = {}) {
   const { job, started } = startBatch(db, {
     ids,
     model: body?.model || batchModel(),
-    concurrency: Number(body?.concurrency) || DEFAULT_CONCURRENCY,
+    concurrency: clampConcurrency(body?.concurrency),
     ...deps,
   })
   return { job, started, total: job.total }
