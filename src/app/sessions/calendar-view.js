@@ -56,12 +56,18 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
   }, [events])
   const openWeek = (d) => onNavigate(d, 'week')
 
+  // The scroll lives on a wrapper, not on the grid: a grid that is itself the
+  // flex-item scroll container gets its rows stretched evenly instead of sized
+  // to their content, and chips then draw over the next week. The min width
+  // keeps cells legible in a narrow window (scroll sideways instead); the
+  // weekday header sits in the same box so its columns always line up.
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-md border">
-      <div className="grid grid-cols-7">
+    <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+      <div className="min-w-[36rem]">
+      <div className="sticky top-0 z-20 grid grid-cols-7 bg-background">
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="border-b px-1 py-1 text-center text-xs text-muted-foreground">{d}</div>)}
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-7 auto-rows-[minmax(6rem,auto)] overflow-y-auto">
+      <div className="grid grid-cols-7 auto-rows-[minmax(6rem,auto)]">
       {range.days.map((d) => {
         const inMonth = isSameMonth(d, range.since)
         const list = inMonth ? byDay.get(format(d, 'yyyy-MM-dd')) || [] : []
@@ -69,11 +75,11 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
         const hours = work.reduce((a, e) => a + ((e.rollup || e).active_s || 0), 0) / 3600
         const heat = Math.min(hours / 8, 1) * 18
         return (
-          <div key={+d} className={`min-h-24 border-b border-l p-1 ${inMonth ? '' : 'opacity-40'}`}
+          <div key={+d} className={`min-w-0 border-b border-l p-1 ${inMonth ? '' : 'opacity-40'}`}
             style={hours > 0 ? { background: `color-mix(in srgb, var(--viz-1) ${heat}%, transparent)` } : undefined}>
-            <div className="mb-0.5 flex items-center justify-between text-[11px]">
-              <button onClick={() => openWeek(d)} className={`rounded px-1 hover:bg-muted ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'd')}</button>
-              {hours > 0 && <span className="tabular-nums text-muted-foreground">{hours.toFixed(1)} h</span>}
+            <div className="mb-0.5 flex min-w-0 items-center justify-between gap-1 whitespace-nowrap text-[11px]">
+              <button onClick={() => openWeek(d)} className={`flex-none rounded px-1 hover:bg-muted ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'd')}</button>
+              {hours > 0 && <span className="truncate tabular-nums text-muted-foreground">{hours.toFixed(1)} h</span>}
             </div>
             <div className="space-y-0.5">
               {list.slice(0, CHIPS_PER_DAY).map((e) => (
@@ -86,6 +92,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
           </div>
         )
       })}
+      </div>
       </div>
     </div>
   )
