@@ -1,0 +1,136 @@
+/**
+ * Calendar maths for /sessions (week and month views). Pure and client-safe;
+ * all day boundaries are LOCAL time, weeks start on Monday.
+ *
+ * Placement (spec F4): a session is drawn from `started_at` to `ended_at` when
+ * that span is at most 5 h; longer spans are desktop sessions left open (often
+ * overnight), drawn as start + max(active time, 30 min). Minimum height 15 min.
+ */
+import {
+  addDays, addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, format,
+  startOfDay, startOfMonth, startOfWeek,
+} from 'date-fns';
+import { effectiveKind } from './session-link.mjs';
+import { needsSummary, parseSummary, summaryVersion } from './summary-view.mjs';
+import { sourceOf } from './session-filters.mjs';
+
+const WEEK = { weekStartsOn: 1 };
+export const MAX_SPAN_MS = 5 * 3600_000;
+export const FALLBACK_MS = 30 * 60_000;
+export const MIN_MS = 15 * 60_000;
+const DAY_MIN = 24 * 60;
+const MIN_HEIGHT = 15;
+
+export function periodRange(date, span = 'week') {
+  if (span === 'month') {
+    const since = startOfMonth(date);
+    const days = eachDayOfInterval({ start: startOfWeek(since, WEEK), end: endOfWeek(endOfMonth(since), WEEK) });
+    return { span: 'month', since, until: addMonths(since, 1), days };
+  }
+  const since = startOfWeek(date, WEEK);
+  return { span: 'week', since, until: addDays(since, 7), days: eachDayOfInterval({ start: since, end: addDays(since, 6) }) };
+}
+
+export function shiftPeriod(date, span, dir) {
+  return span === 'month' ? addMonths(date, dir) : addWeeks(date, dir);
+}
+
+export function periodLabel(range) {
+  if (range.span === 'month') return format(range.since, 'LLLL yyyy');
+  return `${format(range.since, 'd MMM')} – ${format(addDays(range.since, 6), 'd MMM yyyy')}`;
+}
+
+export function calendarSlot(s) {
+  const start = Date.parse(s?.started_at || '');
+  if (!Number.isFinite(start)) return null;
+  const endRaw = Date.parse(s.ended_at || '');
+  let end = Number.isFinite(endRaw) && endRaw > start && endRaw - start <= MAX_SPAN_MS
+    ? endRaw
+    : start + Math.max((s.active_s || 0) * 1000, FALLBACK_MS);
+  if (end - start < MIN_MS) end = start + MIN_MS;
+  return { start: new Date(start), end: new Date(end) };
+}
+
+/** The part of `slot` on local `day`, in minutes from midnight; null when they don't meet. */
+export function daySegment(slot, day) {
+  const d0 = startOfDay(day).getTime();
+  const d1 = addDays(startOfDay(day), 1).getTime();
+  const a = Math.max(slot.start.getTime(), d0);
+  const b = Math.min(slot.end.getTime(), d1);
+  if (b <= a) return null;
+  const height = Math.min(Math.max((b - a) / 60000, MIN_HEIGHT), DAY_MIN);
+  const top = Math.min((a - d0) / 60000, DAY_MIN - height);
+  return { top, height, continued: slot.start.getTime() < d0, continues: slot.end.getTime() > d1 };
+}
+
+/** Greedy column layout for overlapping items of one day; `cols` is the width of the item's overlap cluster. */
+export function layoutDay(items) {
+  const sorted = [...items].sort((x, y) => x.start - y.start || y.end - x.end);
+  const out = new Map();
+  let cluster = [], colsEnd = [], clusterEnd = -Infinity;
+  const flush = () => {
+    for (const id of cluster) out.get(id).cols = colsEnd.length;
+    cluster = []; colsEnd = []; clusterEnd = -Infinity;
+  };
+  for (const it of sorted) {
+    if (it.start >= clusterEnd) flush();
+    let col = colsEnd.findIndex((e) => e <= it.start);
+    if (col === -1) { col = colsEnd.length; colsEnd.push(it.end); } else colsEnd[col] = it.end;
+    out.set(it.id, { col, cols: 0 });
+    cluster.push(it.id);
+    clusterEnd = Math.max(clusterEnd, it.end);
+  }
+  flush();
+  return out;
+}
+
+/** Deterministic project colour from the dataviz palette. */
+export function projectColor(dir) {
+  let h = 5381;
+  for (const ch of String(dir || '')) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return `var(--viz-${1 + (h % 6)})`;
+}
+
+export function harnessBadge(s) {
+  const src = sourceOf(s);
+  if (src === 'codex') return { letter: 'X', label: 'Codex' };
+  if (src === 'antigravity') return { letter: 'G', label: 'Antigravity' };
+  return { letter: 'C', label: 'Claude Code' };
+}
+
+/** Families to draw: work always, the rest only with showAll (muted). */
+export function calendarFamilies(families, { showAll = false } = {}) {
+  const out = [];
+  for (const f of families || []) {
+    const ek = effectiveKind(f);
+    if (ek !== 'work' && !showAll) continue;
+    out.push({ ...f, ek, muted: ek !== 'work' });
+  }
+  return out;
+}
+
+/** Shown events with no summary at all that a batch may process (not written to in the last 10 min). */
+export function missingSummaryIds(events, now = Date.now()) {
+  return (events || []).filter((e) => needsSummary(e, { now })).map((e) => e.session_id);
+}
+
+export function periodStats(events) {
+  const out = { sessions: 0, active_s: 0, cost_usd: 0, done: 0, partial: 0, described: 0 };
+  for (const e of events || []) {
+    const r = e.rollup || e;
+    out.sessions++;
+    out.active_s += r.active_s || 0;
+    out.cost_usd += r.cost_usd || 0;
+    if (summaryVersion(e) > 0) out.described++;
+    const o = parseSummary(e)?.outcome;
+    if (o === 'done') out.done++;
+    if (o === 'partial') out.partial++;
+  }
+  return out;
+}
+
+export function formatEta(seconds) {
+  if (seconds < 60) return '<1 min';
+  if (seconds >= 90 * 60) return `~${(seconds / 3600).toFixed(1)} h`;
+  return `~${Math.round(seconds / 60)} min`;
+}
