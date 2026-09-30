@@ -58,7 +58,7 @@ export function medianSummaryMs(db, model) {
 
 export function estimateBatch(db, { count, concurrency = DEFAULT_CONCURRENCY, model = batchModel() } = {}) {
   const per = medianSummaryMs(db, model) ?? (/haiku/i.test(model) ? 10_000 : 30_000);
-  return { count, model, seconds: Math.ceil(count / Math.max(1, concurrency)) * per / 1000 };
+  return { count, model, seconds: Math.ceil(Math.ceil(count / Math.max(1, concurrency)) * per / 1000) };
 }
 
 function toJob(r, now) {
@@ -128,40 +128,63 @@ export function startBatch(db, {
 }
 
 async function runJob(jobId, ids, { model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now }) {
-  const db = openDb();
   let done = 0;
   const failed = [];
   let stopError = null;
+  let db;
+  try {
+    db = openDb();
+  } catch (e) {
+    // No connection to record it on; the row goes stale after STALE_MS.
+    return { job_id: jobId, status: 'stopped', model, concurrency, total: ids.length, done, failed, ids, error: String(e?.message || e), alive: false };
+  }
   let next = 0;
-  const beat = () => db.prepare('UPDATE summary_jobs SET done = ?, failed = ?, heartbeat_at = ? WHERE job_id = ?')
-    .run(done, JSON.stringify(failed), new Date(now()).toISOString(), jobId);
+  // A missed heartbeat is not fatal; the next one (or the final write) catches up.
+  const beat = () => {
+    try {
+      db.prepare('UPDATE summary_jobs SET done = ?, failed = ?, heartbeat_at = ? WHERE job_id = ?')
+        .run(done, JSON.stringify(failed), new Date(now()).toISOString(), jobId);
+    } catch { /* best effort */ }
+  };
+  const progress = (p) => { try { onProgress?.(p); } catch { /* a throwing callback must not affect the job */ } };
   const timer = setInterval(beat, HEARTBEAT_MS);
   timer.unref?.();
   const worker = async () => {
     while (!stopError && next < ids.length) {
       const id = ids[next++];
+      let err = null;
       try {
         await summarizeImpl(db, id, { model });
-        done++;
-        onProgress?.({ id, ok: true });
       } catch (e) {
-        failed.push({ id, kind: e?.kind || 'error', message: String(e?.message || e) });
-        onProgress?.({ id, ok: false, error: e });
+        err = e;
+      }
+      if (err) {
+        failed.push({ id, kind: err?.kind || 'error', message: String(err?.message || err) });
+        progress({ id, ok: false, error: err });
         // Without the CLI every remaining call fails the same way.
-        if (e?.kind === 'cli-missing') stopError = String(e.message || 'claude CLI not found');
+        if (err?.kind === 'cli-missing') stopError = String(err.message || 'claude CLI not found');
+      } else {
+        done++;
+        progress({ id, ok: true });
       }
       beat();
     }
   };
   try {
     await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+  } catch (e) {
+    stopError = stopError || String(e?.message || e);
   } finally {
     clearInterval(timer);
-    const t = new Date(now()).toISOString();
-    db.prepare('UPDATE summary_jobs SET status = ?, done = ?, failed = ?, heartbeat_at = ?, finished_at = ?, error = ? WHERE job_id = ?')
-      .run(stopError ? 'stopped' : 'done', done, JSON.stringify(failed), t, t, stopError, jobId);
   }
-  const job = readJob(db, jobId, now());
-  closeDb(db);
+  const t = new Date(now()).toISOString();
+  const status = stopError ? 'stopped' : 'done';
+  let job = { job_id: jobId, status, model, concurrency, total: ids.length, done, failed, ids, finished_at: t, error: stopError, alive: false };
+  try {
+    db.prepare('UPDATE summary_jobs SET status = ?, done = ?, failed = ?, heartbeat_at = ?, finished_at = ?, error = ? WHERE job_id = ?')
+      .run(status, done, JSON.stringify(failed), t, t, stopError, jobId);
+    job = readJob(db, jobId, now()) || job;
+  } catch { /* best effort: the row goes stale and stops blocking */ }
+  try { closeDb(db); } catch { /* ignore */ }
   return job;
 }

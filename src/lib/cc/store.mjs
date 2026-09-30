@@ -93,7 +93,11 @@ function ensureColumns(db) {
  */
 export function openStore(path) {
   const db = path instanceof DatabaseSync ? path : new DatabaseSync(path || dataFile(DB_NAME));
-  if (!(path instanceof DatabaseSync) && path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+  if (!(path instanceof DatabaseSync) && path !== ':memory:') {
+    db.exec('PRAGMA journal_mode = WAL');
+    // Wait for another process's write lock instead of failing at once.
+    db.exec('PRAGMA busy_timeout = 5000');
+  }
   db.exec(SCHEMA);
   ensureColumns(db);
   return db;

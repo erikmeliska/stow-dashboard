@@ -1,4 +1,7 @@
 import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { openStore, upsertSession, setSummary, setParent, getSession } from './store.mjs';
 import { selectMissing, estimateBatch, startBatch, readJob, batchModel, STALE_MS } from './summary-batch.mjs';
@@ -92,4 +95,60 @@ test('startBatch with no ids records an already finished job', async () => {
   assert.equal(r.started, true);
   assert.equal((await r.done).status, 'done');
   assert.equal(readJob(db, null, NOW).total, 0);
+});
+
+test('a failing final write does not reject done and still closes the connection', async () => {
+  const db = seeded();
+  let closed = 0;
+  const wrapped = {
+    prepare: (sql) => {
+      const st = db.prepare(sql);
+      if (!/^\s*UPDATE/i.test(sql)) return st;
+      return { run: () => { throw new Error('database is locked'); } };
+    },
+    exec: (sql) => db.exec(sql),
+  };
+  const r = startBatch(db, { ids: ['w1'], model: 'm', summarizeImpl: okImpl, openDb: () => wrapped, closeDb: () => { closed++; }, now: () => NOW });
+  const fin = await r.done;
+  assert.equal(fin.status, 'done');
+  assert.equal(closed, 1);
+});
+
+test('openDb failing resolves done with a stopped job instead of rejecting', async () => {
+  const db = seeded();
+  const r = startBatch(db, { ids: ['w1'], model: 'm', summarizeImpl: okImpl, openDb: () => { throw new Error('cannot open'); }, closeDb: () => {}, now: () => NOW });
+  const fin = await r.done;
+  assert.equal(fin.status, 'stopped');
+  assert.equal(fin.error, 'cannot open');
+});
+
+test('a throwing onProgress neither rejects nor double-counts', async () => {
+  const db = seeded();
+  const fin = await startBatch(db, { ids: ['w1', 'w2'], model: 'm', summarizeImpl: okImpl, onProgress: () => { throw new Error('cb'); }, ...shared(db), now: () => NOW }).done;
+  assert.equal(fin.done, 2);
+  assert.deepEqual(fin.failed, []);
+});
+
+test('two connections to one file: the second start sees the first connection\'s live job', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'summary-batch-'));
+  const file = join(dir, 'cc.db');
+  const a = openStore(file);
+  const b = openStore(file);
+  try {
+    upsertSession(a, row('w1'));
+    upsertSession(a, row('w2', { started_at: '2026-09-11T10:00:00.000Z' }));
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const slow = async (d, id) => { await gate; return okImpl(d, id); };
+    const first = startBatch(a, { ids: ['w1'], model: 'm', summarizeImpl: slow, openDb: () => a, closeDb: () => {}, now: () => NOW });
+    const second = startBatch(b, { ids: ['w2'], model: 'm', summarizeImpl: okImpl, openDb: () => b, closeDb: () => {}, now: () => NOW });
+    assert.equal(second.started, false);
+    assert.equal(second.job.job_id, first.job.job_id);
+    release();
+    assert.equal((await first.done).status, 'done');
+  } finally {
+    a.close();
+    b.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
