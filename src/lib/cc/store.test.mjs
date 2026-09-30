@@ -155,3 +155,23 @@ test('listSessions carries a guard_hits count per row', () => {
   const db = seed();
   assert.equal(listSessions(db)[0].guard_hits, 1);
 });
+
+test('openStore migrates title/title_source/user_prompts and forces a re-parse', () => {
+  const raw = new DatabaseSync(':memory:');
+  // An older DB: has kind (phase 1b) but not the title columns. project_dir/started_at are needed by SCHEMA's indexes.
+  raw.exec("CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_dir TEXT, started_at TEXT, kind TEXT, entrypoint TEXT, parent_session_id TEXT)");
+  raw.exec("CREATE TABLE ingest_state (path TEXT PRIMARY KEY, session_id TEXT, signature TEXT, ingested_at TEXT)");
+  raw.exec("INSERT INTO ingest_state VALUES ('/f', 's', 'sig', 'now')");
+  const db = openStore(raw);
+  const cols = new Set(db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name));
+  for (const c of ['title', 'title_source', 'user_prompts']) assert.ok(cols.has(c), c);
+  assert.equal(db.prepare('SELECT count(*) n FROM ingest_state').get().n, 0);
+});
+
+test('upsertSession stores title columns; scheduled sessions are parent candidates', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, { session_id: 'p', kind: 'scheduled', entrypoint: 'claude-desktop', started_at: '2026-09-01T05:00:00Z', ended_at: '2026-09-01T05:30:00Z', title: 'yt', title_source: 'prompt', user_prompts: 0 });
+  assert.equal(getSession(db, 'p').session.title, 'yt');
+  const c = listParentCandidates(db, { started_at: '2026-09-01T05:10:00Z' });
+  assert.deepEqual(c.map((r) => r.session_id), ['p']);
+});

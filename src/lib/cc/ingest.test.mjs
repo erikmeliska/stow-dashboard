@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSessionText, SKILL_PATH_RE } from './ingest.mjs';
+import { parseSessionText, SKILL_PATH_RE, humanPrompts, scheduledTaskName, promptTitle } from './ingest.mjs';
 
 const lines = [
   { type: 'user', cwd: '/p/a', sessionId: 'sess-1', timestamp: '2026-08-21T10:00:00Z' },
@@ -70,4 +70,54 @@ test('parseSessionText records entrypoint and classifies hook-spawned SDK review
   const main = parseSessionText(text, { fileName: 'sess-1.jsonl' });
   assert.equal(main.kind, 'main');
   assert.equal(main.entrypoint, null);
+});
+
+const jl = (rows) => rows.map((r) => JSON.stringify(r)).join('\n');
+const u = (ts, content) => ({ type: 'user', sessionId: 's', timestamp: ts, cwd: '/p', message: { content } });
+
+test('parseSessionText: custom-title beats ai-title; only human prompts count', () => {
+  const r = parseSessionText(jl([
+    u('2026-09-01T10:00:00Z', 'fix the login bug'),
+    { type: 'ai-title', aiTitle: 'Login bug fix', sessionId: 's' },
+    { type: 'custom-title', customTitle: 'My own name', sessionId: 's' },
+    u('2026-09-01T10:01:00Z', '<local-command-stdout>ok</local-command-stdout>'),
+  ]));
+  assert.equal(r.title, 'My own name');
+  assert.equal(r.title_source, 'custom');
+  assert.equal(r.user_prompts, 1);
+  assert.equal(r.kind, 'main');
+});
+
+test('parseSessionText: ai-title when no custom title; first human prompt otherwise', () => {
+  const a = parseSessionText(jl([u('2026-09-01T10:00:00Z', 'x'), { type: 'ai-title', aiTitle: 'AI name', sessionId: 's' }]));
+  assert.deepEqual([a.title, a.title_source], ['AI name', 'ai']);
+  const long = 'a'.repeat(200);
+  const b = parseSessionText(jl([u('2026-09-01T10:00:00Z', long)]));
+  assert.equal(b.title_source, 'prompt');
+  assert.equal(b.title.length, 80);
+  assert.ok(b.title.endsWith('…'));
+});
+
+test('parseSessionText: a scheduled task nobody answered is kind scheduled, titled by task name', () => {
+  const r = parseSessionText(jl([u('2026-09-01T05:00:00Z', '<scheduled-task name="yt-digest-daily" file="x">run</scheduled-task>')]));
+  assert.equal(r.kind, 'scheduled');
+  assert.equal(r.title, 'yt-digest-daily');
+  assert.equal(r.user_prompts, 0);
+});
+
+test('parseSessionText: a scheduled task the human continued stays main', () => {
+  const r = parseSessionText(jl([
+    u('2026-09-01T05:00:00Z', '<scheduled-task name="yt-digest-daily">run</scheduled-task>'),
+    u('2026-09-01T05:10:00Z', 'now also summarise the third video'),
+  ]));
+  assert.equal(r.kind, 'main');
+  assert.equal(r.user_prompts, 1);
+});
+
+test('scheduledTaskName / humanPrompts / promptTitle', () => {
+  assert.equal(scheduledTaskName('<scheduled-task file="a" name="n1">'), 'n1');
+  assert.equal(scheduledTaskName('hello'), null);
+  assert.deepEqual(humanPrompts(['<command-name>/x</command-name>', ' hi ']), [' hi ']);
+  assert.equal(promptTitle('  a\n b  '), 'a b');
+  assert.equal(promptTitle(''), null);
 });

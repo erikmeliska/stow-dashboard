@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ticket_id TEXT, ticket_source TEXT,
   quality_score REAL, quality_detail TEXT, summary TEXT, summary_model TEXT, summarized_at TEXT,
   raw_ref TEXT, ingested_at TEXT,
-  parent_session_id TEXT, kind TEXT, entrypoint TEXT
+  parent_session_id TEXT, kind TEXT, entrypoint TEXT,
+  title TEXT, title_source TEXT, user_prompts INTEGER
 );
 CREATE TABLE IF NOT EXISTS subagents (
   agent_id TEXT PRIMARY KEY, session_id TEXT, agent_type TEXT, description TEXT, model TEXT,
@@ -50,6 +51,7 @@ const SESSION_COLS = [
   'cache_write_5m', 'cache_write_1h', 'cost_usd', 'turns', 'status', 'raw_ref', 'ingested_at',
   'git_repo', 'git_branch', 'pr', 'ticket_id', 'ticket_source', 'quality_score', 'quality_detail',
   'kind', 'entrypoint',
+  'title', 'title_source', 'user_prompts',
 ];
 
 /** Columns of the `subagents` table, in insert order. */
@@ -63,6 +65,7 @@ const MIGRATION_COLS = {
   ticket_id: 'TEXT', ticket_source: 'TEXT', pr: 'TEXT',
   quality_detail: 'TEXT', summary_model: 'TEXT', summarized_at: 'TEXT',
   parent_session_id: 'TEXT', kind: 'TEXT', entrypoint: 'TEXT',
+  title: 'TEXT', title_source: 'TEXT', user_prompts: 'INTEGER',
 };
 
 function ensureColumns(db) {
@@ -73,6 +76,8 @@ function ensureColumns(db) {
   // kind/entrypoint only get filled by a re-parse: forget the incremental
   // signatures so the next ingest walks every transcript once.
   if (!have.has('kind') && have.size > 0) db.exec('DELETE FROM ingest_state');
+  // title/user_prompts only get filled by a re-parse as well.
+  if (!have.has('title') && have.size > 0) db.exec('DELETE FROM ingest_state');
   // Indexes on migrated columns can only be created once the column exists.
   db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions (parent_session_id)');
 }
@@ -203,7 +208,7 @@ export function listUnlinked(db, kinds, { since = null } = {}) {
 }
 
 /**
- * Candidate parents for a child: every Claude Code main session (hooks don't
+ * Candidate parents for a child: every Claude Code main or scheduled session (hooks don't
  * run in Gemini/Antigravity) that had started before the child and was still
  * running at the child's start, allowing `slackS` seconds past the recorded
  * end since a parent's transcript is only appended after the hook that spawned
@@ -216,7 +221,7 @@ export function listParentCandidates(db, { started_at }, slackS = 120) {
   const t = Date.parse(started_at);
   if (!Number.isFinite(t)) return [];
   const lower = new Date(t - slackS * 1000).toISOString();
-  return db.prepare(`SELECT * FROM sessions WHERE kind = 'main' AND coalesce(entrypoint, '') NOT LIKE 'antigravity%' AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?) ORDER BY started_at DESC`)
+  return db.prepare(`SELECT * FROM sessions WHERE kind IN ('main', 'scheduled') AND coalesce(entrypoint, '') NOT LIKE 'antigravity%' AND started_at <= ? AND (ended_at IS NULL OR ended_at >= ?) ORDER BY started_at DESC`)
     .all(started_at, lower);
 }
 

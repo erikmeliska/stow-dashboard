@@ -21,6 +21,38 @@ function toSeconds(a, b) {
   return Number.isFinite(t0) && Number.isFinite(t1) ? Math.max(0, (t1 - t0) / 1000) : 0;
 }
 
+/** Prompts a human typed. Harness/hook-injected ones start with a tag (`<scheduled-task`, `<command-name>`, `<local-command-stdout>`, …). */
+export function humanPrompts(prompts) {
+  return (prompts || []).filter((p) => !String(p).trimStart().startsWith('<'));
+}
+
+const SCHEDULED_RE = /^<scheduled-task\b[^>]*?\bname="([^"]+)"/;
+
+/** `<scheduled-task name="yt-digest-daily" …>` → 'yt-digest-daily'; null for any other prompt. */
+export function scheduledTaskName(prompt) {
+  const m = SCHEDULED_RE.exec(String(prompt || '').trimStart());
+  return m ? m[1] : null;
+}
+
+/** One-line title from a prompt, clipped to `max` characters. */
+export function promptTitle(prompt, max = 80) {
+  const s = String(prompt || '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+/** Claude Code metadata lines: the last `custom-title` (set by the user) wins over the last `ai-title`. */
+function transcriptTitle(lines) {
+  let custom = null, ai = null;
+  for (const d of lines) {
+    if (d.type === 'custom-title' && typeof d.customTitle === 'string' && d.customTitle.trim()) custom = d.customTitle.trim();
+    if (d.type === 'ai-title' && typeof d.aiTitle === 'string' && d.aiTitle.trim()) ai = d.aiTitle.trim();
+  }
+  if (custom) return { title: custom, title_source: 'custom' };
+  if (ai) return { title: ai, title_source: 'ai' };
+  return null;
+}
+
 /**
  * @param {string} text   raw JSONL transcript
  * @param {{fileName?: string, rawRef?: string}} meta
@@ -74,9 +106,17 @@ export function parseSessionText(text, meta = {}) {
   const started = state.firstTs || null;
   const ended = state.lastTs || null;
 
-  // First human prompt: hook-spawned SDK sessions announce themselves in it.
-  const firstPrompt = userPrompts(lines)[0] || lines.find((d) => d.type === 'queue-operation' && typeof d.content === 'string')?.content || '';
-  const kind = classifyKind({ entrypoint, firstPrompt });
+  // First prompt: hook-spawned SDK sessions and scheduled tasks announce themselves in it.
+  const prompts = userPrompts(lines);
+  const human = humanPrompts(prompts);
+  const firstPrompt = prompts[0] || lines.find((d) => d.type === 'queue-operation' && typeof d.content === 'string')?.content || '';
+  let kind = classifyKind({ entrypoint, firstPrompt });
+  const taskName = scheduledTaskName(firstPrompt);
+  // A scheduled run the human then continued is ordinary work (PoC rule).
+  if (kind === 'main' && taskName && human.length === 0) kind = 'scheduled';
+  const titled = transcriptTitle(lines)
+    || (taskName ? { title: taskName, title_source: 'prompt' } : null)
+    || (human[0] ? { title: promptTitle(human[0]), title_source: 'prompt' } : { title: null, title_source: null });
 
   return {
     session_id: sessionId || (meta.fileName ? meta.fileName.replace(/\.jsonl$/, '') : null),
@@ -88,6 +128,7 @@ export function parseSessionText(text, meta = {}) {
     cache_write_5m: totals.cacheWrite5m, cache_write_1h: totals.cacheWrite1h,
     cost_usd: priced ? cost : null, turns, status: ended ? 'done' : 'unknown',
     kind, entrypoint,
+    ...titled, user_prompts: human.length,
     raw_ref: meta.rawRef || null, ingested_at: new Date().toISOString(),
     _tools: tools, _skills: skills, _editedSkills: editedSkills, _lines: lines,
   };
