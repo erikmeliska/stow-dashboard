@@ -21,6 +21,8 @@
  *    every review as a session of its own, which is worse.
  */
 
+import { parseSummary } from './summary-view.mjs';
+
 /**
  * Child kinds keyed by the `kind` stored on the session row. `test` gets the
  * transcript's entrypoint (`cli`, `claude-desktop`, `sdk-py`, …) and the first
@@ -32,9 +34,36 @@ export const CHILD_KINDS = {
     test: ({ entrypoint, firstPrompt }) => /^sdk/.test(entrypoint || '')
       && /^(Review this change for security vulnerabilities|You previously flagged these candidate vulnerabilit)/.test(String(firstPrompt || '').trimStart()),
   },
+  // Codex subagents name their parent in session_meta; ingest links them
+  // directly (explicitParent), so the timing heuristic never looks at them.
+  'codex-subagent': {
+    label: 'codex subagent',
+    explicitParent: true,
+    test: () => false,
+  },
 };
 
 export const CHILD_KIND_NAMES = Object.keys(CHILD_KINDS);
+
+/** Child kinds whose parent must be inferred by timing (see linkChildren in ingest-run.mjs). */
+export const LINKABLE_KIND_NAMES = Object.entries(CHILD_KINDS).filter(([, d]) => !d.explicitParent).map(([k]) => k);
+
+/** What a session *is* for the calendar and the batch summariser. */
+export const EFFECTIVE_KINDS = ['work', 'scheduled', 'agent-spawn', 'trivial'];
+
+/**
+ * Structure beats heuristics: a linked or child session is an agent spawn, a
+ * scheduled run nobody answered is scheduled, an SDK session with at most one
+ * prompt is machine-driven; only then the summary's `kind_hint`; default work.
+ */
+export function effectiveKind(row) {
+  if (!row) return 'work';
+  if (row.parent_session_id || CHILD_KINDS[row.kind]) return 'agent-spawn';
+  if (row.kind === 'scheduled') return 'scheduled';
+  if (/^sdk/.test(row.entrypoint || '') && (row.user_prompts ?? 0) <= 1) return 'agent-spawn';
+  const hint = parseSummary(row)?.kind_hint;
+  return EFFECTIVE_KINDS.includes(hint) ? hint : 'work';
+}
 
 /** @returns {'main' | keyof CHILD_KINDS} */
 export function classifyKind(meta) {

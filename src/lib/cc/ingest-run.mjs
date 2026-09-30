@@ -29,7 +29,7 @@ import {
   openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, replaceSubagents,
   getIngestState, setIngestState, clearIngestState, listUnlinked, listParentCandidates, setParent,
 } from './store.mjs';
-import { CHILD_KIND_NAMES, pickParent, turnEndTimestamps } from './session-link.mjs';
+import { LINKABLE_KIND_NAMES, pickParent, turnEndTimestamps } from './session-link.mjs';
 import { parseSessionText } from './ingest.mjs';
 import { parseGuardAudit } from './guard-ingest.mjs';
 import { extractContext, ticketRegex } from './context.mjs';
@@ -149,7 +149,7 @@ export async function linkChildren(db, { readText = (f) => readFile(f, 'utf8'), 
   };
   let linked = 0;
   const since = full ? null : new Date(now - RETRY_WINDOW_MS).toISOString();
-  for (const child of listUnlinked(db, CHILD_KIND_NAMES, { since })) {
+  for (const child of listUnlinked(db, LINKABLE_KIND_NAMES, { since })) {
     const candidates = listParentCandidates(db, child);
     const ends = new Map();
     for (const c of candidates) ends.set(c.session_id, await load(c));

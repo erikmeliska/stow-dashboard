@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyKind, pickParent, turnEndTimestamps } from './session-link.mjs';
+import { classifyKind, pickParent, turnEndTimestamps, effectiveKind, LINKABLE_KIND_NAMES, CHILD_KINDS } from './session-link.mjs';
 
 test('classifyKind: SDK security reviews are children, everything else is main', () => {
   assert.equal(classifyKind({ entrypoint: 'sdk-py', firstPrompt: 'Review this change for security vulnerabilities.\n\nChanged files' }), 'security-review');
@@ -52,4 +52,23 @@ test('pickParent: a line stamped within the grace window after the child start s
   const ends = { p1: [at('2026-09-15T10:00:12Z')], p2: [at('2026-09-15T09:00:00Z')] };
   const r = pickParent(child, [{ session_id: 'p1', project_dir: '/q' }, { session_id: 'p2', project_dir: '/q' }], { turnEndsOf: (c) => ends[c.session_id] });
   assert.equal(r.parent_session_id, 'p1');
+});
+
+test('effectiveKind: structure first, then scheduled, sdk, LLM hint, default work', () => {
+  assert.equal(effectiveKind({ parent_session_id: 'x' }), 'agent-spawn');
+  assert.equal(effectiveKind({ kind: 'security-review' }), 'agent-spawn');
+  assert.equal(effectiveKind({ kind: 'codex-subagent' }), 'agent-spawn');
+  assert.equal(effectiveKind({ kind: 'scheduled' }), 'scheduled');
+  assert.equal(effectiveKind({ kind: 'main', entrypoint: 'sdk-py', user_prompts: 1 }), 'agent-spawn');
+  assert.equal(effectiveKind({ kind: 'main', entrypoint: 'sdk-py', user_prompts: 3 }), 'work');
+  assert.equal(effectiveKind({ kind: 'main', summary: JSON.stringify({ v: 2, kind_hint: 'trivial' }) }), 'trivial');
+  assert.equal(effectiveKind({ kind: 'main', summary: JSON.stringify({ v: 2, kind_hint: 'bogus' }) }), 'work');
+  assert.equal(effectiveKind({ kind: 'main', summary: '{broken' }), 'work');
+  assert.equal(effectiveKind({}), 'work');
+});
+
+test('codex-subagent is a child kind but never linked by timing', () => {
+  assert.ok(CHILD_KINDS['codex-subagent'].explicitParent);
+  assert.ok(!LINKABLE_KIND_NAMES.includes('codex-subagent'));
+  assert.ok(LINKABLE_KIND_NAMES.includes('security-review'));
 });
