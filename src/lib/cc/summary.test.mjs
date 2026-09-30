@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, SUMMARY_SCHEMA } from './summary.mjs';
+import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, codexFacts, distillCodex, SUMMARY_SCHEMA } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -217,4 +217,37 @@ test('distill prepends the facts header and still respects maxChars', () => {
   const withEdit = [...lines, { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: '/r/a/b.md' } }] } }];
   assert.match(distill(withEdit), /^FILES EDITED: a\/b\.md\n/);
   assert.ok(distill(withEdit, { maxChars: 40 }).length <= 40);
+});
+
+const codexLines = [
+  { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>x</environment_context>' }] } },
+  { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'set port 3371' }] } },
+  { type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"git commit -m \\"chore: port\\""}' } },
+  { type: 'response_item', payload: { type: 'custom_tool_call', name: 'apply_patch', input: '*** Begin Patch\n*** Update File: /r/app/package.json\n*** End Patch' } },
+  { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Port changed.' }] } },
+  { type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'All done.' } },
+];
+
+test('codexFacts and distillCodex', () => {
+  assert.deepEqual(codexFacts(codexLines), { edited: ['app/package.json'], commits: ['chore: port'], finals: ['All done.'] });
+  const d = distillCodex(codexLines);
+  assert.match(d, /^FILES EDITED: app\/package\.json\nCOMMITS: chore: port\nFINAL ANSWER: All done\.\n---\n/);
+  assert.match(d, /USER: set port 3371/);
+  assert.doesNotMatch(d, /environment_context/);
+  assert.match(d, /TOOL exec_command: git commit/);
+  assert.match(d, /TOOL apply_patch: app\/package\.json/);
+  assert.match(d, /ASSISTANT: Port changed\./);
+});
+
+test('summarizeSession reads Codex rollouts with distillCodex', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sumx-'));
+  const f = join(dir, 'rollout.jsonl');
+  await writeFile(f, codexLines.map((l) => JSON.stringify(l)).join('\n'));
+  const db = openStore(':memory:');
+  upsertSession(db, { session_id: 'cx', entrypoint: 'codex-desktop', raw_ref: f, project_dir: '/r/app' });
+  let prompt = null;
+  const exec = async (_b, args) => { prompt = args.at(-1); return { stdout: JSON.stringify({ structured_output: okResult }) }; };
+  await summarizeSession(db, 'cx', { exec });
+  assert.match(prompt, /Harness: codex-desktop/);
+  assert.match(prompt, /USER: set port 3371/);
 });

@@ -20,6 +20,7 @@ import { execClosedStdin } from '../analyzer.mjs';
 import { assistantTexts, bashCommands, parseLines, toolUses, userPrompts } from './transcript.mjs';
 import { decodeProto } from '../usage.mjs';
 import { getSession, setSummary } from './store.mjs';
+import { contentText, isInjectedPrompt } from './codex-ingest.mjs';
 
 export const SUMMARY_VERSION = 2;
 export const OUTCOMES = ['done', 'partial', 'abandoned', 'exploration'];
@@ -306,6 +307,57 @@ export function resolveGeminiTranscriptPath(rawRef, id, exists = existsSync) {
   return null;
 }
 
+/** Shell command of a Codex function_call (exec_command {cmd} or shell {command: [...]}); null otherwise. */
+function codexCommand(p) {
+  try {
+    const a = JSON.parse(p.arguments || '{}');
+    if (Array.isArray(a.command)) return a.command.join(' ');
+    return a.cmd || a.command || null;
+  } catch {
+    return null;
+  }
+}
+
+const PATCH_FILE_RE = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm;
+
+export function codexFacts(lines) {
+  const edited = [], commits = [], finals = [];
+  for (const d of lines || []) {
+    const p = d?.payload || {};
+    if (d.type === 'response_item' && p.type === 'custom_tool_call' && p.name === 'apply_patch' && typeof p.input === 'string') {
+      for (const m of p.input.matchAll(PATCH_FILE_RE)) edited.push(shortPath(m[1]));
+    }
+    if (d.type === 'response_item' && p.type === 'function_call') {
+      const msg = commitMessage(codexCommand(p));
+      if (msg) commits.push(msg);
+    }
+    if (d.type === 'event_msg' && p.type === 'task_complete' && typeof p.last_agent_message === 'string' && p.last_agent_message.trim()) finals.push(p.last_agent_message);
+  }
+  return { edited, commits, finals };
+}
+
+/** Condensed, ordered transcript for a Codex rollout (same USER/TOOL/ASSISTANT shape as distill()). */
+export function distillCodex(lines, { maxChars = 30000 } = {}) {
+  const parts = [];
+  for (const d of lines || []) {
+    const p = d?.payload || {};
+    if (d?.type !== 'response_item') continue;
+    if (p.type === 'message' && p.role === 'user') {
+      const t = contentText(p.content).trim();
+      if (t && !isInjectedPrompt(t)) parts.push(`USER: ${clip(t, 1200)}`);
+    } else if (p.type === 'message' && p.role === 'assistant') {
+      const t = contentText(p.content).trim();
+      if (t) parts.push(`ASSISTANT: ${clip(t, 600)}`);
+    } else if (p.type === 'function_call' && p.name) {
+      parts.push(`TOOL ${p.name}: ${clip(codexCommand(p) || cleanToolArg(p.arguments), 160)}`);
+    } else if (p.type === 'custom_tool_call' && p.name) {
+      const files = typeof p.input === 'string' ? [...p.input.matchAll(PATCH_FILE_RE)].map((m) => shortPath(m[1])) : [];
+      parts.push(`TOOL ${p.name}: ${clip(files.length ? files.join(', ') : cleanToolArg(p.input), 160)}`);
+    }
+  }
+  return withHeader(factsHeader(codexFacts(lines)), parts.join('\n'), maxChars);
+}
+
 /** Condensed, ordered transcript: prompts, tool calls (short), assistant text. Supports Claude & Gemini lines. */
 export function distill(lines, opts = {}) {
   if (!Array.isArray(lines) || lines.length === 0) return '';
@@ -399,8 +451,18 @@ export async function summarizeSession(db, id, opts = {}) {
   const rawRef = got.session.raw_ref;
   const isGemini = rawRef?.endsWith('.db') || got.session.model?.startsWith('gemini');
 
+  const isCodex = String(got.session.entrypoint || '').startsWith('codex');
+
   let distillate = '';
-  if (isGemini) {
+  if (isCodex) {
+    let text;
+    try {
+      text = await readFile(rawRef, 'utf8');
+    } catch {
+      throw new SummaryError('not-found', `transcript missing: ${rawRef}`);
+    }
+    distillate = distillCodex(parseLines(text), opts);
+  } else if (isGemini) {
     const transcriptPath = resolveGeminiTranscriptPath(rawRef, id);
     if (transcriptPath) {
       try {
