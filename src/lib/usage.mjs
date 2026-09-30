@@ -361,7 +361,7 @@ async function listClaudeFiles(claudeDir) {
 }
 
 // List Codex rollouts: rollout-*.jsonl nested under YYYY/MM/DD.
-async function listCodexFiles(codexDir) {
+export async function listCodexFiles(codexDir) {
   const out = []
   let entries
   try { entries = await readdir(codexDir, { recursive: true, withFileTypes: true }) } catch { return out }
@@ -494,6 +494,34 @@ function newAccumulator() {
   }
 }
 
+// Per-model Codex buckets for one file state, as a COPY (`st` is the persisted
+// cache state). Conservation guard: per-model deltas re-sum to the cumulative
+// total in practice, but a legacy state carries no buckets at all, and a
+// truncated or rewritten transcript could leave a gap. Anything the buckets
+// don't cover goes to `unknown`, so the per-model view always re-sums to
+// `st.codex` and no tokens are silently dropped. Shared with cc/codex-ingest.mjs.
+export function codexBuckets(st) {
+  if (!st?.codex) return {}
+  const t = { input: st.codex.input || 0, cachedInput: st.codex.cachedInput || 0, output: st.codex.output || 0 }
+  const buckets = {}
+  const covered = { input: 0, cachedInput: 0, output: 0 }
+  for (const [id, b] of Object.entries(st.codexByModel || {})) {
+    const c = { input: b.input || 0, cachedInput: b.cachedInput || 0, output: b.output || 0 }
+    buckets[id] = c
+    covered.input += c.input; covered.cachedInput += c.cachedInput; covered.output += c.output
+  }
+  const rem = {
+    input: Math.max(0, t.input - covered.input),
+    cachedInput: Math.max(0, t.cachedInput - covered.cachedInput),
+    output: Math.max(0, t.output - covered.output),
+  }
+  if (rem.input || rem.cachedInput || rem.output) {
+    const u = buckets.unknown ??= { input: 0, cachedInput: 0, output: 0 }
+    u.input += rem.input; u.cachedInput += rem.cachedInput; u.output += rem.output
+  }
+  return buckets
+}
+
 function addSession(acc, absPath, entry) {
   const st = entry.state
   acc.sessions += 1
@@ -527,30 +555,7 @@ function addSession(acc, absPath, entry) {
     acc.tokens.codexCachedInput += t.cachedInput
     acc.tokens.codexOutput += t.output
 
-    // COPY the per-model buckets: `st` is the persisted cache state that gets
-    // written back to disk, and the conservation guard below adds to them.
-    const buckets = {}
-    const covered = { input: 0, cachedInput: 0, output: 0 }
-    for (const [id, b] of Object.entries(st.codexByModel || {})) {
-      const c = { input: b.input || 0, cachedInput: b.cachedInput || 0, output: b.output || 0 }
-      buckets[id] = c
-      covered.input += c.input; covered.cachedInput += c.cachedInput; covered.output += c.output
-    }
-
-    // Conservation guard: per-model deltas re-sum to the cumulative total in
-    // practice, but a legacy state carries no buckets at all, and a truncated
-    // or rewritten transcript could leave a gap. Anything the buckets don't
-    // cover goes to `unknown` so the per-model view always re-sums to
-    // `tokens.codex*` and no tokens are silently dropped.
-    const rem = {
-      input: Math.max(0, t.input - covered.input),
-      cachedInput: Math.max(0, t.cachedInput - covered.cachedInput),
-      output: Math.max(0, t.output - covered.output),
-    }
-    if (rem.input || rem.cachedInput || rem.output) {
-      const u = buckets.unknown ??= { input: 0, cachedInput: 0, output: 0 }
-      u.input += rem.input; u.cachedInput += rem.cachedInput; u.output += rem.output
-    }
+    const buckets = codexBuckets(st)
 
     let bestOut = -1
     for (const [id, b] of Object.entries(buckets)) {

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { DatabaseSync } from 'node:sqlite'
-import { newFileState, parseClaudeLines, parseCodexLines, parseGeminiDb, decodeProto, extractWorkspaceFromBlob, splitCompleteLines, updateUsage, aggregateUsage } from './usage.mjs'
+import { newFileState, parseClaudeLines, parseCodexLines, parseGeminiDb, decodeProto, extractWorkspaceFromBlob, splitCompleteLines, updateUsage, aggregateUsage, codexBuckets } from './usage.mjs'
 
 const CL = (over = {}) => JSON.stringify({
   type: 'assistant', timestamp: over.ts ?? '2026-07-10T10:00:00Z', cwd: over.cwd,
@@ -507,5 +507,16 @@ test('updateUsage: discovers and parses gemini conversation database', async () 
   } finally {
     await rm(w.base, { recursive: true, force: true })
   }
+})
+
+test('codexBuckets copies per-model buckets and puts the uncovered remainder in unknown', () => {
+  const st = { codex: { input: 100, cachedInput: 40, output: 10 }, codexByModel: { 'gpt-5.5': { input: 60, cachedInput: 40, output: 10 } } }
+  const b = codexBuckets(st)
+  assert.deepEqual(b['gpt-5.5'], { input: 60, cachedInput: 40, output: 10 })
+  assert.deepEqual(b.unknown, { input: 40, cachedInput: 0, output: 0 })
+  b['gpt-5.5'].input = 0
+  assert.equal(st.codexByModel['gpt-5.5'].input, 60, 'state must not be mutated')
+  assert.deepEqual(codexBuckets({ codex: { input: 5, cachedInput: 0, output: 1 } }), { unknown: { input: 5, cachedInput: 0, output: 1 } })
+  assert.deepEqual(codexBuckets({ codex: null }), {})
 })
 
