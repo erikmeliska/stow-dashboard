@@ -22,8 +22,10 @@ const iso = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00
 export async function evalSummaries(db, {
   limit = 5, id = null, since = null, until = null, force = false,
   concurrency = DEFAULT_CONCURRENCY, model = undefined,
-  log = console.log, summarizeImpl = summarizeSession, now = Date.now(),
+  log = console.log, summarizeImpl = summarizeSession, now = null,
 } = {}) {
+  const at = now ?? Date.now(); // snapshot for selection; heartbeats use a live clock unless injected
+  const clock = now != null ? () => now : Date.now;
   if (id) {
     try {
       const r = await summarizeImpl(db, id, model ? { model } : {});
@@ -35,11 +37,11 @@ export async function evalSummaries(db, {
       return { ok: 0, failed: 1, total: 1 };
     }
   }
-  let ids = selectMissing(db, { since: iso(since), until: iso(until), force, now });
+  let ids = selectMissing(db, { since: iso(since), until: iso(until), force, now: at });
   if (!since && !until) ids = ids.slice(-limit); // oldest-first → newest `limit`
   const { job, started, done } = startBatch(db, {
     ids, model: model || batchModel(), concurrency, summarizeImpl,
-    openDb: () => db, closeDb: () => {}, now: () => now,
+    openDb: () => db, closeDb: () => {}, now: clock,
     onProgress: ({ id: sid, ok, error }) => log(ok ? `✓ ${sid.slice(0, 8)}` : `✗ ${sid.slice(0, 8)} ${error?.kind || 'error'}: ${error?.message}`),
   });
   if (!started) {
@@ -69,7 +71,7 @@ if (invokedDirectly) {
     limit: Number(values.limit) || 5, id: values.id || null,
     since: values.since || null, until: values.until || null,
     force: values.force ? true : values.upgrade ? 'upgrade' : false,
-    concurrency: Number(values.concurrency) || DEFAULT_CONCURRENCY, model: values.model,
+    concurrency: Math.max(1, Math.floor(Number(values.concurrency) || DEFAULT_CONCURRENCY)), model: values.model,
   });
   db.close();
   console.log(`cc-eval: ${r.ok} summarised, ${r.failed} failed of ${r.total}`);

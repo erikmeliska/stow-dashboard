@@ -30,3 +30,10 @@ test('evalSummaries --id runs one session and reports cli-missing', async () => 
   const r = await evalSummaries(db, { id: 'a', log: () => {}, summarizeImpl: async () => { const e = new Error('x'); e.kind = 'cli-missing'; throw e; }, now: NOW });
   assert.deepEqual(r, { ok: 0, failed: 1, total: 1 });
 });
+
+test('evalSummaries honours an injected clock for job heartbeats', async () => {
+  const db = db1();
+  await evalSummaries(db, { limit: 1, log: () => {}, summarizeImpl: ok, now: NOW });
+  const job = db.prepare('SELECT heartbeat_at FROM summary_jobs ORDER BY rowid DESC LIMIT 1').get();
+  assert.equal(job.heartbeat_at, new Date(NOW).toISOString());
+});
