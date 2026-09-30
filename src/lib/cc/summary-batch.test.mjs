@@ -1,0 +1,95 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { openStore, upsertSession, setSummary, setParent, getSession } from './store.mjs';
+import { selectMissing, estimateBatch, startBatch, readJob, batchModel, STALE_MS } from './summary-batch.mjs';
+
+const NOW = Date.parse('2026-09-30T12:00:00Z');
+const row = (id, over = {}) => ({ session_id: id, raw_ref: `/t/${id}`, kind: 'main', started_at: '2026-09-10T10:00:00.000Z', ended_at: '2026-09-10T11:00:00.000Z', ...over });
+
+function seeded() {
+  const db = openStore(':memory:');
+  upsertSession(db, row('w1'));
+  upsertSession(db, row('w2', { started_at: '2026-09-11T10:00:00.000Z' }));
+  upsertSession(db, row('sched', { kind: 'scheduled' }));
+  upsertSession(db, row('kid'));
+  setParent(db, 'kid', 'w1');
+  upsertSession(db, row('fresh', { started_at: '2026-09-30T11:55:00.000Z', ended_at: '2026-09-30T11:58:00.000Z' }));
+  upsertSession(db, row('done', { started_at: '2026-09-12T10:00:00.000Z' }));
+  setSummary(db, 'done', { summary: JSON.stringify({ v: 2, what: 'x', outcome: 'done' }), model: 'claude-sonnet-5-5' });
+  return db;
+}
+
+const okImpl = async (db, id) => { setSummary(db, id, { summary: JSON.stringify({ v: 2, what: id, outcome: 'done', ms: 1000 }), model: 'm' }); };
+const shared = (db) => ({ openDb: () => db, closeDb: () => {} });
+
+test('selectMissing by range keeps top-level work sessions without a summary, skips fresh ones', () => {
+  const db = seeded();
+  assert.deepEqual(selectMissing(db, { since: '2026-09-01T00:00:00Z', until: '2026-10-01T00:00:00Z', now: NOW }), ['w1', 'w2']);
+  assert.deepEqual(selectMissing(db, { since: '2026-09-01T00:00:00Z', kinds: ['work', 'scheduled'], now: NOW }).sort(), ['sched', 'w1', 'w2']);
+});
+
+test('selectMissing by ids trusts the caller for visibility but still skips fresh and summarised rows', () => {
+  const db = seeded();
+  assert.deepEqual(selectMissing(db, { ids: ['kid', 'fresh', 'done', 'sched', 'nope'], now: NOW }).sort(), ['kid', 'sched']);
+});
+
+test('estimateBatch uses fallback per model, then the median of recorded ms', () => {
+  const db = seeded();
+  assert.deepEqual(estimateBatch(db, { count: 7, concurrency: 3, model: 'claude-sonnet-5-5' }), { count: 7, model: 'claude-sonnet-5-5', seconds: 90 });
+  assert.equal(estimateBatch(db, { count: 3, concurrency: 3, model: 'haiku' }).seconds, 10);
+  for (const [id, ms] of [['w1', 4000], ['w2', 8000], ['sched', 6000]]) setSummary(db, id, { summary: JSON.stringify({ v: 2, what: '', outcome: 'done', ms }), model: 'claude-sonnet-5-5' });
+  assert.equal(estimateBatch(db, { count: 4, concurrency: 2, model: 'claude-sonnet-5-5' }).seconds, 12);
+  assert.equal(batchModel({}), 'claude-sonnet-5-5');
+  assert.equal(batchModel({ CC_SUMMARY_BATCH_MODEL: 'haiku' }), 'haiku');
+});
+
+test('startBatch summarises every id, records failures and finishes', async () => {
+  const db = seeded();
+  const impl = async (d, id) => { if (id === 'w2') { const e = new Error('boom'); e.kind = 'cli-failed'; throw e; } return okImpl(d, id); };
+  const { job, started, done } = startBatch(db, { ids: ['w1', 'w2', 'sched'], model: 'm', summarizeImpl: impl, ...shared(db), now: () => NOW });
+  assert.equal(started, true);
+  assert.equal(job.status, 'running');
+  const fin = await done;
+  assert.equal(fin.status, 'done');
+  assert.equal(fin.done, 2);
+  assert.deepEqual(fin.failed.map((f) => [f.id, f.kind]), [['w2', 'cli-failed']]);
+  assert.equal(JSON.parse(getSession(db, 'w1').session.summary).what, 'w1');
+});
+
+test('cli-missing stops the job without touching the remaining ids', async () => {
+  const db = seeded();
+  const calls = [];
+  const impl = async (_d, id) => { calls.push(id); const e = new Error('no cli'); e.kind = 'cli-missing'; throw e; };
+  const fin = await startBatch(db, { ids: ['w1', 'w2', 'sched'], model: 'm', concurrency: 1, summarizeImpl: impl, ...shared(db), now: () => NOW }).done;
+  assert.deepEqual(calls, ['w1']);
+  assert.equal(fin.status, 'stopped');
+  assert.equal(fin.error, 'no cli');
+});
+
+test('a second start while a live job runs returns that job; a stale job does not block', async () => {
+  const db = seeded();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const slow = async (d, id) => { await gate; return okImpl(d, id); };
+  const first = startBatch(db, { ids: ['w1'], model: 'm', summarizeImpl: slow, ...shared(db), now: () => NOW });
+  const second = startBatch(db, { ids: ['w2'], model: 'm', summarizeImpl: okImpl, ...shared(db), now: () => NOW });
+  assert.equal(second.started, false);
+  assert.equal(second.job.job_id, first.job.job_id);
+  release();
+  await first.done;
+
+  db.prepare("INSERT INTO summary_jobs (job_id, status, model, total, done, failed, ids, started_at, heartbeat_at) VALUES ('dead', 'running', 'm', 5, 1, '[]', '[]', ?, ?)")
+    .run(new Date(NOW - 10 * 60_000).toISOString(), new Date(NOW - STALE_MS - 1000).toISOString());
+  assert.equal(readJob(db, 'dead', NOW).status, 'stale');
+  const third = startBatch(db, { ids: ['w2'], model: 'm', summarizeImpl: okImpl, ...shared(db), now: () => NOW });
+  assert.equal(third.started, true);
+  await third.done;
+});
+
+test('startBatch with no ids records an already finished job', async () => {
+  const db = seeded();
+  const r = startBatch(db, { ids: [], model: 'm', ...shared(db), now: () => NOW });
+  assert.equal(r.started, true);
+  assert.equal((await r.done).status, 'done');
+  assert.equal(readJob(db, null, NOW).total, 0);
+});
