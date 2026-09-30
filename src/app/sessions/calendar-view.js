@@ -5,7 +5,7 @@ import { format, isSameMonth, isToday } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  calendarFamilies, calendarSlot, daySegment, harnessBadge, layoutDay, missingSummaryIds, periodLabel, periodStats,
+  bannerIds, calendarFamilies, calendarSlot, daySegment, harnessBadge, layoutDay, periodLabel, periodStats,
   projectColor, shiftPeriod,
 } from '@/lib/cc/session-calendar.mjs'
 import { SummaryBanner } from './summary-banner'
@@ -16,14 +16,20 @@ const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '—
 const fmtCost = (c) => `$${(c || 0).toFixed(2)}`
 const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
 
-export function CalendarView({ families, range, selected, onOpen, onNavigate, onSpan, onRefresh }) {
+/**
+ * `loadedKey`/`wantKey` (see loadKey): the families on hand may still be the
+ * table's rows or the previous period while this one loads. Until the keys
+ * match, stats and the banner stay empty so they never count what isn't shown.
+ */
+export function CalendarView({ families, range, loadedKey, wantKey, selected, onOpen, onNavigate, onSpan, onRefresh }) {
   const [showAll, setShowAll] = useState(false)
   const events = useMemo(() => calendarFamilies(families, { showAll }), [families, showAll])
-  const stats = periodStats(events.filter((e) => !e.muted))
+  const ready = loadedKey != null && loadedKey === wantKey
+  const stats = ready ? periodStats(events.filter((e) => !e.muted)) : null
   const periodKey = `${range.since.toISOString()}|${range.until.toISOString()}`
-  const missing = missingSummaryIds(events)
+  const missing = bannerIds({ loadedKey, wantKey, events })
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan} />
       <SummaryBanner ids={missing} periodKey={periodKey} onProgress={onRefresh} />
       {range.span === 'week'
@@ -86,7 +92,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
 }
 
 function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan }) {
-  const doneShare = stats.described ? Math.round((stats.done / stats.described) * 100) : null
+  const doneShare = stats?.described ? Math.round((stats.done / stats.described) * 100) : null
   return (
     <div className="flex flex-wrap items-center gap-3 py-2">
       <div className="flex items-center gap-1">
@@ -102,8 +108,10 @@ function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan }) 
         ))}
       </div>
       <span className="text-xs text-muted-foreground tabular-nums">
-        {stats.sessions} sessions · {fmtHours(stats.active_s)} active · {fmtCost(stats.cost_usd)}
-        {doneShare != null && ` · ${doneShare}% done, ${stats.partial} partial`}
+        {stats ? <>
+          {stats.sessions} sessions · {fmtHours(stats.active_s)} active · {fmtCost(stats.cost_usd)}
+          {doneShare != null && ` · ${doneShare}% done, ${stats.partial} partial`}
+        </> : 'Loading…'}
       </span>
       <button onClick={() => onShowAll(!showAll)} aria-pressed={showAll}
         className={`ml-auto rounded-full border px-2 py-0.5 text-xs ${showAll ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}

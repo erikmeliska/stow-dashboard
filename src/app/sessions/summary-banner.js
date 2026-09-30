@@ -24,23 +24,27 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
   const [mine, setMine] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [error, setError] = useState(null)
+  const [note, setNote] = useState(null)
+  const [recheck, setRecheck] = useState(0)
   const startedAt = useRef(0)
   const idsKey = ids.join(',')
 
-  useEffect(() => { setDismissed(readDismissed(periodKey)) }, [periodKey])
+  useEffect(() => { setDismissed(readDismissed(periodKey)); setNote(null) }, [periodKey])
 
   useEffect(() => {
     let alive = true
+    setEst(null) // never show one period's estimate under another's header
     const t = setTimeout(async () => {
       try {
         const d = await (await post('/api/sessions/summarize-batch/estimate', { ids })).json()
         if (!alive) return
-        setEst(d)
-        if (d.job?.status === 'running') setJob((j) => j || d.job)
+        setEst({ ...d, idsKey })
+        // Adopt a job someone else started (MCP, CLI, another tab) unless ours is still running.
+        if (d.job?.status === 'running') setJob((j) => (j?.status === 'running' ? j : d.job))
       } catch { /* offline: no banner */ }
     }, 300)
     return () => { alive = false; clearTimeout(t) }
-  }, [idsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [idsKey, recheck]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const running = job?.status === 'running'
   useEffect(() => {
@@ -49,8 +53,8 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
     const iv = setInterval(async () => {
       try {
         const { job: j } = await (await fetch('/api/sessions/summarize-batch')).json()
-        if (!j || j.job_id !== job.job_id) return
-        setJob(j)
+        if (!j) { setJob(null); return } // row gone: stop polling
+        setJob(j) // a different id means ours ended and a newer job is the one to follow
         const n = j.done + j.failed.length
         if (n !== seen || j.status !== 'running') { seen = n; onProgress?.() }
       } catch { /* keep polling */ }
@@ -60,12 +64,25 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
 
   async function start(runIds) {
     setError(null)
-    const r = await post('/api/sessions/summarize-batch', { ids: runIds })
-    const d = await r.json()
-    if (!r.ok) { setError(d.error || `HTTP ${r.status}`); return }
-    startedAt.current = Date.now()
-    setMine(true)
-    setJob(d.job)
+    setNote(null)
+    try {
+      const r = await post('/api/sessions/summarize-batch', { ids: runIds })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setError(d.error || `HTTP ${r.status}`); return }
+      if (!d.started && d.job?.status !== 'running') {
+        // Everything got a summary meanwhile (or its transcript is gone): nothing ran.
+        setJob(null)
+        setMine(false)
+        setNote('Nothing left to summarise.')
+        setRecheck((n) => n + 1)
+        return
+      }
+      startedAt.current = d.started ? Date.now() : 0
+      setMine(Boolean(d.started))
+      setJob(d.job)
+    } catch (e) {
+      setError(`Could not start: ${e?.message || e}`)
+    }
   }
 
   const box = 'mb-2 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs'
@@ -96,7 +113,10 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
     )
   }
 
-  if (!est?.missing || dismissed) return error ? <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p> : null
+  if (!est?.missing || est.idsKey !== idsKey || dismissed) {
+    if (error) return <p className="mb-2 text-xs text-red-600 dark:text-red-400">{error}</p>
+    return note ? <p className="mb-2 text-xs text-muted-foreground">{note}</p> : null
+  }
   return (
     <div className={box} role="region" aria-label="Missing summaries">
       <Sparkles className="h-3.5 w-3.5" />

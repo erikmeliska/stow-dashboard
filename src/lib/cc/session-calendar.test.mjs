@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   periodRange, shiftPeriod, calendarSlot, daySegment, layoutDay, projectColor, harnessBadge,
-  calendarFamilies, missingSummaryIds, periodStats, formatEta,
+  calendarFamilies, missingSummaryIds, periodStats, formatEta, loadKey, bannerIds,
 } from './session-calendar.mjs';
 
 const L = (d, h = 0, m = 0) => new Date(2026, 8, d, h, m); // September 2026, local
@@ -88,4 +88,20 @@ test('formatEta', () => {
   assert.equal(formatEta(20), '<1 min');
   assert.equal(formatEta(240), '~4 min');
   assert.equal(formatEta(5400), '~1.5 h');
+});
+
+test('bannerIds: only the missing ids of data loaded for the displayed view+range+project', () => {
+  const now = +L(30, 12);
+  const ev = [{ session_id: 'a', raw_ref: '/t', ended_at: iso(L(9, 11)) }];
+  const range = periodRange(L(9), 'week');
+  const want = loadKey({ view: 'calendar', project: null, range });
+  assert.deepEqual(bannerIds({ loadedKey: want, wantKey: want, events: ev, now }), ['a']);
+  // Table data (newest 1000 rows) shown right after switching to the calendar.
+  assert.deepEqual(bannerIds({ loadedKey: loadKey({ view: 'table', project: null, range }), wantKey: want, events: ev, now }), []);
+  // Previous period still on screen while the new one loads.
+  const prev = loadKey({ view: 'calendar', project: null, range: periodRange(L(2), 'week') });
+  assert.deepEqual(bannerIds({ loadedKey: prev, wantKey: want, events: ev, now }), []);
+  // Another project filter.
+  assert.deepEqual(bannerIds({ loadedKey: loadKey({ view: 'calendar', project: '/p', range }), wantKey: want, events: ev, now }), []);
+  assert.deepEqual(bannerIds({ loadedKey: null, wantKey: want, events: ev, now }), []);
 });

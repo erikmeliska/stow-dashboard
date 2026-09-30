@@ -10,7 +10,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { filterSessions, QUALITY_FILTERS, QUICK_FILTERS, SOURCE_FILTERS } from '@/lib/cc/session-filters.mjs'
 import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } from '@/lib/cc/session-tree.mjs'
 import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
-import { periodRange } from '@/lib/cc/session-calendar.mjs'
+import { loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
 import { CalendarView } from './calendar-view'
 
@@ -451,9 +451,15 @@ function SessionsView() {
     router.replace(`/sessions${s ? `?${s}` : ''}`)
   }
 
+  // What the current view/period/project needs vs. what `sessions` actually holds:
+  // until they match, the calendar must not count or batch the rows on hand.
+  const wantKey = loadKey({ view, project, range })
+  const [loadedKey, setLoadedKey] = useState(null)
+
   const loadSeq = useRef(0)
   async function load({ ingest = true } = {}) {
     const myId = ++loadSeq.current
+    const key = wantKey
     setLoading(true)
     try {
       // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
@@ -466,6 +472,7 @@ function SessionsView() {
       if (myId !== loadSeq.current) return // a newer load superseded this one
       setSessions(d.sessions || [])
       setAgents(d.agents || [])
+      setLoadedKey(key)
     } finally {
       if (myId === loadSeq.current) setLoading(false)
     }
@@ -641,6 +648,8 @@ function SessionsView() {
             <CalendarView
               families={filtered}
               range={range}
+              loadedKey={loadedKey}
+              wantKey={wantKey}
               selected={selected}
               onOpen={open}
               onNavigate={(d, span) => setParams({ date: format(d, 'yyyy-MM-dd'), ...(span ? { span: span === 'week' ? null : span } : {}) })}

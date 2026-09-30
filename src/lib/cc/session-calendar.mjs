@@ -114,6 +114,25 @@ export function missingSummaryIds(events, now = Date.now()) {
   return (events || []).filter((e) => needsSummary(e, { now })).map((e) => e.session_id);
 }
 
+/**
+ * Identity of a sessions load: what the page asked /api/sessions for. The
+ * table loads the newest rows, the calendar one period, both per project.
+ */
+export function loadKey({ view, project = null, range = null }) {
+  const period = view === 'calendar' && range ? `${range.since.toISOString()}|${range.until.toISOString()}` : '';
+  return `${view}|${project || ''}|${period}`;
+}
+
+/**
+ * The banner's ids: the displayed events' missing summaries, but only once
+ * the loaded data is the displayed view/period/project (`loadedKey ===
+ * wantKey`). Until then, e.g. right after Table → Calendar or a period
+ * change, the events on hand belong to another load and nothing is counted.
+ */
+export function bannerIds({ loadedKey, wantKey, events, now = Date.now() }) {
+  return loadedKey != null && loadedKey === wantKey ? missingSummaryIds(events, now) : [];
+}
+
 export function periodStats(events) {
   const out = { sessions: 0, active_s: 0, cost_usd: 0, done: 0, partial: 0, described: 0 };
   for (const e of events || []) {
