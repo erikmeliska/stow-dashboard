@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { format, isToday } from 'date-fns'
+import { format, isSameMonth, isToday } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,7 +24,55 @@ export function CalendarView({ families, range, selected, onOpen, onNavigate, on
       <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan} />
       {range.span === 'week'
         ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} />
-        : <p className="py-6 text-sm text-muted-foreground">Month view coming up.</p>}
+        : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} onSpan={onSpan} />}
+    </div>
+  )
+}
+
+const CHIPS_PER_DAY = 4
+
+function MonthGrid({ range, events, selected, onOpen, onNavigate, onSpan }) {
+  const byDay = useMemo(() => {
+    const m = new Map()
+    for (const e of events) {
+      const slot = calendarSlot(e)
+      if (!slot) continue
+      const k = format(slot.start, 'yyyy-MM-dd')
+      if (!m.has(k)) m.set(k, [])
+      m.get(k).push(e)
+    }
+    for (const list of m.values()) list.sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
+    return m
+  }, [events])
+  const openWeek = (d) => { onNavigate(d); onSpan('week') }
+
+  return (
+    <div className="grid min-h-0 flex-1 grid-cols-7 auto-rows-fr overflow-y-auto rounded-md border">
+      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="border-b px-1 py-1 text-center text-xs text-muted-foreground">{d}</div>)}
+      {range.days.map((d) => {
+        const inMonth = isSameMonth(d, range.since)
+        const list = inMonth ? byDay.get(format(d, 'yyyy-MM-dd')) || [] : []
+        const work = list.filter((e) => !e.muted)
+        const hours = work.reduce((a, e) => a + ((e.rollup || e).active_s || 0), 0) / 3600
+        const heat = Math.min(hours / 8, 1) * 18
+        return (
+          <div key={+d} className={`min-h-24 border-b border-l p-1 ${inMonth ? '' : 'opacity-40'}`}
+            style={hours > 0 ? { background: `color-mix(in srgb, var(--viz-1) ${heat}%, transparent)` } : undefined}>
+            <div className="mb-0.5 flex items-center justify-between text-[11px]">
+              <button onClick={() => openWeek(d)} className={`rounded px-1 hover:bg-muted ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'd')}</button>
+              {hours > 0 && <span className="tabular-nums text-muted-foreground">{hours.toFixed(1)} h</span>}
+            </div>
+            <div className="space-y-0.5">
+              {list.slice(0, CHIPS_PER_DAY).map((e) => (
+                <EventBlock key={e.session_id} e={e} compact selected={selected === e.session_id} onOpen={onOpen} />
+              ))}
+              {list.length > CHIPS_PER_DAY && (
+                <button onClick={() => openWeek(d)} className="text-[11px] text-muted-foreground hover:text-foreground">+{list.length - CHIPS_PER_DAY} more</button>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
