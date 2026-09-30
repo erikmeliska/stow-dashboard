@@ -73,10 +73,17 @@ const MIGRATION_COLS = {
   title: 'TEXT', title_source: 'TEXT', user_prompts: 'INTEGER',
 };
 
-function ensureColumns(db) {
+export function ensureColumns(db) {
   const have = new Set(db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name));
   for (const [col, type] of Object.entries(MIGRATION_COLS)) {
-    if (!have.has(col)) db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
+    if (have.has(col)) continue;
+    try {
+      db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
+    } catch (e) {
+      // Another process (Next vs MCP) migrated the same file between our
+      // table_info read and this ALTER: the column is there, which is the goal.
+      if (!/duplicate column name/i.test(String(e?.message))) throw e;
+    }
   }
   // kind/entrypoint only get filled by a re-parse: forget the incremental
   // signatures so the next ingest walks every transcript once.

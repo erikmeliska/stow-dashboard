@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, listSessions, getSession, getSessionsByIds } from './store.mjs';
+import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, listSessions, getSession, getSessionsByIds, ensureColumns } from './store.mjs';
 
 function seed() {
   const db = openStore(':memory:');
@@ -199,4 +199,17 @@ test('summary_jobs table exists', () => {
   const db = openStore(':memory:');
   const cols = db.prepare('PRAGMA table_info(summary_jobs)').all().map((c) => c.name);
   assert.ok(cols.includes('heartbeat_at') && cols.includes('failed'));
+});
+
+test('ensureColumns tolerates a column another process added after it read table_info', () => {
+  const db = openStore(':memory:');
+  // A connection that read table_info before the other process's ALTER: it still thinks title is missing.
+  const stale = {
+    prepare: (sql) => (/table_info/.test(sql)
+      ? { all: () => db.prepare(sql).all().filter((c) => c.name !== 'title') }
+      : db.prepare(sql)),
+    exec: (sql) => db.exec(sql),
+  };
+  assert.doesNotThrow(() => ensureColumns(stale));
+  assert.ok(db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'title'));
 });
