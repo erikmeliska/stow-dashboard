@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS tool_usage (session_id TEXT, tool TEXT, count INTEGER
 CREATE TABLE IF NOT EXISTS skill_usage (session_id TEXT, skill TEXT, count INTEGER, edited INTEGER DEFAULT 0, PRIMARY KEY (session_id, skill));
 CREATE TABLE IF NOT EXISTS guard_hits (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, ts TEXT, command TEXT, rule TEXT, action TEXT);
 CREATE TABLE IF NOT EXISTS ingest_state (path TEXT PRIMARY KEY, session_id TEXT, signature TEXT, ingested_at TEXT);
+CREATE TABLE IF NOT EXISTS summary_jobs (
+  job_id TEXT PRIMARY KEY, status TEXT, model TEXT, concurrency INTEGER,
+  total INTEGER, done INTEGER, failed TEXT, ids TEXT,
+  started_at TEXT, heartbeat_at TEXT, finished_at TEXT, error TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions (project_dir);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at);
 CREATE INDEX IF NOT EXISTS idx_guard_session ON guard_hits (session_id);
@@ -165,13 +170,18 @@ export function replaceGuardHits(db, sessionId, hits) {
  * Newest-first session rows. `limit` applies to top-level sessions (no parent);
  * every linked child of a returned parent is included on top of that, so the
  * caller can always build complete families (see session-tree.mjs).
+ * `since`/`until` (ISO, `[since, until)`) bound the top-level start time — the
+ * calendar asks for exactly the period it shows.
  */
-export function listSessions(db, { project, limit = 200 } = {}) {
+export function listSessions(db, { project, limit = 200, since = null, until = null } = {}) {
   // `guard_hits` (a count) rides along so the list can filter on it without a second query.
   const select = 'SELECT s.*, (SELECT count(*) FROM guard_hits g WHERE g.session_id = s.session_id) guard_hits FROM sessions s';
-  const where = project ? 'WHERE s.project_dir = ? AND s.parent_session_id IS NULL' : 'WHERE s.parent_session_id IS NULL';
-  const args = project ? [project, limit] : [limit];
-  const parents = db.prepare(`${select} ${where} ORDER BY s.started_at DESC LIMIT ?`).all(...args);
+  const conds = ['s.parent_session_id IS NULL'];
+  const args = [];
+  if (project) { conds.push('s.project_dir = ?'); args.push(project); }
+  if (since) { conds.push('s.started_at >= ?'); args.push(since); }
+  if (until) { conds.push('s.started_at < ?'); args.push(until); }
+  const parents = db.prepare(`${select} WHERE ${conds.join(' AND ')} ORDER BY s.started_at DESC LIMIT ?`).all(...args, limit);
   const ids = parents.map((p) => p.session_id);
   const children = [];
   for (let i = 0; i < ids.length; i += 500) {
@@ -179,6 +189,16 @@ export function listSessions(db, { project, limit = 200 } = {}) {
     children.push(...db.prepare(`${select} WHERE s.parent_session_id IN (${chunk.map(() => '?').join(',')}) ORDER BY s.started_at DESC`).all(...chunk));
   }
   return [...parents, ...children];
+}
+
+/** Rows for the given ids (unknown ids skipped), oldest first. */
+export function getSessionsByIds(db, ids) {
+  const out = [];
+  for (let i = 0; i < (ids || []).length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    out.push(...db.prepare(`SELECT * FROM sessions WHERE session_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk));
+  }
+  return out.sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
 }
 
 export function getSession(db, id) {

@@ -43,3 +43,8 @@ test('list returns children of returned parents and their nested agents', () => 
   assert.equal(d.parent.session_id, 'p');
   assert.equal(handle(new URLSearchParams('id=p'), db).children[0].session_id, 'c');
 });
+
+test('list honours since/until', () => {
+  const res = handle(new URLSearchParams('since=2026-08-21T10:30:00Z&until=2026-08-22T00:00:00Z'), db1());
+  assert.deepEqual(res.sessions.map((s) => s.session_id), ['s2']);
+});

@@ -1,7 +1,8 @@
 import { openStore, listSessions, listSubagents, getSession } from '../../../lib/cc/store.mjs'
 
 /**
- * GET /api/sessions            → { sessions: row[], agents: row[] }   (?project=<dir>&limit=<n>)
+ * GET /api/sessions            → { sessions: row[], agents: row[] }   (?project=<dir>&limit=<n>
+ *   &since=<iso>&until=<iso> — top-level start in [since, until))
  *   `sessions` holds top-level rows (limit applies to those) plus every linked
  *   child of them (`parent_session_id`); `agents` the nested Agent-tool runs of
  *   all returned sessions. session-tree.mjs turns the pair into families.
@@ -14,8 +15,11 @@ export function handle(searchParams, db) {
   const id = searchParams.get('id')
   if (id) return getSession(db, id) || { session: null }
   const project = searchParams.get('project') || undefined
-  const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 200, 1), 1000)
-  const sessions = listSessions(db, { project, limit })
+  const since = searchParams.get('since') || null
+  const until = searchParams.get('until') || null
+  const ranged = Boolean(since || until)
+  const limit = Math.min(Math.max(Number(searchParams.get('limit')) || (ranged ? 5000 : 200), 1), ranged ? 5000 : 1000)
+  const sessions = listSessions(db, { project, limit, since, until })
   return { sessions, agents: listSubagents(db, sessions.map((s) => s.session_id)) }
 }
 

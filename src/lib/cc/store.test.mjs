@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, listSessions, getSession } from './store.mjs';
+import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, listSessions, getSession, getSessionsByIds } from './store.mjs';
 
 function seed() {
   const db = openStore(':memory:');
@@ -174,4 +174,29 @@ test('upsertSession stores title columns; scheduled sessions are parent candidat
   assert.equal(getSession(db, 'p').session.title, 'yt');
   const c = listParentCandidates(db, { started_at: '2026-09-01T05:10:00Z' });
   assert.deepEqual(c.map((r) => r.session_id), ['p']);
+});
+
+test('listSessions filters top-level sessions by [since, until) and keeps their children', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, { session_id: 'a', started_at: '2026-09-01T10:00:00.000Z' });
+  upsertSession(db, { session_id: 'b', started_at: '2026-09-08T10:00:00.000Z' });
+  upsertSession(db, { session_id: 'c', started_at: '2026-09-15T10:00:00.000Z' });
+  upsertSession(db, { session_id: 'b-kid', started_at: '2026-09-08T10:05:00.000Z' });
+  setParent(db, 'b-kid', 'b');
+  const got = listSessions(db, { since: '2026-09-08T00:00:00.000Z', until: '2026-09-15T10:00:00.000Z' }).map((s) => s.session_id);
+  assert.deepEqual(got, ['b', 'b-kid']);
+});
+
+test('getSessionsByIds returns rows in start order and ignores unknown ids', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, { session_id: 'x', started_at: '2026-09-02T00:00:00Z' });
+  upsertSession(db, { session_id: 'y', started_at: '2026-09-01T00:00:00Z' });
+  assert.deepEqual(getSessionsByIds(db, ['x', 'nope', 'y']).map((r) => r.session_id), ['y', 'x']);
+  assert.deepEqual(getSessionsByIds(db, []), []);
+});
+
+test('summary_jobs table exists', () => {
+  const db = openStore(':memory:');
+  const cols = db.prepare('PRAGMA table_info(summary_jobs)').all().map((c) => c.name);
+  assert.ok(cols.includes('heartbeat_at') && cols.includes('failed'));
 });
