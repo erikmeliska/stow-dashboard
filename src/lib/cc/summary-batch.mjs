@@ -98,6 +98,8 @@ function liveJob(db, now) {
 
 /**
  * Start a batch over `ids` (see selectMissing), or return the live one.
+ * With no ids nothing is inserted: the latest job (any status, or null) comes
+ * back with started=false, so "nothing to do" never shadows a real job.
  * The worker opens its own connection (`openDb`) so the caller may close `db`
  * as soon as this returns (an API route does).
  */
@@ -112,6 +114,10 @@ export function startBatch(db, {
   now = Date.now,
 } = {}) {
   const list = [...new Set(ids || [])];
+  if (!list.length) {
+    const latest = readJob(db, null, now());
+    return { job: latest, started: false, done: Promise.resolve(latest) };
+  }
   concurrency = clampConcurrency(concurrency);
   let row;
   db.exec('BEGIN IMMEDIATE');
@@ -123,9 +129,9 @@ export function startBatch(db, {
     }
     const t = new Date(now()).toISOString();
     row = {
-      job_id: randomUUID(), status: list.length ? 'running' : 'done', model, concurrency,
+      job_id: randomUUID(), status: 'running', model, concurrency,
       total: list.length, done: 0, failed: '[]', ids: JSON.stringify(list),
-      started_at: t, heartbeat_at: t, finished_at: list.length ? null : t, error: null,
+      started_at: t, heartbeat_at: t, finished_at: null, error: null,
     };
     db.prepare(`INSERT INTO summary_jobs (job_id, status, model, concurrency, total, done, failed, ids, started_at, heartbeat_at, finished_at, error)
       VALUES (@job_id, @status, @model, @concurrency, @total, @done, @failed, @ids, @started_at, @heartbeat_at, @finished_at, @error)`).run(row);
@@ -135,9 +141,38 @@ export function startBatch(db, {
     throw e;
   }
   const job = readJob(db, row.job_id, now());
-  if (!list.length) return { job, started: true, done: Promise.resolve(job) };
   const done = runJob(row.job_id, list, { model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now });
   return { job, started: true, done };
+}
+
+/**
+ * The MCP `summarize_sessions` flow over [since, until): `statusOnly` only
+ * reports (latest job + how many are still missing); otherwise a batch starts
+ * over what is missing, unless a job is already live or nothing is missing, in
+ * which case the latest job is reported and nothing starts.
+ * @returns {{started: boolean, job: object|null, missing: number, estimateSeconds: number, note: string, done: Promise}}
+ */
+export function rangeBatch(db, { since = null, until = null, force = false, statusOnly = false } = {}, {
+  exists, now = Date.now, ...startOpts
+} = {}) {
+  const ids = selectMissing(db, { since, until, force, now: now(), exists });
+  const model = startOpts.model || batchModel();
+  const estimateFor = (n) => estimateBatch(db, { count: n, model }).seconds;
+  if (statusOnly) {
+    const job = readJob(db, null, now());
+    const running = job?.status === 'running';
+    const note = running
+      ? `A batch is running (${job.done + job.failed.length}/${job.total}). Nothing was started.`
+      : `${ids.length} session(s) in this period still have no summary. Nothing was started.`;
+    return { started: false, job, missing: ids.length, estimateSeconds: running ? estimateFor(job.total - job.done - job.failed.length) : estimateFor(ids.length), note, done: Promise.resolve(job) };
+  }
+  const { job, started, done } = startBatch(db, { ids, model, now, ...startOpts });
+  let note;
+  if (started) note = `Started: ${job.total} sessions. Call summarize_sessions with status_only: true to see progress.`;
+  else if (job?.status === 'running') note = `A batch is already running (${job.done + job.failed.length}/${job.total}); this call did not start another.`;
+  else note = 'Nothing to summarise in this period; nothing was started. `job` is the most recent batch.';
+  const left = job?.status === 'running' ? job.total - job.done - job.failed.length : 0;
+  return { started, job, missing: ids.length, estimateSeconds: estimateFor(left), note, done };
 }
 
 async function runJob(jobId, ids, { model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now }) {

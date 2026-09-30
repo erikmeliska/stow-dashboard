@@ -38,3 +38,11 @@ test('POST clamps concurrency to an integer in 1..8', async () => {
     assert.equal(r.job.concurrency, want, `concurrency ${given}`);
   }
 });
+
+test('POST with nothing left to summarise starts nothing and records no job', () => {
+  const db = db1();
+  for (const id of ['a', 'b']) setSummary(db, id, { summary: JSON.stringify({ v: 2, what: id, outcome: 'done' }), model: 'm' });
+  const r = handlePost({ ids: ['a', 'b'] }, db, deps(db));
+  assert.deepEqual(r, { job: null, started: false, total: 0 });
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 0);
+});

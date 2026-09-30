@@ -45,7 +45,8 @@ export async function evalSummaries(db, {
     onProgress: ({ id: sid, ok, error }) => log(ok ? `✓ ${sid.slice(0, 8)}` : `✗ ${sid.slice(0, 8)} ${error?.kind || 'error'}: ${error?.message}`),
   });
   if (!started) {
-    log(`a batch is already running (${job.done}/${job.total}, started ${job.started_at}) — not starting another`);
+    if (job?.status === 'running') log(`a batch is already running (${job.done}/${job.total}, started ${job.started_at}) — not starting another`);
+    else log('nothing to summarise');
     return { ok: 0, failed: 0, total: 0 };
   }
   const fin = await done;

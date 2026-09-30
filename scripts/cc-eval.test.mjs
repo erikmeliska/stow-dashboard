@@ -41,3 +41,12 @@ test('evalSummaries honours an injected clock for job heartbeats', async () => {
   const job = db.prepare('SELECT heartbeat_at FROM summary_jobs ORDER BY rowid DESC LIMIT 1').get();
   assert.equal(job.heartbeat_at, new Date(NOW).toISOString());
 });
+
+test('evalSummaries with nothing missing starts no job and says so', async () => {
+  const db = db1();
+  const lines = [];
+  const r = await evalSummaries(db, { since: '2026-08-01', until: '2026-09-01', log: (l) => lines.push(l), summarizeImpl: ok, now: NOW });
+  assert.deepEqual(r, { ok: 0, failed: 0, total: 0 });
+  assert.match(lines.join('\n'), /nothing to summarise/i);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 0);
+});

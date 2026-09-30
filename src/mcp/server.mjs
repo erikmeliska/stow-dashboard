@@ -27,7 +27,7 @@ import { openStore, DB_NAME, listSessions, listSubagents } from '../lib/cc/store
 import { buildSessionTree } from '../lib/cc/session-tree.mjs'
 import { effectiveKind } from '../lib/cc/session-link.mjs'
 import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
-import { batchModel, estimateBatch, selectMissing, startBatch } from '../lib/cc/summary-batch.mjs'
+import { batchModel, rangeBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
 const execAsync = promisify(exec)
@@ -562,13 +562,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: 'summarize_sessions',
-                description: 'Generate missing AI summaries for work sessions in a period (runs the local claude CLI in the background, Sonnet by default). Call again to see progress.',
+                description: 'Generate missing AI summaries for work sessions in a period (runs the local claude CLI in the background, Sonnet by default; each summary is a real model call). Without status_only it starts a batch over whatever in the period still has no summary (failed sessions are retried), unless a batch is already running or nothing is missing, in which case it reports the latest batch and starts nothing. To check progress or the result of a batch, call with status_only: true: it never starts anything and returns the latest batch (status running/done/stopped/stale, done/total, failed) plus how many sessions in the period are still missing.',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO)' },
                         until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
                         force: { description: "true = redo all, 'upgrade' = redo old v1 summaries" },
+                        status_only: { type: 'boolean', description: 'Only report the latest batch and the missing count; never start a batch' },
                     },
                     required: ['since', 'until'],
                 },
@@ -1103,13 +1104,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'summarize_sessions': {
             const db = openSessionStore()
             try {
-                const ids = selectMissing(db, { since: dayIso(args.since), until: dayIso(args.until), force: args.force ?? false })
-                const { job, started } = startBatch(db, { ids, model: batchModel(), openDb: openSessionStore })
-                const estimateSeconds = estimateBatch(db, { count: job.total - job.done - job.failed.length }).seconds
-                const note = started
-                    ? `Started: ${job.total} sessions. Call summarize_sessions again to see progress.`
-                    : `A batch is already running (${job.done}/${job.total}); this call did not start another.`
-                return { content: [{ type: 'text', text: JSON.stringify({ started, job: { job_id: job.job_id, status: job.status, done: job.done, total: job.total, failed: job.failed }, estimateSeconds, note }, null, 2) }] }
+                const r = rangeBatch(db,
+                    { since: dayIso(args.since), until: dayIso(args.until), force: args.force ?? false, statusOnly: args.status_only === true },
+                    { model: batchModel(), openDb: openSessionStore })
+                const job = r.job && { job_id: r.job.job_id, status: r.job.status, started_at: r.job.started_at, finished_at: r.job.finished_at, done: r.job.done, total: r.job.total, failed: r.job.failed, error: r.job.error }
+                return { content: [{ type: 'text', text: JSON.stringify({ started: r.started, job, missing: r.missing, estimateSeconds: r.estimateSeconds, note: r.note }, null, 2) }] }
             } finally {
                 db.close()
             }

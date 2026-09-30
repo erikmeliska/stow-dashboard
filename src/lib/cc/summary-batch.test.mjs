@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { openStore, upsertSession, setSummary, setParent, getSession } from './store.mjs';
-import { selectMissing, estimateBatch, startBatch, readJob, batchModel, STALE_MS } from './summary-batch.mjs';
+import { selectMissing, estimateBatch, startBatch, readJob, batchModel, rangeBatch, STALE_MS } from './summary-batch.mjs';
 import { fileURLToPath } from 'node:url';
 
 // A file that exists, so selectMissing's transcript check keeps the rows.
@@ -93,12 +93,49 @@ test('a second start while a live job runs returns that job; a stale job does no
   await third.done;
 });
 
-test('startBatch with no ids records an already finished job', async () => {
+test('startBatch with no ids inserts no job row and returns the latest job', async () => {
   const db = seeded();
-  const r = startBatch(db, { ids: [], model: 'm', ...shared(db), now: () => NOW });
-  assert.equal(r.started, true);
-  assert.equal((await r.done).status, 'done');
-  assert.equal(readJob(db, null, NOW).total, 0);
+  const none = startBatch(db, { ids: [], model: 'm', ...shared(db), now: () => NOW });
+  assert.equal(none.started, false);
+  assert.equal(none.job, null);
+  assert.equal(await none.done, null);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 0);
+
+  const real = await startBatch(db, { ids: ['w1'], model: 'm', summarizeImpl: okImpl, ...shared(db), now: () => NOW }).done;
+  const again = startBatch(db, { ids: [], model: 'm', ...shared(db), now: () => NOW });
+  assert.equal(again.started, false);
+  assert.equal(again.job.job_id, real.job_id);
+  assert.equal(again.job.status, 'done');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 1);
+});
+
+test('rangeBatch: status_only never starts; nothing missing reports the last job; otherwise starts', async () => {
+  const db = seeded();
+  const range = { since: '2026-09-01T00:00:00Z', until: '2026-10-01T00:00:00Z' };
+  const opts = { model: 'm', summarizeImpl: okImpl, ...shared(db), now: () => NOW, exists: () => true };
+
+  const peek = rangeBatch(db, { ...range, statusOnly: true }, opts);
+  assert.equal(peek.started, false);
+  assert.equal(peek.job, null);
+  assert.equal(peek.missing, 2);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 0);
+
+  const go = rangeBatch(db, range, opts);
+  assert.equal(go.started, true);
+  assert.equal(go.job.total, 2);
+  await go.done;
+
+  const status = rangeBatch(db, { ...range, statusOnly: true }, opts);
+  assert.equal(status.started, false);
+  assert.equal(status.job.job_id, go.job.job_id);
+  assert.equal(status.job.status, 'done');
+  assert.equal(status.missing, 0);
+
+  const idle = rangeBatch(db, range, opts);
+  assert.equal(idle.started, false);
+  assert.equal(idle.job.job_id, go.job.job_id);
+  assert.match(idle.note, /nothing/i);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM summary_jobs').get().n, 1);
 });
 
 test('a failing final write does not reject done and still closes the connection', async () => {
