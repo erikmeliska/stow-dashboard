@@ -5,9 +5,10 @@ import { format, isSameMonth, isToday } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  calendarFamilies, calendarSlot, daySegment, harnessBadge, layoutDay, periodLabel, periodStats,
+  calendarFamilies, calendarSlot, daySegment, harnessBadge, layoutDay, missingSummaryIds, periodLabel, periodStats,
   projectColor, shiftPeriod,
 } from '@/lib/cc/session-calendar.mjs'
+import { SummaryBanner } from './summary-banner'
 import { displayTitle, OUTCOME_ICON, parseSummary } from '@/lib/cc/summary-view.mjs'
 
 const HOUR_PX = 44
@@ -19,9 +20,12 @@ export function CalendarView({ families, range, selected, onOpen, onNavigate, on
   const [showAll, setShowAll] = useState(false)
   const events = useMemo(() => calendarFamilies(families, { showAll }), [families, showAll])
   const stats = periodStats(events.filter((e) => !e.muted))
+  const periodKey = `${range.since.toISOString()}|${range.until.toISOString()}`
+  const missing = missingSummaryIds(events)
   return (
     <div className="flex h-full flex-col">
       <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan} />
+      <SummaryBanner ids={missing} periodKey={periodKey} onProgress={onRefresh} />
       {range.span === 'week'
         ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} />
         : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} />}
