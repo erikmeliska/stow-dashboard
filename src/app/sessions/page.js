@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowDown, ArrowLeft, ArrowUp, Bot, CalendarDays, ChevronDown, ChevronRight, CornerDownRight, Filter, RefreshCw, ShieldCheck, Sparkles, Table2, X } from 'lucide-react'
@@ -451,7 +451,9 @@ function SessionsView() {
     router.replace(`/sessions${s ? `?${s}` : ''}`)
   }
 
+  const loadSeq = useRef(0)
   async function load({ ingest = true } = {}) {
+    const myId = ++loadSeq.current
     setLoading(true)
     try {
       // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
@@ -461,10 +463,11 @@ function SessionsView() {
       else qs.set('limit', '1000')
       const r = await fetch(`/api/sessions?${qs}`)
       const d = await r.json()
+      if (myId !== loadSeq.current) return // a newer load superseded this one
       setSessions(d.sessions || [])
       setAgents(d.agents || [])
     } finally {
-      setLoading(false)
+      if (myId === loadSeq.current) setLoading(false)
     }
   }
   useEffect(() => { load() }, [project, view, rangeKey]) // eslint-disable-line react-hooks/exhaustive-deps
