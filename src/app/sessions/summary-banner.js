@@ -85,7 +85,8 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
   }
 
   if (job && mine && job.status !== 'running') {
-    const failedIds = job.failed.map((f) => f.id)
+    // A not-found transcript fails the same way every time; only offer to retry the rest.
+    const failedIds = job.failed.filter((f) => f.kind !== 'not-found').map((f) => f.id)
     return (
       <div className={box} role="status">
         <span>{job.status === 'stopped' ? `Stopped: ${job.error}` : job.status === 'stale' ? 'The batch stopped responding.' : `Done: ${job.done} summarised`}{job.failed.length ? `, ${job.failed.length} failed` : ''}.</span>

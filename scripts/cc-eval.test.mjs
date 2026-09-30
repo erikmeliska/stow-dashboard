@@ -2,11 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore, upsertSession, setSummary } from '../src/lib/cc/store.mjs';
 import { evalSummaries } from './cc-eval.mjs';
+import { fileURLToPath } from 'node:url';
+
+// A file that exists, so selectMissing's transcript check keeps the rows.
+const HERE = fileURLToPath(import.meta.url);
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 function db1() {
   const db = openStore(':memory:');
-  for (const [id, day] of [['a', '01'], ['b', '02'], ['c', '03']]) upsertSession(db, { session_id: id, kind: 'main', raw_ref: `/t/${id}`, started_at: `2026-09-${day}T10:00:00.000Z`, ended_at: `2026-09-${day}T11:00:00.000Z` });
+  for (const [id, day] of [['a', '01'], ['b', '02'], ['c', '03']]) upsertSession(db, { session_id: id, kind: 'main', raw_ref: HERE, started_at: `2026-09-${day}T10:00:00.000Z`, ended_at: `2026-09-${day}T11:00:00.000Z` });
   setSummary(db, 'b', { summary: JSON.stringify({ what: 'old', outcome: 'done' }), model: 'haiku' });
   return db;
 }

@@ -11,6 +11,7 @@
  * to a process that died and no longer blocks new batches.
  */
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { openStore, getSessionsByIds } from './store.mjs';
 import { summarizeSession } from './summary.mjs';
 import { needsSummary, parseSummary } from './summary-view.mjs';
@@ -37,8 +38,11 @@ export function batchModel(env = process.env) {
  * `ids`: exactly what the UI shows (it already applied kind/filters), so only
  * needsSummary is checked. Range (CLI/MCP): top-level rows started in
  * [since, until) whose effectiveKind is in `kinds`.
+ * Either way a row whose transcript (`raw_ref`; a Gemini `.db` counts) is no
+ * longer on disk is skipped: it could only fail as not-found, and Claude
+ * Code's transcript cleanup would otherwise keep it "missing" forever.
  */
-export function selectMissing(db, { ids = null, since = null, until = null, force = false, kinds = ['work'], now = Date.now() } = {}) {
+export function selectMissing(db, { ids = null, since = null, until = null, force = false, kinds = ['work'], now = Date.now(), exists = existsSync } = {}) {
   let rows;
   if (ids) {
     rows = getSessionsByIds(db, ids);
@@ -50,7 +54,7 @@ export function selectMissing(db, { ids = null, since = null, until = null, forc
     rows = db.prepare(`SELECT * FROM sessions WHERE ${conds.join(' AND ')} ORDER BY started_at`).all(...args)
       .filter((r) => kinds.includes(effectiveKind(r)));
   }
-  return rows.filter((r) => needsSummary(r, { force, now })).map((r) => r.session_id);
+  return rows.filter((r) => needsSummary(r, { force, now }) && exists(r.raw_ref)).map((r) => r.session_id);
 }
 
 /** Median CLI time of the last 50 summaries made with `model`; null without history. */

@@ -5,9 +5,13 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { openStore, upsertSession, setSummary, setParent, getSession } from './store.mjs';
 import { selectMissing, estimateBatch, startBatch, readJob, batchModel, STALE_MS } from './summary-batch.mjs';
+import { fileURLToPath } from 'node:url';
+
+// A file that exists, so selectMissing's transcript check keeps the rows.
+const HERE = fileURLToPath(import.meta.url);
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
-const row = (id, over = {}) => ({ session_id: id, raw_ref: `/t/${id}`, kind: 'main', started_at: '2026-09-10T10:00:00.000Z', ended_at: '2026-09-10T11:00:00.000Z', ...over });
+const row = (id, over = {}) => ({ session_id: id, raw_ref: HERE, kind: 'main', started_at: '2026-09-10T10:00:00.000Z', ended_at: '2026-09-10T11:00:00.000Z', ...over });
 
 function seeded() {
   const db = openStore(':memory:');
@@ -151,4 +155,16 @@ test('two connections to one file: the second start sees the first connection\'s
     b.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('selectMissing skips sessions whose transcript is gone (range and ids)', () => {
+  const db = seeded();
+  upsertSession(db, row('gone', { raw_ref: '/nowhere/gone.jsonl' }));
+  upsertSession(db, row('gem', { raw_ref: '/g/conversations.db', model: 'gemini-3' }));
+  const present = new Set([HERE, '/g/conversations.db']);
+  const exists = (p) => present.has(p);
+  assert.deepEqual(selectMissing(db, { since: '2026-09-01T00:00:00Z', until: '2026-10-01T00:00:00Z', now: NOW, exists }).sort(), ['gem', 'w1', 'w2']);
+  assert.deepEqual(selectMissing(db, { ids: ['gone', 'w1'], now: NOW, exists }), ['w1']);
+  // Default check hits the real filesystem.
+  assert.deepEqual(selectMissing(db, { ids: ['gone', 'w1'], now: NOW }), ['w1']);
 });

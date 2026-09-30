@@ -2,11 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore, upsertSession, setSummary } from '../../../../lib/cc/store.mjs';
 import { handleGet, handlePost } from './route.js';
+import { fileURLToPath } from 'node:url';
+
+// A file that exists, so selectMissing's transcript check keeps the rows.
+const HERE = fileURLToPath(import.meta.url);
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 function db1() {
   const db = openStore(':memory:');
-  for (const id of ['a', 'b']) upsertSession(db, { session_id: id, kind: 'main', raw_ref: `/t/${id}`, started_at: '2026-09-10T10:00:00.000Z', ended_at: '2026-09-10T11:00:00.000Z' });
+  for (const id of ['a', 'b']) upsertSession(db, { session_id: id, kind: 'main', raw_ref: HERE, started_at: '2026-09-10T10:00:00.000Z', ended_at: '2026-09-10T11:00:00.000Z' });
   return db;
 }
 const deps = (db) => ({ openDb: () => db, closeDb: () => {}, now: () => NOW, summarizeImpl: async (d, id) => setSummary(d, id, { summary: JSON.stringify({ v: 2, what: id, outcome: 'done' }), model: 'm' }) });
