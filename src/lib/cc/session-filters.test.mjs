@@ -96,3 +96,9 @@ test('source and quick filters', () => {
   assert.deepEqual(filterSessions([{ git_branch: 'feat/x-1' }], { search: 'feat/x' }).length, 1);
   assert.ok(Object.keys(QUICK_FILTERS).length >= 6);
 });
+
+test('sourceOf buckets Codex entrypoints', () => {
+  assert.equal(sourceOf({ entrypoint: 'codex-desktop' }), 'codex')
+  assert.equal(SOURCE_FILTERS.codex, 'Codex')
+  assert.equal(filterSessions([{ entrypoint: 'codex-cli' }, { entrypoint: 'cli' }], { source: 'codex' }).length, 1)
+})

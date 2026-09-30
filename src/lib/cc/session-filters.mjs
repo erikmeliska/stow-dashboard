@@ -17,6 +17,7 @@ export const QUALITY_FILTERS = {
 /** Entrypoint → coarse source bucket shown in the Source filter. */
 export function sourceOf(s) {
   const e = s?.entrypoint || ''
+  if (e.startsWith('codex')) return 'codex'
   if (e.startsWith('antigravity')) return 'antigravity'
   if (e.startsWith('sdk')) return 'sdk'
   if (e === 'claude-desktop') return 'desktop'
@@ -25,7 +26,7 @@ export function sourceOf(s) {
 }
 
 export const SOURCE_FILTERS = {
-  any: 'Source: any', cli: 'CLI', desktop: 'Desktop app', sdk: 'SDK / hooks', antigravity: 'Antigravity', other: 'Other',
+  any: 'Source: any', cli: 'CLI', desktop: 'Desktop app', sdk: 'SDK / hooks', antigravity: 'Antigravity', codex: 'Codex', other: 'Other',
 }
 
 const ACTIVE_MS = 10 * 60 * 1000

@@ -258,3 +258,36 @@ test('a review in a sibling repo links to the session whose line preceded it (ti
   assert.equal(getSession(db, 'rev-2').session.parent_session_id, 'main-b');
   assert.equal(getSession(db, 'rev-1').session.parent_session_id, 'main-a');
 });
+
+async function codexFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'ccx-'));
+  const day = join(root, 'sessions', '2026', '09', '09');
+  await mkdir(day, { recursive: true });
+  const line = (o) => JSON.stringify(o);
+  const meta = (p) => ({ timestamp: '2026-09-09T10:00:00.000Z', type: 'session_meta', payload: { cwd: '/p/app', originator: 'codex-tui', source: 'cli', ...p } });
+  await writeFile(join(day, 'rollout-a-root.jsonl'), [
+    line(meta({ id: 'root', session_id: 'root' })),
+    line({ timestamp: '2026-09-09T10:00:01Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'do it' }] } }),
+    line({ timestamp: '2026-09-09T10:00:09Z', type: 'event_msg', payload: { type: 'task_complete' } }),
+  ].join('\n'));
+  await writeFile(join(day, 'rollout-b-sub.jsonl'), [
+    line(meta({ id: 'sub', session_id: 'root', source: { subagent: { thread_spawn: { parent_thread_id: 'root', depth: 1 } } } })),
+    line({ timestamp: '2026-09-09T10:00:05Z', type: 'event_msg', payload: { type: 'task_complete' } }),
+  ].join('\n'));
+  return join(root, 'sessions');
+}
+
+test('ingestAll ingests Codex rollouts and links subagents to their root thread', async () => {
+  const codexDir = await codexFixture();
+  const db = openStore(':memory:');
+  const res = await ingestAll({ claudeDir: null, codexDir, guardAudit: '/nope', db, projectDirs: ['/p/app'] });
+  assert.equal(res.changed, 2);
+  const got = getSession(db, 'root');
+  assert.equal(got.session.entrypoint, 'codex-cli');
+  assert.equal(got.session.project_dir, '/p/app');
+  assert.deepEqual(got.children.map((c) => c.session_id), ['sub']);
+  assert.deepEqual(listSessions(db).filter((s) => !s.parent_session_id).map((s) => s.session_id), ['root']);
+  const again = await ingestAll({ claudeDir: null, codexDir, guardAudit: '/nope', db, projectDirs: ['/p/app'] });
+  assert.equal(again.skipped, 2);
+  assert.equal(getSession(db, 'sub').session.parent_session_id, 'root', 'link survives the incremental run');
+});

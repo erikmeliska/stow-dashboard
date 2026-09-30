@@ -10,6 +10,9 @@
  * is also recorded on its own in the `subagents` table (type + description
  * from the sibling `.meta.json`) so the UI can break the family down.
  *
+ * Codex rollouts (`~/.codex/sessions`, parsed by codex-ingest.mjs) are ingested
+ * in the same pass; their subagents carry an explicit root-thread parent.
+ *
  * Hook-spawned SDK sessions (see session-link.mjs) get a `kind` from the
  * parser and are attached to a parent by `linkChildren` after every walk.
  *
@@ -36,14 +39,30 @@ import { extractContext, ticketRegex } from './context.mjs';
 import { scoreSession, verifyRegex } from './quality.mjs';
 import { ledgerFile } from '../state-dir.mjs';
 import { listGeminiDbs, parseGeminiSession } from './gemini-ingest.mjs';
+import { listCodexFiles } from '../usage.mjs';
+import { parseCodexSession } from './codex-ingest.mjs';
 
 export function defaultIngestPaths(env = process.env) {
   return {
     claudeDir: env.CC_CLAUDE_DIR || join(homedir(), '.claude', 'projects'),
     geminiDir: env.CC_GEMINI_DIR || join(homedir(), '.gemini', 'antigravity', 'conversations'),
     geminiCliDir: env.CC_GEMINI_CLI_DIR || join(homedir(), '.gemini', 'antigravity-cli', 'conversations'),
+    codexDir: env.CC_CODEX_DIR || join(homedir(), '.codex', 'sessions'),
     guardAudit: env.CC_GUARD_AUDIT || join(homedir(), '.claude', 'cc-guard', 'audit.jsonl'),
   };
+}
+
+/** Known project dirs (for mapping a cwd to its project): explicit list, else the scanned ledger. */
+async function loadProjectDirs(projectDirs) {
+  if (projectDirs) return projectDirs;
+  const out = [];
+  try {
+    for (const line of (await readFile(ledgerFile(), 'utf8')).split('\n')) {
+      if (!line.trim()) continue;
+      try { const d = JSON.parse(line); if (d.directory) out.push(d.directory); } catch { /* skip */ }
+    }
+  } catch { /* ledger missing */ }
+  return out;
 }
 
 async function safeReaddir(dir) {
@@ -162,13 +181,15 @@ export async function linkChildren(db, { readText = (f) => readFile(f, 'utf8'), 
 }
 
 /**
- * @param {{claudeDir: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean}} opts
+ * `codexDir` (optional) is the Codex sessions root.
+ * @param {{claudeDir: string, codexDir?: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean}} opts
  * @returns {Promise<{sessions: number, changed: number, skipped: number, linked: number, ms: number}>}
  */
 export async function ingestAll({
   claudeDir,
   geminiDir = null,
   geminiCliDir = null,
+  codexDir = null,
   guardAudit,
   db,
   env = process.env,
@@ -236,20 +257,7 @@ export async function ingestAll({
   if (geminiDir || geminiCliDir) {
     const geminiDbs = await listGeminiDbs([geminiDir, geminiCliDir]);
     if (geminiDbs.length > 0) {
-      let projects = projectDirs;
-      if (!projects) {
-        projects = [];
-        try {
-          const text = await readFile(ledgerFile(), 'utf8');
-          for (const line of text.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const d = JSON.parse(line);
-              if (d.directory) projects.push(d.directory);
-            } catch { /* skip */ }
-          }
-        } catch { /* ledger missing */ }
-      }
+      const projects = await loadProjectDirs(projectDirs);
 
       for (const file of geminiDbs) {
         let s;
@@ -280,6 +288,37 @@ export async function ingestAll({
         }
         sessions++; changed++;
       }
+    }
+  }
+
+  if (codexDir) {
+    const files = await listCodexFiles(codexDir);
+    const projects = files.length ? await loadProjectDirs(projectDirs) : [];
+    for (const file of files) {
+      let s;
+      try { s = await stat(file); } catch { continue; }
+      const signature = `${basename(file)}:${s.size}:${Math.floor(s.mtimeMs / 1000)}`;
+      const prev = state.get(file);
+      if (prev && prev.signature === signature && prev.session_id) { sessions++; skipped++; continue; }
+      let text;
+      try { text = await readFile(file, 'utf8'); } catch { continue; }
+      const row = parseCodexSession(text, { rawRef: file, projectDirs: projects, ticketPattern });
+      if (!row) continue;
+      db.exec('BEGIN');
+      try {
+        upsertSession(db, row);
+        replaceTools(db, row.session_id, row._tools);
+        replaceSkills(db, row.session_id, row._skills, row._editedSkills);
+        replaceGuardHits(db, row.session_id, []); // cc-guard only sees Claude Code
+        // Explicit parent from session_meta: no timing heuristic (see session-link.mjs).
+        if (row._parent) setParent(db, row.session_id, row._parent);
+        setIngestState(db, file, row.session_id, signature);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
+      sessions++; changed++;
     }
   }
 
