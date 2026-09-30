@@ -5,6 +5,8 @@
  * owns the data; this layer only reads it at request time.
  */
 
+import { localDay } from './session-tree.mjs'
+
 const MODEL_SLOTS = 5 // donut cap: top 5 models + 'Other' keeps the part-to-whole ≤ 6 segments
 
 /** '7d' | '30d' | '90d' | 'all' → ISO cutoff (null = no cutoff). */
@@ -39,11 +41,20 @@ export function sessionAnalytics(db, { since = null } = {}) {
     SELECT count(*) n
     FROM guard_hits g JOIN sessions s ON s.session_id = g.session_id ${where}`)
 
-  const perDayRaw = all(`
-    SELECT substr(s.started_at, 1, 10) day, sum(parent_session_id IS NULL) sessions,
-           coalesce(sum(cost_usd), 0) cost_usd,
-           coalesce(sum(input_tokens + output_tokens), 0) tokens
-    FROM sessions s ${where} GROUP BY day ORDER BY day`)
+  // Local calendar days (the server runs on the user's machine), matching the
+  // /sessions table and calendar; SQL substr() would bucket by UTC day.
+  const perDayMap = new Map()
+  for (const r of all(`SELECT s.started_at, s.parent_session_id, s.cost_usd, s.input_tokens, s.output_tokens FROM sessions s ${where}`)) {
+    const t = Date.parse(r.started_at || '')
+    if (!Number.isFinite(t)) continue
+    const day = localDay(new Date(t))
+    const d = perDayMap.get(day) || { day, sessions: 0, cost_usd: 0, tokens: 0 }
+    if (!r.parent_session_id) d.sessions++
+    d.cost_usd += r.cost_usd || 0
+    d.tokens += (r.input_tokens || 0) + (r.output_tokens || 0)
+    perDayMap.set(day, d)
+  }
+  const perDayRaw = [...perDayMap.values()].sort((a, b) => a.day.localeCompare(b.day))
 
   const byModelRaw = all(`
     SELECT coalesce(model, 'unknown') model, count(*) sessions,

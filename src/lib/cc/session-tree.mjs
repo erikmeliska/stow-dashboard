@@ -109,7 +109,7 @@ export const GROUP_BY = {
   model: { label: 'Model', key: (f) => f.model || '(unknown)', order: 'cost' },
 };
 
-function localDay(d) {
+export function localDay(d) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }

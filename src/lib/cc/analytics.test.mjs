@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits } from './store.mjs'
+import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, setParent } from './store.mjs'
 import { sessionAnalytics, portfolioAnalytics, sinceForRange } from './analytics.mjs'
+import { localDay } from './session-tree.mjs'
 
 function seedStore() {
   const db = openStore(':memory:')
@@ -206,4 +207,16 @@ test('sessionAnalytics counts only top-level sessions but keeps child cost in th
   assert.deepEqual(a.perDay.map((d) => d.sessions), [1])
   assert.equal(a.topProjects[0].sessions, 1)
   assert.equal(a.topProjects[0].cost_usd, 12)
+})
+
+test('sessionAnalytics perDay buckets by local day, like /sessions', () => {
+  const db = openStore(':memory:')
+  // 23:30 local on Sep 1 — UTC may already be Sep 2 (or still Sep 1 west of UTC).
+  const late = new Date(2026, 8, 1, 23, 30)
+  upsertSession(db, { session_id: 'a', started_at: late.toISOString(), cost_usd: 2, input_tokens: 1, output_tokens: 1 })
+  upsertSession(db, { session_id: 'k', started_at: late.toISOString(), cost_usd: 1, input_tokens: 0, output_tokens: 0 })
+  setParent(db, 'k', 'a')
+  const a = sessionAnalytics(db)
+  assert.deepEqual(a.perDay.map((d) => [d.day, d.sessions, d.cost_usd, d.tokens]), [[localDay(late), 1, 3, 2]])
+  db.close()
 })
