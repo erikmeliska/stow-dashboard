@@ -5,8 +5,8 @@ import { format, isSameMonth, isToday } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
-  bannerIds, calendarFamilies, calendarSlot, daySegment, harnessBadge, layoutDay, periodLabel, periodStats,
-  projectColor, shiftPeriod,
+  bannerIds, calendarFamilies, calendarSlot, colorBy, colorLegend, COLOR_MODES, DEFAULT_COLOR_MODE, daySegment,
+  harnessBadge, layoutDay, periodLabel, periodStats, shiftPeriod,
 } from '@/lib/cc/session-calendar.mjs'
 import { SummaryBanner } from './summary-banner'
 import { displayTitle, OUTCOME_ICON, parseSummary } from '@/lib/cc/summary-view.mjs'
@@ -15,6 +15,7 @@ const HOUR_PX = 44
 const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '—')
 const fmtCost = (c) => `$${(c || 0).toFixed(2)}`
 const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
+const COLOR_KEY = 'stow.calendar.colorBy'
 
 /**
  * `loadedKey`/`wantKey` (see loadKey): the families on hand may still be the
@@ -23,6 +24,15 @@ const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
  */
 export function CalendarView({ families, range, loadedKey, wantKey, selected, onOpen, onNavigate, onSpan, onRefresh }) {
   const [showAll, setShowAll] = useState(false)
+  // Per-viewer preference; read after mount so the server render stays stable.
+  const [colorMode, setColorMode] = useState(DEFAULT_COLOR_MODE)
+  useEffect(() => {
+    try { const v = localStorage.getItem(COLOR_KEY); if (v && COLOR_MODES[v]) setColorMode(v) } catch { /* storage blocked */ }
+  }, [])
+  function pickColor(v) {
+    setColorMode(v)
+    try { localStorage.setItem(COLOR_KEY, v) } catch { /* storage blocked */ }
+  }
   const events = useMemo(() => calendarFamilies(families, { showAll }), [families, showAll])
   const ready = loadedKey != null && loadedKey === wantKey
   const stats = ready ? periodStats(events.filter((e) => !e.muted)) : null
@@ -30,18 +40,20 @@ export function CalendarView({ families, range, loadedKey, wantKey, selected, on
   const missing = bannerIds({ loadedKey, wantKey, events })
   return (
     <div className="flex h-full min-w-0 flex-col">
-      <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan} />
+      <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan}
+        colorMode={colorMode} onColorMode={pickColor} />
+      <ColorLegend events={events} mode={colorMode} />
       <SummaryBanner ids={missing} periodKey={periodKey} onProgress={onRefresh} />
       {range.span === 'week'
-        ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} />
-        : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} />}
+        ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} colorMode={colorMode} />
+        : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} colorMode={colorMode} />}
     </div>
   )
 }
 
 const CHIPS_PER_DAY = 4
 
-function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
+function MonthGrid({ range, events, selected, onOpen, onNavigate, colorMode }) {
   const byDay = useMemo(() => {
     const m = new Map()
     for (const e of events) {
@@ -83,7 +95,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
             </div>
             <div className="space-y-0.5">
               {list.slice(0, CHIPS_PER_DAY).map((e) => (
-                <EventBlock key={e.session_id} e={e} compact selected={selected === e.session_id} onOpen={onOpen} />
+                <EventBlock key={e.session_id} e={e} compact colorMode={colorMode} selected={selected === e.session_id} onOpen={onOpen} />
               ))}
               {list.length > CHIPS_PER_DAY && (
                 <button onClick={() => openWeek(d)} className="text-[11px] text-muted-foreground hover:text-foreground">+{list.length - CHIPS_PER_DAY} more</button>
@@ -98,7 +110,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
   )
 }
 
-function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan }) {
+function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan, colorMode, onColorMode }) {
   const doneShare = stats?.described ? Math.round((stats.done / stats.described) * 100) : null
   return (
     <div className="flex flex-wrap items-center gap-3 py-2">
@@ -120,14 +132,21 @@ function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan }) 
           {doneShare != null && ` · ${doneShare}% done, ${stats.partial} partial`}
         </> : 'Loading…'}
       </span>
+      <label className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
+        Color by
+        <select value={colorMode} onChange={(ev) => onColorMode(ev.target.value)}
+          className="h-7 rounded-md border bg-transparent px-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring">
+          {Object.entries(COLOR_MODES).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+        </select>
+      </label>
       <button onClick={() => onShowAll(!showAll)} aria-pressed={showAll}
-        className={`ml-auto rounded-full border px-2 py-0.5 text-xs ${showAll ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        className={`rounded-full border px-2 py-0.5 text-xs ${showAll ? 'border-primary bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         title="Also show agent spawns, scheduled runs and trivial sessions (muted)">+ agent/scheduled</button>
     </div>
   )
 }
 
-function WeekGrid({ days, events, selected, onOpen }) {
+function WeekGrid({ days, events, selected, onOpen, colorMode }) {
   const scroller = useRef(null)
   useEffect(() => { if (scroller.current) scroller.current.scrollTop = 7 * HOUR_PX }, [])
   const perDay = useMemo(() => days.map((day) => {
@@ -160,7 +179,7 @@ function WeekGrid({ days, events, selected, onOpen }) {
             <div key={+days[i]} className={`relative border-l ${isToday(days[i]) ? 'bg-muted/30' : ''}`}>
               {Array.from({ length: 24 }, (_, h) => <div key={h} className="absolute inset-x-0 border-t border-border/50" style={{ top: h * HOUR_PX }} />)}
               {segs.map((s) => (
-                <EventBlock key={s.e.session_id} e={s.e} selected={selected === s.e.session_id} onOpen={onOpen}
+                <EventBlock key={s.e.session_id} e={s.e} colorMode={colorMode} selected={selected === s.e.session_id} onOpen={onOpen}
                   style={{ top: (s.top / 60) * HOUR_PX, height: Math.max((s.height / 60) * HOUR_PX - 1, 14), left: `calc(${(s.col / s.cols) * 100}% + 1px)`, width: `calc(${100 / s.cols}% - 2px)` }} />
               ))}
             </div>
@@ -182,12 +201,29 @@ function OutcomeMark({ e }) {
   return <span title={sum.outcome} className="flex-none">{OUTCOME_ICON[sum.outcome] || ''}</span>
 }
 
-export function EventBlock({ e, style, selected, onOpen, compact = false }) {
+/** What the colours currently mean: one swatch per bucket, with how many shown sessions fall in it. */
+function ColorLegend({ events, mode }) {
+  const items = colorLegend(events, mode)
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label={`Colour legend: ${COLOR_MODES[mode]?.label}`}>
+      <span className="font-medium text-foreground">{COLOR_MODES[mode]?.label}:</span>
+      {items.map((b) => (
+        <span key={b.key} className={`inline-flex items-center gap-1 ${b.count === 0 ? 'opacity-50' : ''}`}>
+          {b.color && <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: b.color }} />}
+          {b.label} <span className="tabular-nums">{b.count}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+export function EventBlock({ e, style, selected, onOpen, compact = false, colorMode = DEFAULT_COLOR_MODE }) {
   const title = displayTitle(e) || 'Untitled session'
-  const color = projectColor(e.project_dir)
+  const bucket = colorBy(e, colorMode)
+  const color = bucket.color
   const r = e.rollup || e
   const mins = Math.round((r.active_s || 0) / 60)
-  const tip = `${title}\n${projectName(e.project_dir)} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}`
+  const tip = `${title}\n${projectName(e.project_dir)} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
   return (
     <button onClick={() => onOpen(e.session_id)} title={tip}
       className={`${compact ? 'relative w-full' : 'absolute'} overflow-hidden rounded-sm border-l-4 px-1 py-0.5 text-left text-[11px] leading-tight hover:z-10 hover:shadow ${e.muted ? 'opacity-50' : ''} ${selected ? 'ring-2 ring-ring' : ''}`}

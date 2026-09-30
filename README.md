@@ -23,7 +23,7 @@ Available as a **web app** or **native desktop app** (macOS).
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
 - **AI Session Viewer** - `/sessions` lists your agentic sessions from Claude Code, Codex and Antigravity (tokens, cost, tools, skills, guard hits, quality score, AI summaries) from a local SQLite store, grouped into families: expand a session to see its subagents and hook-spawned child sessions, with the whole package rolled up
-- **Session Calendar** - Week and month views of what you worked on, coloured by project, with a title, outcome (done / partial / abandoned / exploration) and cost on every block; scheduled runs and agent spawns hidden by default
+- **Session Calendar** - Week and month views of what you worked on, with a title, outcome and cost on every block. The colours can switch between outcome (default), project, harness, kind, cost and quality, and a legend with counts shows what they currently mean. Scheduled runs and agent spawns are hidden by default
 - **Batch Summaries** - The calendar offers to fill in missing AI summaries for exactly what is on screen (with a time estimate), shows progress, and shares one job with the CLI and the MCP server
 - **Analytics** - `/analytics` charts both worlds: agentic sessions (cost, models, tools, skills, quality; 7d–all range) and the project portfolio (categories, languages, AI cost, commit activity)
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
@@ -35,7 +35,7 @@ Available as a **web app** or **native desktop app** (macOS).
 
 *All screenshots use synthetic demo data.*
 
-**Session calendar: month.** Every work session is a chip with its harness (C = Claude Code, X = Codex, G = Antigravity) and outcome. The banner offers to summarise the sessions on screen that have no summary yet.
+**Session calendar: month.** Every work session is a chip with its harness (C = Claude Code, X = Codex, G = Antigravity) and outcome icon, coloured here by outcome (see the legend; switch it with *Color by*). The banner offers to summarise the sessions on screen that have no summary yet.
 
 ![Session calendar, month view](docs/screenshots/sessions-calendar-month.png)
 

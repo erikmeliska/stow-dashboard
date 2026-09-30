@@ -98,6 +98,122 @@ export function harnessBadge(s) {
   return { letter: 'C', label: 'Claude Code' };
 }
 
+// ---- colour modes ("Color by") ----
+//
+// Each mode maps a session to a bucket with a fixed colour. Palettes follow the
+// dataviz rules: outcome is a *status* encoding (status colours + the outcome
+// icon on every block, so colour never carries it alone), harness and kind are
+// categorical in fixed --viz order, cost and quality are one-hue ordinal ramps
+// (--seq-1..4, light→dark). Colours are CSS variables defined per theme in
+// globals.css. Project keeps its hashed colour (only 6 hues: projects can share).
+
+const NEUTRAL = 'var(--viz-axis)';
+const SEQ = ['var(--seq-1)', 'var(--seq-2)', 'var(--seq-3)', 'var(--seq-4)'];
+const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '—');
+const bin = (v, edges) => edges.findIndex((edge) => v < edge);
+
+export const COLOR_MODES = {
+  outcome: {
+    label: 'Outcome',
+    buckets: [
+      { key: 'done', label: 'Done', color: 'var(--status-good)' },
+      { key: 'partial', label: 'Partial', color: 'var(--status-warning)' },
+      { key: 'abandoned', label: 'Abandoned', color: 'var(--status-critical)' },
+      { key: 'exploration', label: 'Exploration', color: 'var(--viz-1)' },
+      { key: 'none', label: 'No summary', color: NEUTRAL },
+    ],
+    key: (e) => {
+      const o = parseSummary(e)?.outcome;
+      return ['done', 'partial', 'abandoned', 'exploration'].includes(o) ? o : 'none';
+    },
+  },
+  project: { label: 'Project' },
+  harness: {
+    label: 'Harness',
+    buckets: [
+      { key: 'claude', label: 'Claude Code', color: 'var(--viz-1)' },
+      { key: 'codex', label: 'Codex', color: 'var(--viz-2)' },
+      { key: 'antigravity', label: 'Antigravity', color: 'var(--viz-3)' },
+    ],
+    key: (e) => {
+      const src = sourceOf(e);
+      return src === 'codex' || src === 'antigravity' ? src : 'claude';
+    },
+  },
+  kind: {
+    label: 'Kind',
+    buckets: [
+      { key: 'work', label: 'Work', color: 'var(--viz-1)' },
+      { key: 'scheduled', label: 'Scheduled', color: 'var(--viz-4)' },
+      { key: 'agent-spawn', label: 'Agent spawn', color: 'var(--viz-5)' },
+      { key: 'trivial', label: 'Trivial', color: NEUTRAL },
+    ],
+    key: (e) => e.ek || effectiveKind(e),
+  },
+  cost: {
+    label: 'Cost',
+    buckets: [
+      { key: 'c1', label: '< $1', color: SEQ[0] },
+      { key: 'c2', label: '$1–5', color: SEQ[1] },
+      { key: 'c3', label: '$5–20', color: SEQ[2] },
+      { key: 'c4', label: '≥ $20', color: SEQ[3] },
+    ],
+    key: (e) => {
+      const i = bin((e.rollup || e).cost_usd || 0, [1, 5, 20]);
+      return `c${i === -1 ? 4 : i + 1}`;
+    },
+  },
+  quality: {
+    label: 'Quality',
+    buckets: [
+      { key: 'q1', label: '< 50', color: SEQ[0] },
+      { key: 'q2', label: '50–74', color: SEQ[1] },
+      { key: 'q3', label: '75–89', color: SEQ[2] },
+      { key: 'q4', label: '≥ 90', color: SEQ[3] },
+      { key: 'none', label: 'Unscored', color: NEUTRAL },
+    ],
+    key: (e) => {
+      if (e.quality_score == null) return 'none';
+      const i = bin(e.quality_score, [50, 75, 90]);
+      return `q${i === -1 ? 4 : i + 1}`;
+    },
+  },
+};
+
+export const DEFAULT_COLOR_MODE = 'outcome';
+const PROJECT_LEGEND_MAX = 8;
+
+/** The bucket (key, label, colour) a session falls into under `mode`. */
+export function colorBy(e, mode) {
+  if (mode === 'project') return { key: e.project_dir || '', label: projectName(e.project_dir), color: projectColor(e.project_dir) };
+  const m = COLOR_MODES[mode]?.buckets ? COLOR_MODES[mode] : COLOR_MODES[DEFAULT_COLOR_MODE];
+  const k = m.key(e);
+  return m.buckets.find((b) => b.key === k) || m.buckets.at(-1);
+}
+
+/**
+ * Legend for the shown events: fixed buckets in their order (with counts, empty
+ * ones kept so the scale reads complete); for projects the most frequent ones,
+ * capped, with a "+N more" tail.
+ */
+export function colorLegend(events, mode) {
+  const counts = new Map();
+  for (const e of events || []) {
+    const b = colorBy(e, mode);
+    const c = counts.get(b.key) || { ...b, count: 0 };
+    c.count++;
+    counts.set(b.key, c);
+  }
+  if (mode === 'project') {
+    const all = [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    if (all.length <= PROJECT_LEGEND_MAX + 1) return all;
+    const rest = all.slice(PROJECT_LEGEND_MAX);
+    return [...all.slice(0, PROJECT_LEGEND_MAX), { key: 'more', label: `+${rest.length} more`, color: null, count: rest.reduce((a, b) => a + b.count, 0) }];
+  }
+  const m = COLOR_MODES[mode]?.buckets ? COLOR_MODES[mode] : COLOR_MODES[DEFAULT_COLOR_MODE];
+  return m.buckets.map((b) => ({ ...b, count: counts.get(b.key)?.count || 0 }));
+}
+
 /** Families to draw: work always, the rest only with showAll (muted). */
 export function calendarFamilies(families, { showAll = false } = {}) {
   const out = [];

@@ -98,6 +98,15 @@ body {
   --viz-6: #008300;
   --viz-grid: #e1e0d9;
   --viz-axis: #898781;
+  /* Status (fixed, mode-invariant) — always paired with an icon + label. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  /* One-hue ordinal ramp (blue), low → high; light mode starts at step 250. */
+  --seq-1: #86b6ef;
+  --seq-2: #3987e5;
+  --seq-3: #1c5cab;
+  --seq-4: #0d366b;
 }
 .dark {
   --viz-1: #3987e5;
@@ -108,4 +117,12 @@ body {
   --viz-6: #008300;
   --viz-grid: #2c2c2a;
   --viz-axis: #898781;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  /* Dark: low values recede toward the surface (no darker than step 600), high are bright. */
+  --seq-1: #184f95;
+  --seq-2: #2a78d6;
+  --seq-3: #5598e7;
+  --seq-4: #9ec5f4;
 }

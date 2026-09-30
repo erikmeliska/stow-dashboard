@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   periodRange, shiftPeriod, calendarSlot, daySegment, layoutDay, projectColor, harnessBadge,
-  calendarFamilies, missingSummaryIds, periodStats, formatEta, loadKey, bannerIds,
+  calendarFamilies, missingSummaryIds, periodStats, formatEta, loadKey, bannerIds, colorBy, colorLegend, COLOR_MODES,
 } from './session-calendar.mjs';
 
 const L = (d, h = 0, m = 0) => new Date(2026, 8, d, h, m); // September 2026, local
@@ -104,4 +104,41 @@ test('bannerIds: only the missing ids of data loaded for the displayed view+rang
   // Another project filter.
   assert.deepEqual(bannerIds({ loadedKey: loadKey({ view: 'calendar', project: '/p', range }), wantKey: want, events: ev, now }), []);
   assert.deepEqual(bannerIds({ loadedKey: null, wantKey: want, events: ev, now }), []);
+});
+
+test('colorBy: every mode buckets a session and exposes its colour', () => {
+  const s = (o) => ({ session_id: 'x', project_dir: '/p/app', entrypoint: 'cli', kind: 'main', rollup: { cost_usd: 0 }, ...o });
+  const sum = (outcome) => JSON.stringify({ v: 2, outcome });
+  assert.equal(colorBy(s({ summary: sum('done') }), 'outcome').key, 'done');
+  assert.equal(colorBy(s({ summary: sum('exploration') }), 'outcome').color, 'var(--viz-1)');
+  assert.equal(colorBy(s({}), 'outcome').key, 'none');
+  assert.equal(colorBy(s({ summary: '{broken' }), 'outcome').key, 'none');
+  assert.equal(colorBy(s({ entrypoint: 'codex-desktop' }), 'harness').key, 'codex');
+  assert.equal(colorBy(s({ entrypoint: 'antigravity' }), 'harness').key, 'antigravity');
+  assert.equal(colorBy(s({ kind: 'scheduled' }), 'kind').key, 'scheduled');
+  assert.equal(colorBy(s({ rollup: { cost_usd: 0.4 } }), 'cost').key, 'c1');
+  assert.equal(colorBy(s({ rollup: { cost_usd: 5 } }), 'cost').key, 'c3');
+  assert.equal(colorBy(s({ rollup: { cost_usd: 20 } }), 'cost').key, 'c4');
+  assert.equal(colorBy(s({ quality_score: null }), 'quality').key, 'none');
+  assert.equal(colorBy(s({ quality_score: 90 }), 'quality').key, 'q4');
+  assert.equal(colorBy(s({ quality_score: 49 }), 'quality').key, 'q1');
+  assert.equal(colorBy(s({}), 'project').color, projectColor('/p/app'));
+  assert.equal(colorBy(s({ summary: sum('done') }), 'nonsense').key, 'done', 'unknown mode falls back to outcome');
+});
+
+test('colorLegend lists buckets in fixed order with counts; project legend by count, capped', () => {
+  const ev = [
+    { project_dir: '/p/a', summary: JSON.stringify({ v: 2, outcome: 'done' }) },
+    { project_dir: '/p/a', summary: JSON.stringify({ v: 2, outcome: 'done' }) },
+    { project_dir: '/p/b' },
+  ];
+  const out = colorLegend(ev, 'outcome');
+  assert.deepEqual(out.map((b) => [b.key, b.count]), [['done', 2], ['partial', 0], ['abandoned', 0], ['exploration', 0], ['none', 1]]);
+  const proj = colorLegend(ev, 'project');
+  assert.deepEqual(proj.map((b) => [b.label, b.count]), [['a', 2], ['b', 1]]);
+  const many = Array.from({ length: 12 }, (_, i) => ({ project_dir: `/p/x${i}` }));
+  const capped = colorLegend(many, 'project');
+  assert.equal(capped.length, 9);
+  assert.equal(capped.at(-1).label, '+4 more');
+  assert.ok(COLOR_MODES.outcome && COLOR_MODES.harness && COLOR_MODES.cost);
 });
