@@ -154,7 +154,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
 - `scripts/calibrate-usage.mjs` - Hand-run cross-check of `data/usage.json` cost against `ccusage` (read-only, not part of `npm test`)
 - `src/lib/cc/store.mjs` - `node:sqlite` session store (`data/cc-sessions.db`): sessions (+ `parent_session_id`/`kind`/`entrypoint`), subagents, tool_usage, skill_usage, guard_hits
-- `src/lib/cc/session-link.mjs` - Session families: `kind` classification of hook-spawned SDK transcripts and the timing-based parent picker
+- `src/lib/cc/session-link.mjs` - Session families: `kind` classification of hook-spawned SDK transcripts, the timing-based parent picker, and `effectiveKind` (work|agent-spawn|scheduled|trivial)
 - `src/lib/cc/session-tree.mjs` - Pure family/rollup builder for the `/sessions` page (own vs subagents vs linked children) plus `groupFamilies` (day/week/project/branch/ticket/model with subtotals) and `sortFamilies`
 - `src/lib/cc/session-filters.mjs` - Client-side filters for `/sessions`: search (ticket/project/branch), model, quality, source bucket (`sourceOf`), quick-filter chips (`QUICK_FILTERS`)
 - `src/lib/cc/ingest.mjs` - Pure per-session transcript parser (reuses `usage.mjs` + `usage-pricing.mjs`; adds tools/skills/`skill_edited`)
@@ -167,11 +167,11 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/cc-ingest.mjs` - Thin CLI over `ingest-run.mjs` (`--full`)
 - `src/app/api/sessions/ingest/route.js` - `POST` runs the incremental ingest (called by the `/sessions` page on load/Reload and by the refresh cycle)
 - `src/lib/cc/codex-ingest.mjs` - Codex rollout parser (`~/.codex/sessions`): sessions, tokens/cost, subagents linked to the root thread via `session_meta`
-- `src/lib/cc/summary-view.mjs` - Summary v1/v2 normaliser, display-title priority, `effectiveKind`
+- `src/lib/cc/summary-view.mjs` - Summary v1/v2 normaliser, display-title priority, `needsSummary` (client-safe, no fs)
 - `src/lib/cc/summary-batch.mjs` - Batch summary runner (never rejects; marks job `stopped` on fatal errors), estimate, job state in `summary_jobs`
 - `src/lib/cc/session-calendar.mjs` - Pure calendar logic: local-day ranges, event placement, week/month layout, period stats
 - `src/app/sessions/calendar-view.js` + `summary-banner.js` - Week/month calendar UI and the "fill in missing summaries" banner
-- `src/app/api/sessions/summarize-batch/route.js` (+ `estimate/`) - Start/poll/stop batch job, pre-run estimate
+- `src/app/api/sessions/summarize-batch/route.js` (+ `estimate/`) - Start/poll batch job (no stop endpoint), pre-run estimate
 - `scripts/cc-import-summaries.mjs` - CLI for the PoC summary import
 - `scripts/cc-eval.mjs` - CLI for on-demand AI summaries (`npm run cc:eval -- --summaries`)
 - `src/app/api/sessions/route.js` + `summarize/route.js` + `src/app/sessions/page.js` - Session list/detail API, summarize action, and the session viewer
@@ -287,10 +287,10 @@ A second, session-centric view of Claude Code usage lives in `data/cc-sessions.d
 
 #### Session calendar & batch summaries
 
-- **Sources**: Claude transcripts, `cc-guard` audit, and Codex rollouts (`CC_CODEX_DIR`, default `~/.codex/sessions`, `codex-ingest.mjs`). Codex subagents link to the **root** thread (`session_meta.payload.session_id`, flat families, shown in the parent's rollup). New `sessions` columns `title`/`title_source`/`user_prompts`; `kind` may now be `scheduled`. `effectiveKind` (`summary-view.mjs`) resolves to `work|agent|scheduled|trivial`. Display title priority: `custom` > `summary.title` > `ai` > first prompt.
+- **Sources**: Claude transcripts, `cc-guard` audit, and Codex rollouts (`CC_CODEX_DIR`, default `~/.codex/sessions`, `codex-ingest.mjs`). Codex subagents link to the **root** thread (`session_meta.payload.session_id`, flat families, shown in the parent's rollup). New `sessions` columns `title`/`title_source`/`user_prompts`; `kind` may now be `scheduled`. `effectiveKind` (`session-link.mjs`) resolves to `work|agent-spawn|scheduled|trivial`. Display title priority: `custom` > `summary.title` > `ai` > first prompt.
 - **Summary v2**: `{v:2, title, what, outcome: done|partial|abandoned|exploration, improvements (≤5), followups (≤4), kind_hint, model, ms}`; v1 rows stay readable. Titles are never overwritten by summaries.
-- **Batch**: `POST /api/sessions/summarize-batch` (+ `estimate/`, range GET). Model `CC_SUMMARY_BATCH_MODEL` (default `claude-sonnet-5-5`), concurrency 3. Job state lives in SQLite `summary_jobs` (cross-process with the MCP server `summarize_sessions`, 60 s stale heartbeat). The runner never rejects and marks the job `stopped` on fatal errors; sessions whose last write is < 10 min old are skipped (10-min rule). `cc:eval` drives it with a live heartbeat clock. `openStore` sets `PRAGMA busy_timeout = 5000` for file DBs so the web app, CLI and MCP can share the DB. Estimate: `ceil(count/concurrency) x median(ms of last 50)`, fallback 30 s (Sonnet) / 10 s (haiku) per session.
-- **Calendar** (`/sessions?view=calendar&span=week|month&date=YYYY-MM-DD`): Table|Calendar toggle, local time, Monday first, max span one month, default shows only `work` (chip reveals agent/scheduled/trivial muted; `scheduled` gets a neutral badge). Placement: `end = ended_at` if span <= 5 h else `start + max(active_s, 30 min)`, min height 15 min. Banner scope = visible events missing a v2 summary. The page ignores stale load responses (latest request wins). One-off PoC import: `npm run cc:import-summaries`.
+- **Batch**: `POST /api/sessions/summarize-batch` (+ `estimate/`, range GET). Model `CC_SUMMARY_BATCH_MODEL` (default `claude-sonnet-5-5`), concurrency 3. Job state lives in SQLite `summary_jobs` (cross-process with the MCP server `summarize_sessions`, 60 s stale heartbeat). The runner never rejects and marks the job `stopped` on fatal errors; sessions whose last write is < 10 min old are skipped (10-min rule), and so are sessions whose transcript (`raw_ref`) is gone from disk. Concurrency is clamped to 1..8; a start with nothing to do inserts no job row and returns the latest job with `started: false`. `cc:eval` drives it with a live heartbeat clock. `openStore` sets `PRAGMA busy_timeout = 5000` for file DBs so the web app, CLI and MCP can share the DB. Estimate: `ceil(count/concurrency) x median(ms of last 50)`, fallback 30 s (Sonnet) / 10 s (haiku) per session.
+- **Calendar** (`/sessions?view=calendar&span=week|month&date=YYYY-MM-DD`): Table|Calendar toggle, local time, Monday first, max span one month, default shows only `work` (chip reveals agent/scheduled/trivial muted; `scheduled` gets a neutral badge). Placement: `end = ended_at` if span <= 5 h else `start + max(active_s, 30 min)`, min height 15 min. Banner scope = visible events (current period, filters, chip) with no summary at all (v0; `--upgrade` is CLI/MCP only), counted only once the loaded data matches the displayed view/period/project (`loadKey`/`bannerIds`). The page ignores stale load responses (latest request wins). One-off PoC import: `npm run cc:import-summaries`.
 
 ### Quick Filters
 
@@ -312,7 +312,7 @@ Tools (23):
 - `get_status`, `set_status`, `list_scripts`, `run_script`
 - `list_tasks`, `add_task`, `verify_task`, `completed_tasks`, `dispatch_task`, `generate_changelog`
 - `find_reusable_assets` — search AI-discovered harvestable building blocks across all projects
-- `list_sessions` (period + kind filter, rollup numbers, summary), `summarize_sessions` (background batch, cross-process job state)
+- `list_sessions` (period + kind filter, rollup numbers, summary), `summarize_sessions` (background batch, cross-process job state; `status_only: true` only reports the latest job + missing count, and a call with nothing missing reports the latest job instead of starting one)
 
 ## Data Requirements
 
