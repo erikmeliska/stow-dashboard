@@ -643,7 +643,7 @@ function SessionsView() {
               range={range}
               selected={selected}
               onOpen={open}
-              onNavigate={(d) => setParams({ date: format(d, 'yyyy-MM-dd') })}
+              onNavigate={(d, span) => setParams({ date: format(d, 'yyyy-MM-dd'), ...(span ? { span: span === 'week' ? null : span } : {}) })}
               onSpan={(s) => setParams({ span: s === 'week' ? null : s })}
               onRefresh={() => load({ ingest: false })}
             />

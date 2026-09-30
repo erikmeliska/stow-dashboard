@@ -24,14 +24,14 @@ export function CalendarView({ families, range, selected, onOpen, onNavigate, on
       <PeriodHeader range={range} stats={stats} showAll={showAll} onShowAll={setShowAll} onNavigate={onNavigate} onSpan={onSpan} />
       {range.span === 'week'
         ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} />
-        : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} onSpan={onSpan} />}
+        : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} />}
     </div>
   )
 }
 
 const CHIPS_PER_DAY = 4
 
-function MonthGrid({ range, events, selected, onOpen, onNavigate, onSpan }) {
+function MonthGrid({ range, events, selected, onOpen, onNavigate }) {
   const byDay = useMemo(() => {
     const m = new Map()
     for (const e of events) {
@@ -44,11 +44,14 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate, onSpan }) {
     for (const list of m.values()) list.sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
     return m
   }, [events])
-  const openWeek = (d) => { onNavigate(d); onSpan('week') }
+  const openWeek = (d) => onNavigate(d, 'week')
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-7 auto-rows-fr overflow-y-auto rounded-md border">
-      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="border-b px-1 py-1 text-center text-xs text-muted-foreground">{d}</div>)}
+    <div className="flex min-h-0 flex-1 flex-col rounded-md border">
+      <div className="grid grid-cols-7">
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="border-b px-1 py-1 text-center text-xs text-muted-foreground">{d}</div>)}
+      </div>
+      <div className="grid min-h-0 flex-1 grid-cols-7 auto-rows-[minmax(6rem,auto)] overflow-y-auto">
       {range.days.map((d) => {
         const inMonth = isSameMonth(d, range.since)
         const list = inMonth ? byDay.get(format(d, 'yyyy-MM-dd')) || [] : []
@@ -73,6 +76,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate, onSpan }) {
           </div>
         )
       })}
+      </div>
     </div>
   )
 }
