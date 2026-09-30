@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError } from './summary.mjs';
+import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, SUMMARY_SCHEMA } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -30,7 +30,11 @@ test('summarize calls claude -p with the safety/cost flags and parses structured
   const calls = [];
   const exec = async (cmd, args, opts) => { calls.push([cmd, args, opts]); return fakeExec(okResult)(); };
   const r = await summarize('text', { exec, model: 'claude-haiku-4-5', cwd: '/tmp/x', bin: 'claude' });
-  assert.deepEqual(r, { ...okResult, model: 'claude-haiku-4-5' });
+  assert.equal(r.what, okResult.what);
+  assert.equal(r.outcome, okResult.outcome);
+  assert.deepEqual(r.improvements, okResult.improvements);
+  assert.deepEqual(r.followups, okResult.followups);
+  assert.equal(r.model, 'claude-haiku-4-5');
   const [cmd, args, opts] = calls[0];
   assert.equal(cmd, 'claude');
   for (const f of ['-p', '--no-session-persistence', '--output-format', '--json-schema', '--tools', '--strict-mcp-config', '--mcp-config', '--setting-sources', '--system-prompt', '--model']) assert.ok(args.includes(f), f);
@@ -167,3 +171,50 @@ test('summarizeSession handles Gemini sessions from disk', async () => {
   assert.ok(got.session.summarized_at);
 });
 
+
+test('summarize returns summary v2 with title, kind_hint and timing', async () => {
+  let t = 1000;
+  const r = await summarize('x', { exec: fakeExec({ title: 'Port change', what: 'Set port.', outcome: 'exploration', improvements: ['a', 'b', 'c', 'd', 'e', 'f'], followups: [], kind_hint: 'trivial' }), clock: () => (t += 1500), model: 'm' });
+  assert.equal(r.v, 2);
+  assert.equal(r.title, 'Port change');
+  assert.equal(r.outcome, 'exploration');
+  assert.equal(r.kind_hint, 'trivial');
+  assert.equal(r.improvements.length, 5, 'clipped to 5');
+  assert.equal(r.ms, 1500);
+  assert.equal(r.model, 'm');
+});
+
+test('summarize tolerates model output without title/kind_hint', async () => {
+  const r = await summarize('x', { exec: fakeExec(okResult) });
+  assert.equal(r.title, null);
+  assert.equal(r.kind_hint, 'work');
+});
+
+test('claudeArgs sends the v2 schema; the prompt starts with session metadata', async () => {
+  let seen = null;
+  const exec = async (_bin, args) => { seen = args; return { stdout: JSON.stringify({ structured_output: okResult }) }; };
+  await summarize('TRANSCRIPT', { exec, meta: 'Project: app' });
+  const schema = JSON.parse(seen[seen.indexOf('--json-schema') + 1]);
+  assert.ok(schema.required.includes('kind_hint'));
+  assert.ok(schema.properties.outcome.enum.includes('exploration'));
+  assert.match(seen.at(-1), /^Project: app\n\nTranscript:\nTRANSCRIPT/);
+});
+
+test('sessionMeta / commitMessage / factsHeader / claudeFacts', () => {
+  assert.match(sessionMeta({ project_dir: '/p/app', entrypoint: 'cli', active_s: 600, turns: 4, git_branch: 'main', started_at: '2026-09-09T10:00:00Z' }), /Project: app[\s\S]*active 10 min · 4 turns · branch main/);
+  assert.equal(commitMessage('git commit -m "feat: x" && git push'), 'feat: x');
+  assert.equal(commitMessage("git commit -m \"$(cat <<'EOF'\nfix: y\n\nbody\nEOF\n)\""), 'fix: y');
+  assert.equal(commitMessage('git status'), null);
+  assert.equal(factsHeader({}), '');
+  assert.match(factsHeader({ edited: ['a/b.js', 'a/b.js'], commits: ['feat: x'], finals: ['1', '2', '3', '4'] }), /^FILES EDITED: a\/b\.js\nCOMMITS: feat: x\nFINAL ANSWER: 2\nFINAL ANSWER: 3\nFINAL ANSWER: 4\n---\n$/);
+  const facts = claudeFacts([
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: '/repo/src/lib/x.mjs' } }, { type: 'tool_use', name: 'Bash', input: { command: 'git commit -m "feat: z"' } }, { type: 'text', text: 'Done.' }] } },
+  ]);
+  assert.deepEqual(facts, { edited: ['lib/x.mjs'], commits: ['feat: z'], finals: ['Done.'] });
+});
+
+test('distill prepends the facts header and still respects maxChars', () => {
+  const withEdit = [...lines, { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: '/r/a/b.md' } }] } }];
+  assert.match(distill(withEdit), /^FILES EDITED: a\/b\.md\n/);
+  assert.ok(distill(withEdit, { maxChars: 40 }).length <= 40);
+});

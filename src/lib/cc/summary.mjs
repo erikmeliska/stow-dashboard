@@ -17,30 +17,38 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { execClosedStdin } from '../analyzer.mjs';
-import { assistantTexts, parseLines, toolUses, userPrompts } from './transcript.mjs';
+import { assistantTexts, bashCommands, parseLines, toolUses, userPrompts } from './transcript.mjs';
 import { decodeProto } from '../usage.mjs';
 import { getSession, setSummary } from './store.mjs';
+
+export const SUMMARY_VERSION = 2;
+export const OUTCOMES = ['done', 'partial', 'abandoned', 'exploration'];
+export const KIND_HINTS = ['work', 'agent-spawn', 'trivial'];
 
 export const SUMMARY_SCHEMA = {
   type: 'object',
   properties: {
-    what: { type: 'string', description: '1-3 sentences: what was worked on and the result' },
-    outcome: { type: 'string', enum: ['done', 'partial', 'abandoned'] },
-    improvements: { type: 'array', items: { type: 'string' }, description: 'skills/tools/process improved or created' },
-    followups: { type: 'array', items: { type: 'string' } },
+    title: { type: 'string', description: 'at most 60 characters: what the session was about, without the project name' },
+    what: { type: 'string', description: '2-4 concrete sentences: what was worked on and the result' },
+    outcome: { type: 'string', enum: OUTCOMES },
+    improvements: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'what concretely came out of it' },
+    followups: { type: 'array', items: { type: 'string' }, maxItems: 4, description: 'what is left / the next step' },
+    kind_hint: { type: 'string', enum: KIND_HINTS },
   },
-  required: ['what', 'outcome', 'improvements', 'followups'],
+  required: ['title', 'what', 'outcome', 'improvements', 'followups', 'kind_hint'],
   additionalProperties: false,
 };
 
 const SYSTEM_PROMPT = `You summarise one AI coding session from a condensed transcript. Answer ONLY with JSON matching the schema.
-"what": 1-3 plain sentences on what was worked on and what the result was.
-"outcome": done | partial | abandoned.
-"improvements": skills, tools or process that were improved or created (empty if none).
-"followups": open items explicitly left for later (empty if none).
+The first lines give metadata (project, harness, time, size) and facts extracted from the transcript (files edited, commits, final answers). Use them; do not repeat them verbatim.
+"title": at most 60 characters, what the session was about. Do not include the project name.
+"what": 2-4 plain, concrete sentences on what was worked on and what the result was.
+"outcome": done (the goal was reached) | partial (progress, work remains) | abandoned (dropped or failed) | exploration (research, questions or prototyping; no deliverable was intended).
+"improvements": what actually came out of it (features, fixes, docs, skills, decisions), at most 5; empty if nothing.
+"followups": open items or the next step, at most 4; empty if none.
+"kind_hint": work (a human drove the session) | agent-spawn (the prompt is machine-generated: a dispatched task, a persona review, a security review) | trivial (fewer than two meaningful exchanges, nothing was produced).
+Do not invent anything: if the result cannot be told from the transcript, say so cautiously.
 Be concrete. No marketing language. Write in the language the user wrote in.`;
-
-const OUTCOMES = new Set(['done', 'partial', 'abandoned']);
 
 /**
  * Where the `claude` binary usually lives. The desktop app launched from the
@@ -74,6 +82,7 @@ function clip(s, n) {
 }
 
 function limitChars(text, maxChars) {
+  if (maxChars < 20) return text.slice(0, Math.max(0, maxChars));
   if (text.length > maxChars) {
     // keep the head (what was asked) and the tail (how it ended)
     const head = Math.floor(maxChars * 0.4);
@@ -81,6 +90,55 @@ function limitChars(text, maxChars) {
     return text.slice(0, head) + '\n[...]\n' + text.slice(-tail);
   }
   return text;
+}
+
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+/** Last two path segments: enough to recognise a file, short enough for the prompt. */
+function shortPath(p) {
+  return String(p || '').split('/').filter(Boolean).slice(-2).join('/');
+}
+
+/** Subject line of a `git commit` command (-m "…" or a heredoc); null when there is none. */
+export function commitMessage(cmd) {
+  const s = String(cmd || '');
+  if (!/\bgit\s+commit\b/.test(s)) return null;
+  const h = /<<\s*'?EOF'?\s*\n([^\n]+)/.exec(s);
+  if (h) return h[1].trim() || null;
+  const m = /-m\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/.exec(s);
+  return m ? (m[1] ?? m[2]).split('\n')[0].trim() || null : null;
+}
+
+/** What helped the PoC most: files edited, commit subjects, the last three agent answers. */
+export function factsHeader({ edited = [], commits = [], finals = [] } = {}) {
+  const out = [];
+  if (edited.length) out.push(`FILES EDITED: ${[...new Set(edited)].slice(0, 15).join(', ')}`);
+  if (commits.length) out.push(`COMMITS: ${commits.slice(0, 5).map((c) => clip(c, 160)).join(' | ')}`);
+  for (const f of finals.slice(-3)) out.push(`FINAL ANSWER: ${clip(f, 400)}`);
+  return out.length ? out.join('\n') + '\n---\n' : '';
+}
+
+export function claudeFacts(lines) {
+  const edited = toolUses(lines).filter((u) => EDIT_TOOLS.has(u.tool) && u.input.file_path).map((u) => shortPath(u.input.file_path));
+  const commits = bashCommands(lines).map(commitMessage).filter(Boolean);
+  return { edited, commits, finals: assistantTexts(lines).slice(-3) };
+}
+
+/** Header first, then the head/tail-limited body; the total never exceeds maxChars. */
+function withHeader(header, body, maxChars) {
+  const h = header.slice(0, maxChars);
+  return h + limitChars(body, maxChars - h.length);
+}
+
+/** Metadata lines prepended to every summary prompt (the model must not guess these). */
+export function sessionMeta(s) {
+  const project = s?.project_dir ? s.project_dir.split('/').filter(Boolean).at(-1) : 'unknown';
+  const mins = Math.round((s?.active_s || 0) / 60);
+  return [
+    `Project: ${project}`,
+    `Harness: ${s?.entrypoint || 'unknown'}`,
+    `Started: ${s?.started_at || '?'} · active ${mins} min · ${s?.turns ?? '?'} turns${s?.git_branch ? ` · branch ${s.git_branch}` : ''}`,
+  ].join('\n');
 }
 
 function cleanUserPrompt(content) {
@@ -268,7 +326,7 @@ export function distill(lines, opts = {}) {
       for (const t of assistantTexts([d])) parts.push(`ASSISTANT: ${clip(t, 600)}`);
     }
   }
-  return limitChars(parts.join('\n'), maxChars);
+  return withHeader(factsHeader(claudeFacts(lines)), parts.join('\n'), maxChars);
 }
 
 /** The exact argv we hand to `claude`; exported so tests and docs stay in sync. */
@@ -288,23 +346,26 @@ export function claudeArgs({ model, prompt }) {
 }
 
 /**
- * @param {string} distillate  output of distill()
- * @param {{exec?: Function, model?: string, timeout?: number, cwd?: string}} opts
- * @returns {Promise<{what: string, outcome: string, improvements: string[], followups: string[], model: string}>}
+ * @param {string} distillate  output of distill()/distillCodex()/distillGemini()
+ * @param {{meta?: string, exec?: Function, model?: string, timeout?: number, cwd?: string, bin?: string, clock?: () => number}} opts
+ * @returns {Promise<{v: 2, title: string|null, what: string, outcome: string, improvements: string[], followups: string[], kind_hint: string, model: string, ms: number}>}
  */
 export async function summarize(distillate, {
+  meta = '',
   exec = execClosedStdin,
   model = process.env.CC_SUMMARY_MODEL || 'haiku',
   timeout = 120000,
   cwd = tmpdir(), // never the repo: a project CLAUDE.md would be pulled into context
   bin = resolveClaudeBin(),
+  clock = Date.now,
 } = {}) {
-  const args = claudeArgs({ model, prompt: `Transcript:\n${distillate}` });
+  const args = claudeArgs({ model, prompt: `${meta ? `${meta}\n\n` : ''}Transcript:\n${distillate}` });
   // The desktop app's GUI environment has a bare PATH; make sure the CLI's own
   // dir and the usual tool dirs are visible to whatever it spawns.
   const PATH = [bin.includes('/') ? dirname(bin) : null, process.env.PATH, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
     .filter(Boolean).join(':');
   let out;
+  const t0 = clock();
   try {
     out = await exec(bin, args, { timeout, maxBuffer: 8 * 1024 * 1024, cwd, env: { ...process.env, PATH } });
   } catch (e) {
@@ -315,8 +376,19 @@ export async function summarize(distillate, {
   try { parsed = JSON.parse(out.stdout); } catch { throw new SummaryError('bad-json', 'claude returned non-JSON output'); }
   if (parsed?.is_error) throw new SummaryError('cli-failed', 'claude reported an error', clip(parsed.result || '', 200));
   const s = parsed?.structured_output;
-  if (!s || typeof s.what !== 'string' || !OUTCOMES.has(s.outcome)) throw new SummaryError('bad-json', 'claude returned no structured_output');
-  return { what: s.what, outcome: s.outcome, improvements: s.improvements || [], followups: s.followups || [], model };
+  if (!s || typeof s.what !== 'string' || !OUTCOMES.includes(s.outcome)) throw new SummaryError('bad-json', 'claude returned no structured_output');
+  const list = (x, n) => (Array.isArray(x) ? x.filter((i) => typeof i === 'string').slice(0, n) : []);
+  return {
+    v: SUMMARY_VERSION,
+    title: typeof s.title === 'string' && s.title.trim() ? clip(s.title, 60) : null,
+    what: s.what,
+    outcome: s.outcome,
+    improvements: list(s.improvements, 5),
+    followups: list(s.followups, 4),
+    kind_hint: KIND_HINTS.includes(s.kind_hint) ? s.kind_hint : 'work',
+    model,
+    ms: clock() - t0,
+  };
 }
 
 /** Summarise one stored session from its transcript and persist the result. */
@@ -359,7 +431,7 @@ export async function summarizeSession(db, id, opts = {}) {
     distillate = distill(parseLines(text), opts);
   }
 
-  const result = await summarize(distillate, opts);
+  const result = await summarize(distillate, { ...opts, meta: sessionMeta(got.session) });
   setSummary(db, id, { summary: JSON.stringify(result), model: result.model });
   return getSession(db, id);
 }
