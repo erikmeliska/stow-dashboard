@@ -4,6 +4,8 @@ A modern web dashboard for visualizing and managing your local development proje
 
 Available as a **web app** or **native desktop app** (macOS).
 
+![Project dashboard](docs/screenshots/dashboard.png)
+
 ## Features
 
 - **Interactive Project Table** - Sortable, filterable, paginated table powered by TanStack Table
@@ -20,12 +22,34 @@ Available as a **web app** or **native desktop app** (macOS).
 - **Stack Detection** - Extracts technologies from package.json, requirements.txt, etc.
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
-- **Claude Code Session Viewer** - `/sessions` lists your agentic sessions (tokens, cost, tools, skills, guard hits, quality score, on-demand AI summaries) from a local SQLite store, grouped into families: expand a session to see its subagents and hook-spawned child sessions, with the whole package rolled up
+- **AI Session Viewer** - `/sessions` lists your agentic sessions from Claude Code, Codex and Antigravity (tokens, cost, tools, skills, guard hits, quality score, AI summaries) from a local SQLite store, grouped into families: expand a session to see its subagents and hook-spawned child sessions, with the whole package rolled up
+- **Session Calendar** - Week and month views of what you worked on, coloured by project, with a title, outcome (done / partial / abandoned / exploration) and cost on every block; scheduled runs and agent spawns hidden by default
+- **Batch Summaries** - The calendar offers to fill in missing AI summaries for exactly what is on screen (with a time estimate), shows progress, and shares one job with the CLI and the MCP server
 - **Analytics** - `/analytics` charts both worlds: agentic sessions (cost, models, tools, skills, quality; 7d–all range) and the project portfolio (categories, languages, AI cost, commit activity)
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
 - **Persistent Settings** - Remembers your sort order, visible columns, and page size
 - **Dark Mode** - Full dark mode support
 - **Desktop App** - Native macOS app with system tray (Deno; Tauri kept as fallback)
+
+## Screenshots
+
+*All screenshots use synthetic demo data.*
+
+**Session calendar: month.** Every work session is a chip with its harness (C = Claude Code, X = Codex, G = Antigravity) and outcome. The banner offers to summarise the sessions on screen that have no summary yet.
+
+![Session calendar, month view](docs/screenshots/sessions-calendar-month.png)
+
+**Session calendar: week.** Sessions are placed by time and overlapping ones sit side by side. Clicking a block opens the shared detail panel with the package breakdown, work context and AI summary.
+
+![Session calendar, week view with detail panel](docs/screenshots/sessions-calendar-week.png)
+
+**Session table.** Sessions are grouped into families (nested subagents and linked sessions such as security reviews or Codex subagents), with filters, grouping and sorting.
+
+![Session table with an expanded family](docs/screenshots/sessions-table.png)
+
+**Analytics.** Agentic sessions (cost, models, tools, skills, quality) and the project portfolio.
+
+![Analytics](docs/screenshots/analytics.png)
 
 ## Tech Stack
 
@@ -153,8 +177,10 @@ npm run scan:force    # Force rescan all projects
 # AI analysis & usage
 npm run analyze       # AI project analysis batch (incremental)
 npm run usage         # Rebuild the AI usage/cost ledger from CLI transcripts
-npm run cc:ingest     # Update the Claude Code session store from ~/.claude transcripts
-npm run cc:eval -- --summaries   # On-demand AI summaries for stored sessions
+npm run cc:ingest     # Update the session store from Claude Code, Codex and Antigravity transcripts
+npm run cc:eval -- --summaries   # AI summaries for the newest sessions without one
+npm run cc:eval -- --summaries --since 2026-09-01 --until 2026-10-01 --concurrency 3   # a whole period (--upgrade redoes old v1 summaries)
+npm run cc:import-summaries -- <sessions.json> [--dry-run]   # One-off import of prepared descriptions
 
 # Other
 npm run mcp           # Start MCP server for AI assistants
@@ -322,6 +348,13 @@ Stow Dashboard includes an MCP (Model Context Protocol) server that allows AI as
 | `list_running_projects` | List all projects with running processes or Docker containers |
 | `get_project_processes` | Get running processes and Docker containers for a project |
 | `stop_process` | Stop a process by PID or Docker container by ID |
+| `get_status` / `set_status` | Read or update a project's `STATUS.md` (next step, status, links) |
+| `list_scripts` / `run_script` | List and run a project's npm/shell scripts in the background |
+| `list_tasks` / `add_task` / `verify_task` / `completed_tasks` / `dispatch_task` | Work with a project's `TASKS.md` |
+| `generate_changelog` | Changelog from completed tasks |
+| `find_reusable_assets` | Search reusable building blocks the AI analysis found across projects |
+| `list_sessions` | AI sessions in a period (rolled-up cost and time, kind, title, summary). Useful for "what did I work on" reports |
+| `summarize_sessions` | Fill in missing AI summaries for a period in the background; `status_only: true` only reports progress |
 
 ### Setup for Claude Desktop
 
@@ -373,6 +406,10 @@ Set these in `.env.local` (the desktop app edits its own copy — see below):
 | `TERMINAL_APPS` | Comma-separated terminal apps, first = default (legacy `TERMINAL_APP` still honored) | `Terminal` |
 | `OLLAMA_URL` | Ollama endpoint for the AI-analysis fallback | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama model for the fallback | `llama3` |
+| `CC_SUMMARY_MODEL` | Model for a single-session summary (Generate button, `cc:eval --id`) | `haiku` |
+| `CC_SUMMARY_BATCH_MODEL` | Model for batch summaries (calendar banner, `cc:eval` ranges, MCP) | `claude-sonnet-5-5` |
+| `CC_CODEX_DIR` | Codex rollouts to ingest | `~/.codex/sessions` |
+| `CC_TICKET_PATTERN` | Regex for ticket ids in branches, prompts and commits | `[A-Z]{2,10}-\d+`-style |
 
 `STOW_STATE_DIR` is set in the *process env*, not `.env.local` — it decides
 which `.env.local` gets read in the first place. It overrides where `data/` and
