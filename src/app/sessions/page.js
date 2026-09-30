@@ -10,9 +10,10 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { filterSessions, QUALITY_FILTERS, QUICK_FILTERS, SOURCE_FILTERS } from '@/lib/cc/session-filters.mjs'
 import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } from '@/lib/cc/session-tree.mjs'
 import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
-import { loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
+import { colorBy, COLOR_MODES, loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
 import { CalendarView } from './calendar-view'
+import { ColorLegend, ColorSelect, useColorMode } from './color-controls'
 
 function fmtTokens(n) {
   if (n == null) return '—'
@@ -322,8 +323,9 @@ const CELL = 'py-1.5 pr-3'
 const NUM = `${CELL} text-right tabular-nums whitespace-nowrap`
 
 /** One family: the head row (rollup numbers) and, when expanded, its subagents and linked sessions. */
-function FamilyRows({ fam, selected, expanded, onToggle, onOpen }) {
+function FamilyRows({ fam, selected, expanded, onToggle, onOpen, colorMode }) {
   const s = fam
+  const bucket = colorBy(fam, colorMode)
   const hasSubs = fam.sub_count > 0
   const r = fam.rollup
   const breakdown = hasSubs
@@ -336,7 +338,8 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen }) {
         onClick={() => onOpen(s.session_id)}
         className={`border-b cursor-pointer hover:bg-muted/40 ${selected === s.session_id ? 'bg-muted/60' : ''}`}
       >
-        <td className={`${CELL} whitespace-nowrap tabular-nums`}>
+        <td className={`${CELL} pl-2 whitespace-nowrap tabular-nums`} title={`${COLOR_MODES[colorMode]?.label}: ${bucket.label}`}
+          style={{ boxShadow: `inset 3px 0 0 ${bucket.color}` }}>
           <span className="inline-flex items-center gap-1">
             {hasSubs ? (
               <button
@@ -433,6 +436,7 @@ function SessionsView() {
   const [quick, setQuick] = useState(() => new Set())
   const [groupBy, setGroupBy] = useState('none')
   const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
+  const [colorMode, setColorMode] = useColorMode()
   const view = searchParams.get('view') === 'calendar' ? 'calendar' : 'table'
   const span = searchParams.get('span') === 'month' ? 'month' : 'week'
   const dateParam = searchParams.get('date') || ''
@@ -617,6 +621,10 @@ function SessionsView() {
           {!loading && sessions.length > 0 && filtered.length === 0 && (
             <p className="text-sm text-muted-foreground py-6">No sessions match the current filters.</p>
           )}
+          <div className="flex flex-wrap items-center gap-3 py-2">
+            <ColorSelect value={colorMode} onChange={setColorMode} />
+            <ColorLegend events={filtered} mode={colorMode} />
+          </div>
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-background">
               <tr className="text-left text-xs text-muted-foreground border-b">
@@ -637,7 +645,7 @@ function SessionsView() {
               {groups.map((g) => (
                 <GroupRows key={g.key} group={g} showHeader={groupBy !== 'none'}>
                   {g.items.map((f) => (
-                    <FamilyRows key={f.session_id} fam={f} selected={selected} expanded={expanded.has(f.session_id)} onToggle={() => toggle(f.session_id)} onOpen={open} />
+                    <FamilyRows key={f.session_id} fam={f} colorMode={colorMode} selected={selected} expanded={expanded.has(f.session_id)} onToggle={() => toggle(f.session_id)} onOpen={open} />
                   ))}
                 </GroupRows>
               ))}
@@ -655,6 +663,8 @@ function SessionsView() {
               onNavigate={(d, span) => setParams({ date: format(d, 'yyyy-MM-dd'), ...(span ? { span: span === 'week' ? null : span } : {}) })}
               onSpan={(s) => setParams({ span: s === 'week' ? null : s })}
               onRefresh={() => load({ ingest: false })}
+              colorMode={colorMode}
+              onColorMode={setColorMode}
             />
           )}
         </div>

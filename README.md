@@ -23,7 +23,7 @@ Available as a **web app** or **native desktop app** (macOS).
 - **Size Metrics** - Shows code size vs total size (including node_modules, venv, etc.)
 - **README Viewer** - View project README files directly in the dashboard
 - **AI Session Viewer** - `/sessions` lists your agentic sessions from Claude Code, Codex and Antigravity (tokens, cost, tools, skills, guard hits, quality score, AI summaries) from a local SQLite store, grouped into families: expand a session to see its subagents and hook-spawned child sessions, with the whole package rolled up
-- **Session Calendar** - Week and month views of what you worked on, with a title, outcome and cost on every block. The colours can switch between outcome (default), project, harness, kind, cost and quality, and a legend with counts shows what they currently mean. Scheduled runs and agent spawns are hidden by default
+- **Session Calendar** - Week and month views of what you worked on, with a title, outcome and cost on every block. The colours can switch between outcome (default), project, harness, kind, cost and quality, and a legend with counts shows what they currently mean. The table uses the same choice Scheduled runs and agent spawns are hidden by default
 - **Batch Summaries** - The calendar offers to fill in missing AI summaries for exactly what is on screen (with a time estimate), shows progress, and shares one job with the CLI and the MCP server
 - **Analytics** - `/analytics` charts both worlds: agentic sessions (cost, models, tools, skills, quality; 7d–all range) and the project portfolio (categories, languages, AI cost, commit activity)
 - **MCP Server** - Expose project data to AI assistants (Claude Desktop, Claude Code)
@@ -43,7 +43,7 @@ Available as a **web app** or **native desktop app** (macOS).
 
 ![Session calendar, week view with detail panel](docs/screenshots/sessions-calendar-week.png)
 
-**Session table.** Sessions are grouped into families (nested subagents and linked sessions such as security reviews or Codex subagents), with filters, grouping and sorting.
+**Session table.** Sessions are grouped into families (nested subagents and linked sessions such as security reviews or Codex subagents), with filters, grouping and sorting. The same *Color by* choice as the calendar marks each row with a coloured bar and shows the legend above the table.
 
 ![Session table with an expanded family](docs/screenshots/sessions-table.png)
 
