@@ -562,7 +562,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: 'summarize_sessions',
-                description: 'Generate missing AI summaries for work sessions in a period (runs the local claude CLI in the background, Sonnet by default; each summary is a real model call). Without status_only it starts a batch over whatever in the period still has no summary (failed sessions are retried), unless a batch is already running or nothing is missing, in which case it reports the latest batch and starts nothing. To check progress or the result of a batch, call with status_only: true: it never starts anything and returns the latest batch (status running/done/stopped/stale, done/total, failed) plus how many sessions in the period are still missing.',
+                description: 'Generate missing AI summaries for work sessions in a period (runs the local claude or codex CLI in the background, per the CC_SUMMARY_HARNESS / CC_SUMMARY_BATCH_MODEL settings, Sonnet on claude by default; each summary is a real model call). Without status_only it starts a batch over whatever in the period still has no summary (failed sessions are retried), unless a batch is already running or nothing is missing, in which case it reports the latest batch and starts nothing. To check progress or the result of a batch, call with status_only: true: it never starts anything and returns the latest batch (status running/done/stopped/stale, done/total, failed) plus how many sessions in the period are still missing.',
                 inputSchema: {
                     type: 'object',
                     properties: {

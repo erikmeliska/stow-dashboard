@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { NextResponse } from 'next/server'
 import { envFile } from '@/lib/state-dir.mjs'
 
-const SETTINGS_KEYS = ['SCAN_ROOTS', 'BASE_DIR', 'TERMINAL_APP', 'IDE_COMMAND', 'TERMINAL_APPS', 'IDE_COMMANDS']
+const SETTINGS_KEYS = ['SCAN_ROOTS', 'BASE_DIR', 'TERMINAL_APP', 'IDE_COMMAND', 'TERMINAL_APPS', 'IDE_COMMANDS', 'CC_SUMMARY_HARNESS', 'CC_SUMMARY_MODEL', 'CC_SUMMARY_BATCH_MODEL']
 
 function parseEnvFile(content) {
     const settings = {}

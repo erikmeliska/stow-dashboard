@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, codexFacts, distillCodex, SUMMARY_SCHEMA } from './summary.mjs';
+import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, resolveHarnessBin, summaryHarness, summaryModel, codexArgs, codexReportedModel, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, codexFacts, distillCodex, SUMMARY_SCHEMA } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -250,4 +250,53 @@ test('summarizeSession reads Codex rollouts with distillCodex', async () => {
   await summarizeSession(db, 'cx', { exec });
   assert.match(prompt, /Harness: codex-desktop/);
   assert.match(prompt, /USER: set port 3371/);
+});
+
+test('summaryHarness / summaryModel / resolveHarnessBin read the settings', () => {
+  assert.equal(summaryHarness({}), 'claude');
+  assert.equal(summaryHarness({ CC_SUMMARY_HARNESS: ' Codex ' }), 'codex');
+  assert.equal(summaryHarness({ CC_SUMMARY_HARNESS: 'gemini' }), 'claude', 'unknown → default');
+  assert.equal(summaryModel({}), 'haiku');
+  assert.equal(summaryModel({ CC_SUMMARY_HARNESS: 'codex' }), '');
+  assert.equal(summaryModel({ CC_SUMMARY_HARNESS: 'codex', CC_SUMMARY_MODEL: 'gpt-x' }), 'gpt-x');
+  assert.equal(resolveHarnessBin('codex', { CC_CODEX_BIN: '/x/codex' }, '/h', () => false), '/x/codex');
+  assert.equal(resolveHarnessBin('codex', {}, '/h', (p) => p === '/h/.local/bin/codex'), '/h/.local/bin/codex');
+  assert.equal(resolveHarnessBin('codex', {}, '/h', () => false), 'codex');
+});
+
+test('codexArgs: ephemeral, no user config, read-only, -m only when a model is set', () => {
+  const a = codexArgs({ model: '', prompt: 'P', dir: '/d' });
+  for (const f of ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check']) assert.ok(a.includes(f), f);
+  assert.equal(a[a.indexOf('--sandbox') + 1], 'read-only');
+  assert.equal(a[a.indexOf('--output-schema') + 1], '/d/schema.json');
+  assert.equal(a[a.indexOf('-o') + 1], '/d/answer.json');
+  assert.ok(!a.includes('-m'));
+  assert.ok(a.at(-1).endsWith('\n\nP') && a.at(-1).startsWith('You summarise'), 'instructions lead the prompt');
+  const b = codexArgs({ model: 'gpt-x', prompt: 'P', dir: '/d' });
+  assert.equal(b[b.indexOf('-m') + 1], 'gpt-x');
+  assert.equal(codexReportedModel('workdir: /x\nmodel: gpt-6-astra\nprovider: openai'), 'gpt-6-astra');
+  assert.equal(codexReportedModel(''), null);
+});
+
+test('summarize with harness codex reads the -o answer file and cleans up', async () => {
+  const { readFile: rf, writeFile: wf } = await import('node:fs/promises');
+  const { existsSync: ex } = await import('node:fs');
+  let call;
+  const exec = async (bin, args, opts) => {
+    call = { bin, args, opts };
+    const schema = JSON.parse(await rf(args[args.indexOf('--output-schema') + 1], 'utf8'));
+    assert.deepEqual(schema, SUMMARY_SCHEMA);
+    await wf(args[args.indexOf('-o') + 1], JSON.stringify({ title: 'T', what: 'W', outcome: 'done', improvements: [], followups: [], kind_hint: 'work' }));
+    return { stdout: '', stderr: 'model: gpt-6-astra\n' };
+  };
+  const r = await summarize('text', { exec, harness: 'codex', model: '', bin: 'codex' });
+  assert.equal(call.bin, 'codex');
+  assert.equal(call.opts.cwd, call.args[call.args.indexOf('-C') + 1]);
+  assert.ok(!ex(call.opts.cwd), 'temp dir removed');
+  assert.equal(r.harness, 'codex');
+  assert.equal(r.model, 'gpt-6-astra', 'the reported model is recorded when none was set');
+  assert.equal(r.title, 'T');
+  await assert.rejects(summarize('x', { harness: 'codex', bin: 'codex', exec: async () => ({ stdout: '' }) }), (e) => e.kind === 'bad-json');
+  await assert.rejects(summarize('x', { harness: 'codex', bin: 'codex', exec: async () => { const e = new Error('x'); e.code = 'ENOENT'; throw e; } }),
+    (e) => e.kind === 'cli-missing' && /CC_CODEX_BIN/.test(e.message));
 });

@@ -42,12 +42,23 @@ test('selectMissing by ids trusts the caller for visibility but still skips fres
 
 test('estimateBatch uses fallback per model, then the median of recorded ms', () => {
   const db = seeded();
-  assert.deepEqual(estimateBatch(db, { count: 7, concurrency: 3, model: 'claude-sonnet-5-5' }), { count: 7, model: 'claude-sonnet-5-5', seconds: 90 });
+  assert.deepEqual(estimateBatch(db, { count: 7, concurrency: 3, model: 'claude-sonnet-5-5' }), { count: 7, harness: 'claude', model: 'claude-sonnet-5-5', seconds: 90 });
   assert.equal(estimateBatch(db, { count: 3, concurrency: 3, model: 'haiku' }).seconds, 10);
   for (const [id, ms] of [['w1', 4000], ['w2', 8000], ['sched', 6000]]) setSummary(db, id, { summary: JSON.stringify({ v: 2, what: '', outcome: 'done', ms }), model: 'claude-sonnet-5-5' });
   assert.equal(estimateBatch(db, { count: 4, concurrency: 2, model: 'claude-sonnet-5-5' }).seconds, 12);
   assert.equal(batchModel({}), 'claude-sonnet-5-5');
   assert.equal(batchModel({ CC_SUMMARY_BATCH_MODEL: 'haiku' }), 'haiku');
+  assert.equal(batchModel({ CC_SUMMARY_HARNESS: 'codex' }), '', 'codex without a model = the CLI default');
+  assert.equal(batchModel({ CC_SUMMARY_HARNESS: 'codex', CC_SUMMARY_BATCH_MODEL: ' gpt-x ' }), 'gpt-x');
+  assert.equal(estimateBatch(db, { count: 3, concurrency: 3, harness: 'codex', model: '' }).seconds, 30, 'no model → no history → fallback');
+});
+
+test('startBatch hands the harness and model to every summary call', async () => {
+  const db = seeded();
+  const seen = [];
+  const impl = async (d, id, opts) => { seen.push(opts); return okImpl(d, id); };
+  await startBatch(db, { ids: ['w1', 'w2'], harness: 'codex', model: '', summarizeImpl: impl, ...shared(db), now: () => NOW }).done;
+  assert.deepEqual(seen, [{ harness: 'codex', model: '' }, { harness: 'codex', model: '' }]);
 });
 
 test('startBatch summarises every id, records failures and finishes', async () => {

@@ -13,6 +13,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog'
+import { DEFAULT_MODELS, HARNESSES } from '@/lib/cc/summary-view.mjs'
 
 const FIELDS = [
     { key: 'SCAN_ROOTS', label: 'Scan roots', help: 'Comma-separated directories scanned for projects' },
@@ -21,12 +22,23 @@ const FIELDS = [
     { key: 'TERMINAL_APPS', label: 'Terminal apps', help: 'Comma-separated app names, e.g. Terminal,Warp,cmux — first is the default' },
 ]
 
+const HARNESS_LABELS = { claude: 'Claude Code (claude CLI)', codex: 'Codex (codex CLI)' }
+const modelHint = (m) => m || 'CLI default'
+
+/** Session-summary engine: which local CLI writes the summaries, and with which model. */
+const SUMMARY_FIELDS = [
+    { key: 'CC_SUMMARY_MODEL', label: 'Model — single summary', which: 'single', help: 'The Generate button on a session. Empty = the harness default.' },
+    { key: 'CC_SUMMARY_BATCH_MODEL', label: 'Model — batch', which: 'batch', help: 'The calendar banner, cc:eval and the MCP summarize_sessions tool. Empty = the harness default.' },
+]
+
 export function SettingsDialog() {
     const [open, setOpen] = React.useState(false)
     const [values, setValues] = React.useState({})
     const [loading, setLoading] = React.useState(false)
     const [saving, setSaving] = React.useState(false)
     const [error, setError] = React.useState(null)
+    const set = (key, value) => setValues(prev => ({ ...prev, [key]: value }))
+    const harness = HARNESSES.includes(values.CC_SUMMARY_HARNESS) ? values.CC_SUMMARY_HARNESS : HARNESSES[0]
 
     React.useEffect(() => {
         if (!open) return
@@ -64,7 +76,7 @@ export function SettingsDialog() {
                     <Settings className="h-4 w-4" />
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[480px]">
+            <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>Settings</DialogTitle>
                     <DialogDescription>
@@ -83,12 +95,42 @@ export function SettingsDialog() {
                                 <Input
                                     id={`setting-${key}`}
                                     value={values[key] ?? ''}
-                                    onChange={e => setValues(prev => ({ ...prev, [key]: e.target.value }))}
+                                    onChange={e => set(key, e.target.value)}
                                     placeholder={key}
                                 />
                                 <p className="text-xs text-muted-foreground">{help}</p>
                             </div>
                         ))}
+                        <div className="space-y-4 border-t pt-4">
+                            <div>
+                                <h3 className="text-sm font-semibold">Session summaries</h3>
+                                <p className="text-xs text-muted-foreground">Which local CLI writes the AI summaries on /sessions, and with which model.</p>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-sm font-medium" htmlFor="setting-CC_SUMMARY_HARNESS">Harness</label>
+                                <select
+                                    id="setting-CC_SUMMARY_HARNESS"
+                                    value={harness}
+                                    onChange={e => set('CC_SUMMARY_HARNESS', e.target.value)}
+                                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                >
+                                    {HARNESSES.map(h => <option key={h} value={h}>{HARNESS_LABELS[h] || h}</option>)}
+                                </select>
+                                <p className="text-xs text-muted-foreground">Model names are the harness&apos;s own: e.g. haiku, claude-sonnet-5-5 for Claude; gpt-… for Codex.</p>
+                            </div>
+                            {SUMMARY_FIELDS.map(({ key, label, which, help }) => (
+                                <div key={key} className="space-y-1">
+                                    <label className="text-sm font-medium" htmlFor={`setting-${key}`}>{label}</label>
+                                    <Input
+                                        id={`setting-${key}`}
+                                        value={values[key] ?? ''}
+                                        onChange={e => set(key, e.target.value)}
+                                        placeholder={modelHint(DEFAULT_MODELS[harness][which])}
+                                    />
+                                    <p className="text-xs text-muted-foreground">{help}</p>
+                                </div>
+                            ))}
+                        </div>
                         {error && <p className="text-sm text-destructive">{error}</p>}
                     </div>
                 )}

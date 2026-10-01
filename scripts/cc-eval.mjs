@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * cc-eval — AI summaries for stored sessions (uses your local `claude` CLI).
+ * cc-eval — AI summaries for stored sessions (uses your local `claude` or `codex` CLI).
  *
  *   npm run cc:eval -- --summaries                                   # newest 5 work sessions without a summary
  *   npm run cc:eval -- --summaries --since 2026-09-01 --until 2026-10-01 --concurrency 3
@@ -8,7 +8,8 @@
  *   npm run cc:eval -- --summaries --id <session_id>
  *
  * Batches go through src/lib/cc/summary-batch.mjs (same code as the calendar
- * banner and the MCP tool; model CC_SUMMARY_BATCH_MODEL, default Sonnet 5.5).
+ * banner and the MCP tool; harness CC_SUMMARY_HARNESS (claude|codex), model
+ * CC_SUMMARY_BATCH_MODEL — Sonnet 5.5 on claude, the CLI's own default on codex).
  * Never runs from ingest: each summary is a real Claude call.
  */
 import { parseArgs } from 'node:util';
@@ -67,6 +68,10 @@ if (invokedDirectly) {
     console.error('usage: cc-eval --summaries [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--concurrency N] [--model M] [--force|--upgrade] [--limit N] [--id SESSION_ID]');
     process.exit(2);
   }
+  // The Settings dialog writes the harness/model to .env.local; the shell env still wins.
+  const { config } = await import('dotenv');
+  const { envFile } = await import('../src/lib/state-dir.mjs');
+  config({ path: envFile({ base: fileURLToPath(new URL('..', import.meta.url)) }), quiet: true });
   const db = openStore();
   const r = await evalSummaries(db, {
     limit: Number(values.limit) || 5, id: values.id || null,

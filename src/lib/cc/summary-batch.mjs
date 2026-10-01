@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { openStore, getSessionsByIds } from './store.mjs';
-import { summarizeSession } from './summary.mjs';
+import { DEFAULT_MODELS, summarizeSession, summaryHarness } from './summary.mjs';
 import { needsSummary, parseSummary } from './summary-view.mjs';
 import { effectiveKind } from './session-link.mjs';
 
@@ -29,8 +29,9 @@ export function clampConcurrency(n) {
   return Math.min(MAX_CONCURRENCY, Math.max(1, v));
 }
 
-export function batchModel(env = process.env) {
-  return env.CC_SUMMARY_BATCH_MODEL || 'claude-sonnet-5-5';
+/** Batch model: CC_SUMMARY_BATCH_MODEL, else the harness default ('' = the CLI's own default). */
+export function batchModel(env = process.env, harness = summaryHarness(env)) {
+  return (env.CC_SUMMARY_BATCH_MODEL || '').trim() || DEFAULT_MODELS[harness].batch;
 }
 
 /**
@@ -68,9 +69,9 @@ export function medianSummaryMs(db, model) {
   return ms.length % 2 ? ms[mid] : (ms[mid - 1] + ms[mid]) / 2;
 }
 
-export function estimateBatch(db, { count, concurrency = DEFAULT_CONCURRENCY, model = batchModel() } = {}) {
-  const per = medianSummaryMs(db, model) ?? (/haiku/i.test(model) ? 10_000 : 30_000);
-  return { count, model, seconds: Math.ceil(Math.ceil(count / Math.max(1, concurrency)) * per / 1000) };
+export function estimateBatch(db, { count, concurrency = DEFAULT_CONCURRENCY, harness = summaryHarness(), model = batchModel(process.env, harness) } = {}) {
+  const per = (model ? medianSummaryMs(db, model) : null) ?? (/haiku/i.test(model) ? 10_000 : 30_000);
+  return { count, harness, model, seconds: Math.ceil(Math.ceil(count / Math.max(1, concurrency)) * per / 1000) };
 }
 
 function toJob(r, now) {
@@ -105,7 +106,8 @@ function liveJob(db, now) {
  */
 export function startBatch(db, {
   ids,
-  model = batchModel(),
+  harness = summaryHarness(),
+  model = batchModel(process.env, harness),
   concurrency = DEFAULT_CONCURRENCY,
   summarizeImpl = summarizeSession,
   openDb = () => openStore(),
@@ -141,7 +143,7 @@ export function startBatch(db, {
     throw e;
   }
   const job = readJob(db, row.job_id, now());
-  const done = runJob(row.job_id, list, { model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now });
+  const done = runJob(row.job_id, list, { harness, model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now });
   return { job, started: true, done };
 }
 
@@ -156,8 +158,9 @@ export function rangeBatch(db, { since = null, until = null, force = false, stat
   exists, now = Date.now, ...startOpts
 } = {}) {
   const ids = selectMissing(db, { since, until, force, now: now(), exists });
-  const model = startOpts.model || batchModel();
-  const estimateFor = (n) => estimateBatch(db, { count: n, model }).seconds;
+  const harness = startOpts.harness || summaryHarness();
+  const model = startOpts.model || batchModel(process.env, harness);
+  const estimateFor = (n) => estimateBatch(db, { count: n, harness, model }).seconds;
   if (statusOnly) {
     const job = readJob(db, null, now());
     const running = job?.status === 'running';
@@ -166,7 +169,7 @@ export function rangeBatch(db, { since = null, until = null, force = false, stat
       : `${ids.length} session(s) in this period still have no summary. Nothing was started.`;
     return { started: false, job, missing: ids.length, estimateSeconds: running ? estimateFor(job.total - job.done - job.failed.length) : estimateFor(ids.length), note, done: Promise.resolve(job) };
   }
-  const { job, started, done } = startBatch(db, { ids, model, now, ...startOpts });
+  const { job, started, done } = startBatch(db, { ids, harness, model, now, ...startOpts });
   let note;
   if (started) note = `Started: ${job.total} sessions. Call summarize_sessions with status_only: true to see progress.`;
   else if (job?.status === 'running') note = `A batch is already running (${job.done + job.failed.length}/${job.total}); this call did not start another.`;
@@ -175,7 +178,7 @@ export function rangeBatch(db, { since = null, until = null, force = false, stat
   return { started, job, missing: ids.length, estimateSeconds: estimateFor(left), note, done };
 }
 
-async function runJob(jobId, ids, { model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now }) {
+async function runJob(jobId, ids, { harness, model, concurrency, summarizeImpl, openDb, closeDb, onProgress, now }) {
   let done = 0;
   const failed = [];
   let stopError = null;
@@ -202,7 +205,7 @@ async function runJob(jobId, ids, { model, concurrency, summarizeImpl, openDb, c
       const id = ids[next++];
       let err = null;
       try {
-        await summarizeImpl(db, id, { model });
+        await summarizeImpl(db, id, { harness, model });
       } catch (e) {
         err = e;
       }
@@ -210,7 +213,7 @@ async function runJob(jobId, ids, { model, concurrency, summarizeImpl, openDb, c
         failed.push({ id, kind: err?.kind || 'error', message: String(err?.message || err) });
         progress({ id, ok: false, error: err });
         // Without the CLI every remaining call fails the same way.
-        if (err?.kind === 'cli-missing') stopError = String(err.message || 'claude CLI not found');
+        if (err?.kind === 'cli-missing') stopError = String(err.message || `${harness} CLI not found`);
       } else {
         done++;
         progress({ id, ok: true });

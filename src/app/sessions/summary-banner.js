@@ -10,7 +10,8 @@ const dismissKey = (k) => `stow.summaryBanner.dismissed:${k}`
 function readDismissed(k) { try { return sessionStorage.getItem(dismissKey(k)) === '1' } catch { return false } }
 function writeDismissed(k) { try { sessionStorage.setItem(dismissKey(k), '1') } catch { /* private mode */ } }
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-const modelLabel = (m) => (/sonnet-5-5/.test(m || '') ? 'Sonnet 5.5' : m || '')
+const modelLabel = (m) => (/sonnet-5-5/.test(m || '') ? 'Sonnet 5.5' : m || 'default model')
+const engineLabel = (h, m) => `${h && h !== 'claude' ? `${h} · ` : ''}${modelLabel(m)}`
 
 /**
  * "N sessions in this period have no summary" → batch → progress. `ids` are
@@ -120,7 +121,7 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
   return (
     <div className={box} role="region" aria-label="Missing summaries">
       <Sparkles className="h-3.5 w-3.5" />
-      <span><b>{est.missing}</b> {est.missing === 1 ? 'session' : 'sessions'} in this period {est.missing === 1 ? 'has' : 'have'} no summary. Fill them in? <span className="text-muted-foreground">{formatEta(est.estimateSeconds)} ({modelLabel(est.model)})</span></span>
+      <span><b>{est.missing}</b> {est.missing === 1 ? 'session' : 'sessions'} in this period {est.missing === 1 ? 'has' : 'have'} no summary. Fill them in? <span className="text-muted-foreground">{formatEta(est.estimateSeconds)} ({engineLabel(est.harness, est.model)})</span></span>
       <Button size="sm" onClick={() => start(est.ids)}>Fill in</Button>
       <Button size="sm" variant="ghost" onClick={() => { writeDismissed(periodKey); setDismissed(true) }}>Not now</Button>
       {error && <span className="text-red-600 dark:text-red-400">{error}</span>}

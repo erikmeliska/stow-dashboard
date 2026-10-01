@@ -1,7 +1,9 @@
 /**
- * AI session summary via the local `claude` CLI (no API key; runs on your
- * subscription). On-demand only — never called from ingest.
+ * AI session summary via a local agent CLI — `claude` (default) or `codex`,
+ * chosen by CC_SUMMARY_HARNESS (no API key; runs on your subscription).
+ * On-demand only — never called from ingest.
  *
+ * Claude flags:
  * Flag rationale (measured 2026-08-21, haiku, trivial prompt):
  *   naive `claude -p` in the repo cwd          ≈150k ctx tokens, $0.16/call
  *   + --strict-mcp-config/--setting-sources "" ≈7.5k,           $0.017
@@ -10,8 +12,15 @@
  * transcript under ~/.claude/projects that cc-ingest then indexes (a loop).
  * `--tools ""` keeps the call a pure text → JSON step. `--bare` was tried and
  * fails (is_error, no tokens) on Claude Code 2.1.x — do not add it.
+ *
+ * Codex flags: `--ephemeral` is the counterpart of --no-session-persistence
+ * (no rollout under ~/.codex/sessions for the Codex ingest to pick up);
+ * `--ignore-user-config --ignore-rules` skip config.toml (MCP servers, a
+ * pinned model) and project rules — ~6.5 s instead of ~10 s per call;
+ * `--sandbox read-only` + an empty temp dir as cwd keep it a text → JSON step.
+ * Codex has no system-prompt flag, so the instructions lead the prompt.
  */
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -21,6 +30,7 @@ import { assistantTexts, bashCommands, parseLines, toolUses, userPrompts } from 
 import { decodeProto } from '../usage.mjs';
 import { getSession, setSummary } from './store.mjs';
 import { contentText, isInjectedPrompt } from './codex-ingest.mjs';
+import { DEFAULT_MODELS, HARNESSES } from './summary-view.mjs';
 
 export const SUMMARY_VERSION = 2;
 export const OUTCOMES = ['done', 'partial', 'abandoned', 'exploration'];
@@ -51,21 +61,40 @@ The first lines give metadata (project, harness, time, size) and facts extracted
 Do not invent anything: if the result cannot be told from the transcript, say so cautiously.
 Be concrete. No marketing language. Write in the language the user wrote in.`;
 
+export { HARNESSES, DEFAULT_MODELS };
+
+/** CC_SUMMARY_HARNESS, normalised; anything unknown falls back to claude. */
+export function summaryHarness(env = process.env) {
+  const h = String(env.CC_SUMMARY_HARNESS || '').trim().toLowerCase();
+  return HARNESSES.includes(h) ? h : HARNESSES[0];
+}
+
+/** Model for one on-demand summary (Generate button, `cc:eval --id`). */
+export function summaryModel(env = process.env, harness = summaryHarness(env)) {
+  return (env.CC_SUMMARY_MODEL || '').trim() || DEFAULT_MODELS[harness].single;
+}
+
+const BIN_ENV = { claude: 'CC_CLAUDE_BIN', codex: 'CC_CODEX_BIN' };
+
 /**
- * Where the `claude` binary usually lives. The desktop app launched from the
+ * Where a harness binary usually lives. The desktop app launched from the
  * Dock gets macOS's minimal GUI PATH (no ~/.local/bin, no Homebrew), so a bare
  * `claude` fails with ENOENT there even though it works in a terminal.
- * Resolution: CC_CLAUDE_BIN env → first existing well-known path → 'claude' on PATH.
+ * Resolution: CC_<HARNESS>_BIN env → first existing well-known path → bare name on PATH.
  */
-export function resolveClaudeBin(env = process.env, home = homedir(), exists = existsSync) {
-  if (env.CC_CLAUDE_BIN) return env.CC_CLAUDE_BIN;
+export function resolveHarnessBin(harness, env = process.env, home = homedir(), exists = existsSync) {
+  if (env[BIN_ENV[harness]]) return env[BIN_ENV[harness]];
   const candidates = [
-    join(home, '.local', 'bin', 'claude'),
-    join(home, '.claude', 'local', 'claude'),
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
+    join(home, '.local', 'bin', harness),
+    ...(harness === 'claude' ? [join(home, '.claude', 'local', 'claude')] : []),
+    `/opt/homebrew/bin/${harness}`,
+    `/usr/local/bin/${harness}`,
   ];
-  return candidates.find((p) => exists(p)) || 'claude';
+  return candidates.find((p) => exists(p)) || harness;
+}
+
+export function resolveClaudeBin(env = process.env, home = homedir(), exists = existsSync) {
+  return resolveHarnessBin('claude', env, home, exists);
 }
 
 export class SummaryError extends Error {
@@ -397,38 +426,86 @@ export function claudeArgs({ model, prompt }) {
   ];
 }
 
+/** argv for `codex exec`; the schema and the answer go through files in `dir`. */
+export function codexArgs({ model, prompt, dir }) {
+  return [
+    'exec',
+    '--ephemeral',
+    '--ignore-user-config', '--ignore-rules',
+    '--skip-git-repo-check',
+    '--sandbox', 'read-only',
+    '--color', 'never',
+    '--output-schema', join(dir, 'schema.json'),
+    '-o', join(dir, 'answer.json'),
+    '-C', dir,
+    ...(model ? ['-m', model] : []),
+    `${SYSTEM_PROMPT}\n\n${prompt}`,
+  ];
+}
+
+/** The model codex reports in its stderr header (`model: gpt-…`); null when absent. */
+export function codexReportedModel(stderr) {
+  const m = /^model:\s*(\S+)/m.exec(String(stderr || ''));
+  return m ? m[1] : null;
+}
+
+async function runClaude({ exec, bin, model, prompt, timeout, cwd, env }) {
+  const out = await exec(bin, claudeArgs({ model, prompt }), { timeout, maxBuffer: 8 * 1024 * 1024, cwd, env });
+  let parsed;
+  try { parsed = JSON.parse(out.stdout); } catch { throw new SummaryError('bad-json', 'claude returned non-JSON output'); }
+  if (parsed?.is_error) throw new SummaryError('cli-failed', 'claude reported an error', clip(parsed.result || '', 200));
+  return { s: parsed?.structured_output, model };
+}
+
+async function runCodex({ exec, bin, model, prompt, timeout, env }) {
+  const dir = await mkdtemp(join(tmpdir(), 'stow-summary-'));
+  try {
+    await writeFile(join(dir, 'schema.json'), JSON.stringify(SUMMARY_SCHEMA));
+    const out = await exec(bin, codexArgs({ model, prompt, dir }), { timeout, maxBuffer: 8 * 1024 * 1024, cwd: dir, env });
+    let text;
+    try { text = await readFile(join(dir, 'answer.json'), 'utf8'); } catch { throw new SummaryError('bad-json', 'codex wrote no answer'); }
+    let s;
+    try { s = JSON.parse(text); } catch { throw new SummaryError('bad-json', 'codex returned non-JSON output'); }
+    return { s, model: model || codexReportedModel(out?.stderr) || 'codex-default' };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+const RUNNERS = { claude: runClaude, codex: runCodex };
+
 /**
  * @param {string} distillate  output of distill()/distillCodex()/distillGemini()
- * @param {{meta?: string, exec?: Function, model?: string, timeout?: number, cwd?: string, bin?: string, clock?: () => number}} opts
- * @returns {Promise<{v: 2, title: string|null, what: string, outcome: string, improvements: string[], followups: string[], kind_hint: string, model: string, ms: number}>}
+ * @param {{meta?: string, exec?: Function, harness?: 'claude'|'codex', model?: string, timeout?: number, cwd?: string, bin?: string, clock?: () => number}} opts
+ * @returns {Promise<{v: 2, title: string|null, what: string, outcome: string, improvements: string[], followups: string[], kind_hint: string, harness: string, model: string, ms: number}>}
  */
 export async function summarize(distillate, {
   meta = '',
   exec = execClosedStdin,
-  model = process.env.CC_SUMMARY_MODEL || 'haiku',
+  harness = summaryHarness(),
+  model = summaryModel(process.env, harness),
   timeout = 120000,
   cwd = tmpdir(), // never the repo: a project CLAUDE.md would be pulled into context
-  bin = resolveClaudeBin(),
+  bin = resolveHarnessBin(harness),
   clock = Date.now,
 } = {}) {
-  const args = claudeArgs({ model, prompt: `${meta ? `${meta}\n\n` : ''}Transcript:\n${distillate}` });
+  if (!RUNNERS[harness]) throw new SummaryError('cli-failed', `unknown summary harness: ${harness}`);
+  const prompt = `${meta ? `${meta}\n\n` : ''}Transcript:\n${distillate}`;
   // The desktop app's GUI environment has a bare PATH; make sure the CLI's own
   // dir and the usual tool dirs are visible to whatever it spawns.
   const PATH = [bin.includes('/') ? dirname(bin) : null, process.env.PATH, '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
     .filter(Boolean).join(':');
-  let out;
   const t0 = clock();
+  let res;
   try {
-    out = await exec(bin, args, { timeout, maxBuffer: 8 * 1024 * 1024, cwd, env: { ...process.env, PATH } });
+    res = await RUNNERS[harness]({ exec, bin, model, prompt, timeout, cwd, env: { ...process.env, PATH } });
   } catch (e) {
-    if (e?.code === 'ENOENT') throw new SummaryError('cli-missing', `claude CLI not found (tried ${bin}); set CC_CLAUDE_BIN in .env.local`);
-    throw new SummaryError('cli-failed', `claude exited ${e?.code ?? '?'}`, (e?.stderr || e?.message || '').split('\n')[0]);
+    if (e instanceof SummaryError) throw e;
+    if (e?.code === 'ENOENT') throw new SummaryError('cli-missing', `${harness} CLI not found (tried ${bin}); set ${BIN_ENV[harness]} in .env.local`);
+    throw new SummaryError('cli-failed', `${harness} exited ${e?.code ?? '?'}`, (e?.stderr || e?.message || '').split('\n')[0]);
   }
-  let parsed;
-  try { parsed = JSON.parse(out.stdout); } catch { throw new SummaryError('bad-json', 'claude returned non-JSON output'); }
-  if (parsed?.is_error) throw new SummaryError('cli-failed', 'claude reported an error', clip(parsed.result || '', 200));
-  const s = parsed?.structured_output;
-  if (!s || typeof s.what !== 'string' || !OUTCOMES.includes(s.outcome)) throw new SummaryError('bad-json', 'claude returned no structured_output');
+  const s = res.s;
+  if (!s || typeof s.what !== 'string' || !OUTCOMES.includes(s.outcome)) throw new SummaryError('bad-json', `${harness} returned no structured output`);
   const list = (x, n) => (Array.isArray(x) ? x.filter((i) => typeof i === 'string').slice(0, n) : []);
   return {
     v: SUMMARY_VERSION,
@@ -438,7 +515,8 @@ export async function summarize(distillate, {
     improvements: list(s.improvements, 5),
     followups: list(s.followups, 4),
     kind_hint: KIND_HINTS.includes(s.kind_hint) ? s.kind_hint : 'work',
-    model,
+    harness,
+    model: res.model,
     ms: clock() - t0,
   };
 }

@@ -5,8 +5,22 @@
  * with the same code.
  *
  * `summary` is a JSON string: v1 = { what, outcome, improvements, followups, model },
- * v2 adds { v: 2, title, kind_hint, ms } and the `exploration` outcome.
+ * v2 adds { v: 2, title, kind_hint, ms } and the `exploration` outcome; rows
+ * written after the harness setting also carry `harness` (claude|codex).
  */
+
+/** Harnesses that can write a summary (CC_SUMMARY_HARNESS); the first is the default. */
+export const HARNESSES = ['claude', 'codex'];
+
+/**
+ * Model per harness when CC_SUMMARY_MODEL / CC_SUMMARY_BATCH_MODEL are unset.
+ * '' = the CLI's own default (codex runs with --ignore-user-config, so that is
+ * Codex's built-in default, not the one pinned in config.toml).
+ */
+export const DEFAULT_MODELS = {
+  claude: { single: 'haiku', batch: 'claude-sonnet-5-5' },
+  codex: { single: '', batch: '' },
+};
 
 /** A session written to in the last 10 minutes may still be running: never batch-summarise it. */
 export const MIN_AGE_MS = 10 * 60 * 1000;

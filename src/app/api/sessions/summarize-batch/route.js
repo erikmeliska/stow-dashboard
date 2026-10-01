@@ -3,7 +3,7 @@ import { batchModel, clampConcurrency, estimateBatch, readJob, selectMissing, st
 
 /**
  * GET  /api/sessions/summarize-batch                    → { job }   (latest job, any status; `alive` + `status: 'stale'` for a dead runner)
- * GET  /api/sessions/summarize-batch?since=&until=      → { job, missing, estimateSeconds, model }   (CLI/MCP-style range)
+ * GET  /api/sessions/summarize-batch?since=&until=      → { job, missing, estimateSeconds, harness, model }   (CLI/MCP-style range)
  * POST /api/sessions/summarize-batch { ids } | { since, until } (+ force, model, concurrency 1..8)
  *                                                       → { job, started, total }; a live job is returned with started=false;
  *                                                         nothing to do → { job: <latest or null>, started: false, total: 0 }
@@ -17,7 +17,7 @@ export function handleGet(searchParams, db, now = Date.now()) {
   if (since || until) {
     const ids = selectMissing(db, { since, until, now })
     const e = estimateBatch(db, { count: ids.length })
-    Object.assign(out, { missing: ids.length, estimateSeconds: e.seconds, model: e.model })
+    Object.assign(out, { missing: ids.length, estimateSeconds: e.seconds, harness: e.harness, model: e.model })
   }
   return out
 }
