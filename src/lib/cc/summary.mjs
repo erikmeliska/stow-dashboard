@@ -98,12 +98,34 @@ export function resolveClaudeBin(env = process.env, home = homedir(), exists = e
 }
 
 export class SummaryError extends Error {
-  /** @param {'cli-missing'|'cli-failed'|'bad-json'|'not-found'} kind */
+  /** @param {'cli-missing'|'cli-auth'|'cli-failed'|'bad-json'|'not-found'} kind */
   constructor(kind, message, detail = null) {
     super(message || `summary: ${kind}`);
     this.kind = kind;
     this.detail = detail;
   }
+}
+
+/** The CLI's own login is gone (expired OAuth, no API key): every further call fails the same way. */
+const AUTH_RE = /authenticat|oauth|not logged in|log ?in again|\/login|unauthori[sz]ed|invalid api key|\b401\b/i;
+
+/**
+ * The reason a CLI call failed, in one line: claude -p --output-format json
+ * exits 1 with `{is_error: true, result: "<why>"}` on stdout and an empty
+ * stderr, so stdout is checked first.
+ */
+export function cliErrorDetail(e) {
+  try {
+    const j = JSON.parse(e?.stdout || '');
+    if (j?.is_error && j.result) return clip(j.result, 200);
+  } catch { /* not JSON */ }
+  const line = String(e?.stderr || '').split('\n').map((l) => l.trim()).find(Boolean);
+  return line ? clip(line, 200) : clip(e?.message || '', 200);
+}
+
+function cliError(harness, code, detail) {
+  if (AUTH_RE.test(detail)) return new SummaryError('cli-auth', `${harness} CLI is not signed in — sign in again in a terminal (${harness === 'claude' ? 'claude, then /login' : 'codex login'})`, detail);
+  return new SummaryError('cli-failed', `${harness} exited ${code ?? '?'}`, detail);
 }
 
 function clip(s, n) {
@@ -453,7 +475,7 @@ async function runClaude({ exec, bin, model, prompt, timeout, cwd, env }) {
   const out = await exec(bin, claudeArgs({ model, prompt }), { timeout, maxBuffer: 8 * 1024 * 1024, cwd, env });
   let parsed;
   try { parsed = JSON.parse(out.stdout); } catch { throw new SummaryError('bad-json', 'claude returned non-JSON output'); }
-  if (parsed?.is_error) throw new SummaryError('cli-failed', 'claude reported an error', clip(parsed.result || '', 200));
+  if (parsed?.is_error) throw cliError('claude', 0, clip(parsed.result || 'claude reported an error', 200));
   return { s: parsed?.structured_output, model };
 }
 
@@ -502,7 +524,7 @@ export async function summarize(distillate, {
   } catch (e) {
     if (e instanceof SummaryError) throw e;
     if (e?.code === 'ENOENT') throw new SummaryError('cli-missing', `${harness} CLI not found (tried ${bin}); set ${BIN_ENV[harness]} in .env.local`);
-    throw new SummaryError('cli-failed', `${harness} exited ${e?.code ?? '?'}`, (e?.stderr || e?.message || '').split('\n')[0]);
+    throw cliError(harness, e?.code, cliErrorDetail(e));
   }
   const s = res.s;
   if (!s || typeof s.what !== 'string' || !OUTCOMES.includes(s.outcome)) throw new SummaryError('bad-json', `${harness} returned no structured output`);

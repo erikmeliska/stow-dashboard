@@ -210,10 +210,10 @@ async function runJob(jobId, ids, { harness, model, concurrency, summarizeImpl, 
         err = e;
       }
       if (err) {
-        failed.push({ id, kind: err?.kind || 'error', message: String(err?.message || err) });
+        failed.push({ id, kind: err?.kind || 'error', message: String(err?.message || err), ...(err?.detail ? { detail: String(err.detail) } : {}) });
         progress({ id, ok: false, error: err });
-        // Without the CLI every remaining call fails the same way.
-        if (err?.kind === 'cli-missing') stopError = String(err.message || `${harness} CLI not found`);
+        // Without the CLI, or signed out of it, every remaining call fails the same way.
+        if (err?.kind === 'cli-missing' || err?.kind === 'cli-auth') stopError = String(err.message || `${harness} CLI not usable`);
       } else {
         done++;
         progress({ id, ok: true });

@@ -107,7 +107,7 @@ export function SummaryBanner({ ids, periodKey, onProgress }) {
     const failedIds = job.failed.filter((f) => f.kind !== 'not-found').map((f) => f.id)
     return (
       <div className={box} role="status">
-        <span>{job.status === 'stopped' ? `Stopped: ${job.error}` : job.status === 'stale' ? 'The batch stopped responding.' : `Done: ${job.done} summarised`}{job.failed.length ? `, ${job.failed.length} failed` : ''}.</span>
+        <span>{job.status === 'stopped' ? `Stopped: ${job.error}` : job.status === 'stale' ? 'The batch stopped responding.' : `Done: ${job.done} summarised`}{job.failed.length ? `, ${job.failed.length} failed` : ''}.{job.status !== 'stopped' && job.failed[0] ? <span className="text-muted-foreground"> {job.failed[0].detail || job.failed[0].message}</span> : null}</span>
         {failedIds.length > 0 && job.status !== 'stopped' && <Button size="sm" variant="outline" onClick={() => start(failedIds)}>Retry failed</Button>}
         <button className="ml-auto text-muted-foreground hover:text-foreground" aria-label="Close" onClick={() => { setJob(null); setMine(false) }}><X className="h-3.5 w-3.5" /></button>
       </div>

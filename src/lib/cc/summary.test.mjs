@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLines } from './transcript.mjs';
-import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, resolveHarnessBin, summaryHarness, summaryModel, codexArgs, codexReportedModel, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, codexFacts, distillCodex, SUMMARY_SCHEMA } from './summary.mjs';
+import { distill, distillGemini, distillGeminiDb, resolveGeminiTranscriptPath, summarize, summarizeSession, resolveClaudeBin, resolveHarnessBin, summaryHarness, summaryModel, codexArgs, codexReportedModel, cliErrorDetail, SummaryError, sessionMeta, commitMessage, factsHeader, claudeFacts, codexFacts, distillCodex, SUMMARY_SCHEMA } from './summary.mjs';
 import { openStore, upsertSession, getSession } from './store.mjs';
 
 const J = (o) => JSON.stringify(o);
@@ -299,4 +299,13 @@ test('summarize with harness codex reads the -o answer file and cleans up', asyn
   await assert.rejects(summarize('x', { harness: 'codex', bin: 'codex', exec: async () => ({ stdout: '' }) }), (e) => e.kind === 'bad-json');
   await assert.rejects(summarize('x', { harness: 'codex', bin: 'codex', exec: async () => { const e = new Error('x'); e.code = 'ENOENT'; throw e; } }),
     (e) => e.kind === 'cli-missing' && /CC_CODEX_BIN/.test(e.message));
+});
+
+test('a signed-out CLI becomes cli-auth with the reason from the JSON stdout', async () => {
+  const exec = async () => { const e = new Error('Command failed'); e.code = 1; e.stderr = ''; e.stdout = JSON.stringify({ is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed' }); throw e; };
+  await assert.rejects(summarize('x', { exec, harness: 'claude', bin: 'claude' }),
+    (e) => e.kind === 'cli-auth' && /OAuth session expired/.test(e.detail) && /\/login/.test(e.message));
+  const other = async () => { const e = new Error('Command failed'); e.code = 1; e.stdout = JSON.stringify({ is_error: true, result: 'Overloaded' }); throw e; };
+  await assert.rejects(summarize('x', { exec: other, harness: 'claude', bin: 'claude' }), (e) => e.kind === 'cli-failed' && e.detail === 'Overloaded');
+  assert.equal(cliErrorDetail({ stderr: '\n  boom\nmore', stdout: 'x' }), 'boom');
 });

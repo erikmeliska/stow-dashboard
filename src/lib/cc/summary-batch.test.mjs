@@ -216,3 +216,12 @@ test('selectMissing skips sessions whose transcript is gone (range and ids)', ()
   // Default check hits the real filesystem.
   assert.deepEqual(selectMissing(db, { ids: ['gone', 'w1'], now: NOW }), ['w1']);
 });
+
+test('a signed-out CLI stops the job and the failure keeps its reason', async () => {
+  const db = seeded();
+  const impl = async () => { throw Object.assign(new Error('claude CLI is not signed in'), { kind: 'cli-auth', detail: 'OAuth session expired' }); };
+  const fin = await startBatch(db, { ids: ['w1', 'w2'], model: 'm', concurrency: 1, summarizeImpl: impl, ...shared(db), now: () => NOW }).done;
+  assert.equal(fin.status, 'stopped');
+  assert.match(fin.error, /not signed in/);
+  assert.deepEqual(fin.failed, [{ id: 'w1', kind: 'cli-auth', message: 'claude CLI is not signed in', detail: 'OAuth session expired' }]);
+});

@@ -43,7 +43,7 @@ export async function evalSummaries(db, {
   const { job, started, done } = startBatch(db, {
     ids, model: model || batchModel(), concurrency, summarizeImpl,
     openDb: () => db, closeDb: () => {}, now: clock,
-    onProgress: ({ id: sid, ok, error }) => log(ok ? `✓ ${sid.slice(0, 8)}` : `✗ ${sid.slice(0, 8)} ${error?.kind || 'error'}: ${error?.message}`),
+    onProgress: ({ id: sid, ok, error }) => log(ok ? `✓ ${sid.slice(0, 8)}` : `✗ ${sid.slice(0, 8)} ${error?.kind || 'error'}: ${error?.message}${error?.detail ? ` (${error.detail})` : ''}`),
   });
   if (!started) {
     if (job?.status === 'running') log(`a batch is already running (${job.done}/${job.total}, started ${job.started_at}) — not starting another`);

@@ -4,9 +4,9 @@ import { summarizeSession, SummaryError } from '../../../../lib/cc/summary.mjs'
 /**
  * POST /api/sessions/summarize  { id }  → fresh { session, tools, skills, guard_hits }
  * Runs the local `claude` or `codex` CLI per CC_SUMMARY_HARNESS (see src/lib/cc/summary.mjs); errors map to
- * 404 not-found, 503 cli-missing, 502 cli-failed / bad-json.
+ * 404 not-found, 503 cli-missing / cli-auth, 502 cli-failed / bad-json.
  */
-const STATUS = { 'not-found': 404, 'cli-missing': 503, 'cli-failed': 502, 'bad-json': 502 }
+const STATUS = { 'not-found': 404, 'cli-missing': 503, 'cli-auth': 503, 'cli-failed': 502, 'bad-json': 502 }
 
 export async function POST(request) {
   let id = null
