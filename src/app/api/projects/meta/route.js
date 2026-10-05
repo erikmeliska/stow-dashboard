@@ -1,10 +1,12 @@
 import { validateMetaPatch } from '../../../../lib/virtual-projects.mjs'
 import { setProjectClient, setLocationRole } from '../../../../lib/project-meta-write.mjs'
+import { guardRequest } from '../../../../lib/reorg-service.mjs'
 
 /**
  * PATCH /api/projects/meta — manual client / role / primary from the
  * projects page (#10). Body: `{projectId, client}` (null = automatic) or
- * `{directory, role}`. 200 `{ok}`, 400/500 `{error}`.
+ * `{directory, role}`. 200 `{ok}`, 400/500 `{error}`; 403 `{error}` unless the
+ * request is same-origin JSON on a loopback host (`guardRequest`, CSRF).
  */
 export async function handleMetaPatch(body, deps) {
   const v = validateMetaPatch(body)
@@ -19,6 +21,8 @@ export async function handleMetaPatch(body, deps) {
 }
 
 export async function PATCH(request) {
+  const refused = guardRequest(request.headers)
+  if (refused) return Response.json({ error: refused }, { status: 403 })
   let body
   try { body = await request.json() } catch { body = null }
   const { status, json } = await handleMetaPatch(body, { setProjectClient, setLocationRole })

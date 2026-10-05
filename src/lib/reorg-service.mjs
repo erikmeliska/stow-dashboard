@@ -64,7 +64,7 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 export function guardRequest(headers) {
   const hostname = (headers.get('host') || '').replace(/:\d+$/, '').toLowerCase()
-  if (!LOOPBACK.has(hostname)) return 'reorg changes are only accepted on a loopback host (localhost)'
+  if (!LOOPBACK.has(hostname)) return 'changes are only accepted on a loopback host (localhost)'
   const type = headers.get('content-type') || ''
   if (!/^application\/json\b/i.test(type)) return 'expected an application/json request'
   if (headers.get('sec-fetch-site') === 'cross-site') return 'cross-origin request refused'

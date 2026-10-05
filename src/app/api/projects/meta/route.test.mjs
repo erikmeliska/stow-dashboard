@@ -40,3 +40,30 @@ test('writer failure is a 500 with the message', async () => {
   assert.equal(res.status, 500)
   assert.match(res.json.error, /read-only volume/)
 })
+
+test('PATCH refuses cross-origin, non-JSON and non-loopback requests before writing', async () => {
+  const { PATCH } = await import('./route.js')
+  const body = JSON.stringify({ directory: '/nonexistent/stow-csrf-test', role: 'stale' })
+  const req = (headers) => new Request('http://localhost:3088/api/projects/meta', { method: 'PATCH', headers, body })
+  const cases = [
+    { host: 'localhost:3088', 'content-type': 'application/json', origin: 'https://evil.example' },
+    { host: 'localhost:3088', 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
+    { host: 'localhost:3088', 'content-type': 'text/plain' },
+    { host: 'evil.example:3088', 'content-type': 'application/json', origin: 'http://evil.example:3088' },
+  ]
+  for (const headers of cases) {
+    const res = await PATCH(req(headers))
+    assert.equal(res.status, 403, JSON.stringify(headers))
+    assert.equal(typeof (await res.json()).error, 'string')
+  }
+})
+
+test('PATCH lets same-origin JSON through to validation', async () => {
+  const { PATCH } = await import('./route.js')
+  const res = await PATCH(new Request('http://localhost:3088/api/projects/meta', {
+    method: 'PATCH',
+    headers: { host: 'localhost:3088', 'content-type': 'application/json', origin: 'http://localhost:3088' },
+    body: JSON.stringify({ directory: '/p/a', role: 'boss' }),
+  }))
+  assert.equal(res.status, 400)
+})
