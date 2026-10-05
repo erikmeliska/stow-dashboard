@@ -73,7 +73,7 @@ test('relocate: dryRun only plans, never executes; apply needs a planHash', asyn
 
 test('guardRequest: JSON from the same origin only (CSRF)', async () => {
   const { guardRequest } = await import('./reorg-service.mjs')
-  const h = (o) => new Headers({ host: 'localhost:3088', ...o })
+  const h = (o) => new Map(Object.entries({ host: 'localhost:3088', ...o })) // the Headers.get surface used
   assert.equal(guardRequest(h({ 'content-type': 'application/json' })), null)
   assert.equal(guardRequest(h({ 'content-type': 'application/json; charset=utf-8', origin: 'http://localhost:3088' })), null)
   assert.match(guardRequest(h({ 'content-type': 'text/plain' })), /json/i)
