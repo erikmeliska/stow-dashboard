@@ -58,3 +58,16 @@ test('a folder without any cwd is ignored, and only the first 64 KB of a transcr
     assert.deepEqual(await findClaudeProjectDirs(path.join(h.root, 'missing'), '/P'), [])
   } finally { await h.done() }
 })
+
+test('a folder moved earlier is found through path-moves (its transcripts keep the old cwd)', async () => {
+  const h = await home()
+  try {
+    // After /P/old → /P/new: the folder is named for /P/new, its transcript still says /P/old.
+    await h.add(claudeSlug('/P/new'), [{ type: 'user', cwd: '/P/old' }])
+    const moves = [{ id: 'm', from: '/P/old', to: '/P/new', at: 'x' }]
+    assert.deepEqual(await findClaudeProjectDirs(h.root, '/P/new'), [])
+    const [g] = await findClaudeProjectDirs(h.root, '/P/new', { moves })
+    assert.equal(g.cwd, '/P/new')
+    assert.equal(g.slug, claudeSlug('/P/new'))
+  } finally { await h.done() }
+})

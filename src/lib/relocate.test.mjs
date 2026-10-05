@@ -294,3 +294,15 @@ test('resumeRelocation rolls back a journal left by a crash', async () => {
     assert.equal(JSON.parse(await readFile(journalFile, 'utf8')).status, 'rolled-back')
   } finally { await env.done(); await f.done() }
 })
+
+test('plan: a Claude folder from an earlier move is found via deps.moves (round trip)', async () => {
+  const f = await fixture()
+  try {
+    // The project came from /P/old earlier; its Claude folder is already renamed, transcript says /P/old.
+    const old = path.join(f.P, 'old')
+    const d = path.join(f.claudeDir, claudeSlug(f.from)); await mkdir(d, { recursive: true })
+    await writeFile(path.join(d, 's1.jsonl'), JSON.stringify({ type: 'user', cwd: old }) + '\n')
+    const plan = await planRelocation({ from: f.from, to: f.to }, { ...f.deps, moves: [{ id: 'm', from: old, to: f.from, at: 'x' }] })
+    assert.equal(plan.steps.find(s => s.kind === 'claude-dir')?.detail.dest, path.join(f.claudeDir, claudeSlug(f.to)))
+  } finally { await f.done() }
+})

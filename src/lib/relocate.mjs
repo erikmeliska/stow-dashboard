@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto'
 import { claudeSlug, findClaudeProjectDirs } from './claude-project-dirs.mjs'
 import { locationOf } from './registry/identity.mjs'
 import { dataFile, ledgerFile } from './state-dir.mjs'
-import { appendPathMove, removePathMove, resolveMovedPath, PATH_MOVES_FILE } from './path-moves.mjs'
+import { appendPathMove, removePathMove, resolveMovedPath, loadPathMoves, PATH_MOVES_FILE } from './path-moves.mjs'
 
 // Claude Code shortens longer slugs with a hash we can't reproduce.
 const MAX_SLUG = 200
@@ -66,7 +66,7 @@ export async function planRelocation({ from, to, force = false }, deps) {
 
   steps.push({ kind: 'move-dir', description: `Move ${from} → ${to}`, detail: { from, to } })
   const folders = []
-  for (const c of await findClaudeProjectDirs(deps.claudeDir, from, { fs })) {
+  for (const c of await findClaudeProjectDirs(deps.claudeDir, from, { fs, moves: deps.moves ?? [] })) {
     const newCwd = to + c.cwd.slice(from.length)
     const destSlug = claudeSlug(newCwd)
     if (destSlug.length > MAX_SLUG) blockers.push(`target path too long for a predictable Claude project folder: ${newCwd}`)
@@ -400,6 +400,8 @@ export async function defaultRelocateDeps({ base } = {}) {
     exec: (cmd, args) => execFileP(cmd, args),
     claudeDir: process.env.CC_CLAUDE_DIR || path.join(os.homedir(), '.claude', 'projects'),
     register: await loadRegistry(stateOpts),
+    // Earlier moves: their Claude folders hold transcripts with the old cwd.
+    moves: await loadPathMoves(stateOpts),
     rows,
     stateOpts,
     openStore: () => openStore(dbFile),
