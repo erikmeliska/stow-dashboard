@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTimeline, concurrencyProfile, packTracks, POINT_MIN, timelineBars, timeWindow } from './session-timeline.mjs';
+import { buildTimeline, concurrencyProfile, onDay, packTracks, POINT_MIN, timelineBars, timeWindow } from './session-timeline.mjs';
 import { UNASSIGNED } from './session-projects.mjs';
 
 const L = (d, h = 0, m = 0) => new Date(2026, 9, d, h, m); // October 2026, local
@@ -109,4 +109,10 @@ test('timeWindow: whole hours around the bars, minimum span, default for an empt
   assert.deepEqual(timeWindow(bars), { startHour: 9, endHour: 14 });
   assert.deepEqual(timeWindow(timelineBars([S(10, 0, 10, 30)], DAY)), { startHour: 10, endHour: 14 });
   assert.deepEqual(timeWindow(timelineBars([S(22, 0, 23, 30)], DAY)), { startHour: 20, endHour: 24 });
+});
+
+test('onDay: keeps families that reach the day, incl. one from the previous evening', () => {
+  const prev = { ...S(0, 0, 0, 0, { session_id: 'prev' }), started_at: iso(L(4, 23)), ended_at: iso(L(5, 1)) };
+  const before = { ...S(0, 0, 0, 0, { session_id: 'before' }), started_at: iso(L(4, 9)), ended_at: iso(L(4, 10)) };
+  assert.deepEqual(onDay([prev, before, S(9, 0, 10, 0, { session_id: 'today' })], DAY).map((e) => e.session_id), ['prev', 'today']);
 });

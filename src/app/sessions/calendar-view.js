@@ -6,19 +6,18 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   absorbPoints, bannerIds, calendarFamilies, calendarSlot, clusterColor, clusterDay, clusterStats, colorBy, COLOR_MODES,
-  DEFAULT_COLOR_MODE, DEFAULT_MERGE, daySegment, harnessBadge, layoutDay, layoutPoints, MAX_COLS, MERGE_MODES, periodLabel,
+  DEFAULT_COLOR_MODE, DEFAULT_MERGE, daySegment, layoutDay, layoutPoints, MAX_COLS, MERGE_MODES, periodLabel,
   periodStats, shiftPeriod, workspaceLanes,
 } from '@/lib/cc/session-calendar.mjs'
 import { SummaryBanner } from './summary-banner'
+import { DayTimeline } from './timeline-view'
 import { ColorLegend, ColorSelect } from './color-controls'
-import { displayTitle, OUTCOME_ICON, parseSummary } from '@/lib/cc/summary-view.mjs'
+import { displayTitle } from '@/lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
-import { formatWorkspace } from '@/lib/cc/workspace.mjs'
 import { WorkspaceBadge } from './workspace-badge'
+import { DOT_PX, EventDot, eventTip, fmtCost, HarnessBadge, OutcomeMark } from './event-marks'
 
 const HOUR_PX = 44
-const DOT_PX = 9
-const fmtCost = (c) => `$${(c || 0).toFixed(2)}`
 const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
 const MERGE_KEY = 'stow.calendar.mergeBy'
 const MERGE_LABEL = { project: 'Project', client: 'Client', none: 'None' }
@@ -59,8 +58,10 @@ export function CalendarView({ families, range, loadedKey, wantKey, selected, on
         colorMode={colorMode} onColorMode={onColorMode} mergeBy={mergeBy} onMergeBy={setMergeBy} />
       <ColorLegend events={events} mode={colorMode} className="mb-2" />
       <SummaryBanner ids={missing} periodKey={periodKey} onProgress={onRefresh} />
-      {range.span === 'week'
-        ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} colorMode={colorMode} mergeBy={mergeBy} />
+      {range.span === 'day'
+        ? <DayTimeline day={range.since} events={events} ready={ready} selected={selected} onOpen={onOpen} colorMode={colorMode} />
+        : range.span === 'week'
+        ? <WeekGrid days={range.days} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} colorMode={colorMode} mergeBy={mergeBy} />
         : <MonthGrid range={range} events={events} selected={selected} onOpen={onOpen} onNavigate={onNavigate} colorMode={colorMode} />}
     </div>
   )
@@ -81,7 +82,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate, colorMode }) {
     for (const list of m.values()) list.sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
     return m
   }, [events])
-  const openWeek = (d) => onNavigate(d, 'week')
+  const openDay = (d) => onNavigate(d, 'day')
 
   // The scroll lives on a wrapper, not on the grid: a grid that is itself the
   // flex-item scroll container gets its rows stretched evenly instead of sized
@@ -105,7 +106,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate, colorMode }) {
           <div key={+d} className={`min-w-0 border-b border-l p-1 ${inMonth ? '' : 'opacity-40'}`}
             style={hours > 0 ? { background: `color-mix(in srgb, var(--viz-1) ${heat}%, transparent)` } : undefined}>
             <div className="mb-0.5 flex min-w-0 items-center justify-between gap-1 whitespace-nowrap text-[11px]">
-              <button onClick={() => openWeek(d)} className={`flex-none rounded px-1 hover:bg-muted ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'd')}</button>
+              <button onClick={() => openDay(d)} title="Open the day timeline" className={`flex-none rounded px-1 hover:bg-muted ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'd')}</button>
               {hours > 0 && <span className="truncate tabular-nums text-muted-foreground">{hours.toFixed(1)} h</span>}
             </div>
             <div className="space-y-0.5">
@@ -113,7 +114,7 @@ function MonthGrid({ range, events, selected, onOpen, onNavigate, colorMode }) {
                 <EventBlock key={e.session_id} e={e} compact colorMode={colorMode} selected={selected === e.session_id} onOpen={onOpen} />
               ))}
               {list.length > CHIPS_PER_DAY && (
-                <button onClick={() => openWeek(d)} className="text-[11px] text-muted-foreground hover:text-foreground">+{list.length - CHIPS_PER_DAY} more</button>
+                <button onClick={() => openDay(d)} className="text-[11px] text-muted-foreground hover:text-foreground">+{list.length - CHIPS_PER_DAY} more</button>
               )}
             </div>
           </div>
@@ -136,7 +137,7 @@ function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan, co
       </div>
       <h2 className="text-sm font-semibold">{periodLabel(range)}</h2>
       <div className="inline-flex rounded-md border p-0.5">
-        {['week', 'month'].map((s) => (
+        {['day', 'week', 'month'].map((s) => (
           <button key={s} onClick={() => onSpan(s)} aria-pressed={range.span === s}
             className={`rounded px-2 py-0.5 text-xs capitalize ${range.span === s ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{s}</button>
         ))}
@@ -167,7 +168,7 @@ function PeriodHeader({ range, stats, showAll, onShowAll, onNavigate, onSpan, co
   )
 }
 
-function WeekGrid({ days, events, selected, onOpen, colorMode, mergeBy }) {
+function WeekGrid({ days, events, selected, onOpen, onNavigate, colorMode, mergeBy }) {
   const scroller = useRef(null)
   const [pop, setPop] = useState(null)
   useEffect(() => { if (scroller.current) scroller.current.scrollTop = 7 * HOUR_PX }, [])
@@ -209,7 +210,8 @@ function WeekGrid({ days, events, selected, onOpen, colorMode, mergeBy }) {
       <div className="grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] border-b text-xs">
         <div />
         {days.map((d) => (
-          <div key={+d} className={`px-1 py-1 text-center ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'EEE d.M.')}</div>
+          <button key={+d} onClick={() => onNavigate(d, 'day')} title="Open the day timeline"
+            className={`px-1 py-1 text-center hover:bg-muted hover:text-foreground ${isToday(d) ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{format(d, 'EEE d.M.')}</button>
         ))}
       </div>
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
@@ -320,46 +322,6 @@ function SessionPopover({ pop, alignRight, colorMode, selected, onClose, onOpen 
         ))}
       </div>
     </div>
-  )
-}
-
-export function HarnessBadge({ e }) {
-  const b = harnessBadge(e)
-  return <span title={b.label} className="inline-flex h-3.5 w-3.5 flex-none items-center justify-center rounded-sm bg-foreground/10 text-[9px] font-bold">{b.letter}</span>
-}
-
-function OutcomeMark({ e }) {
-  const sum = parseSummary(e)
-  if (!sum) return <span title="No summary" className="inline-block h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground" />
-  return <span title={sum.outcome} className="flex-none">{OUTCOME_ICON[sum.outcome] || ''}</span>
-}
-
-function eventTip(e, title, bucket, colorMode) {
-  const r = e.rollup || e
-  const mins = Math.round((r.active_s || 0) / 60)
-  return `${title}\n${sessionProjectLabel(e)}${e.workspace ? ` · ${formatWorkspace(e.workspace)}` : ''} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
-}
-
-/**
- * A session with ~no active time: a dot at its start time instead of a 15-min
- * block. `inline` = a row in a cluster's session list (dot + title), still a dot.
- */
-function EventDot({ e, style, selected, onOpen, colorMode, inline = false }) {
-  const title = displayTitle(e) || 'Untitled session'
-  const bucket = colorBy(e, colorMode)
-  if (inline) {
-    return (
-      <button onClick={() => onOpen(e.session_id)} title={eventTip(e, title, bucket, colorMode)}
-        className={`flex w-full items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-[11px] leading-tight hover:bg-muted ${e.muted ? 'opacity-50' : ''} ${selected ? 'ring-2 ring-ring' : ''}`}>
-        <span className="flex-none rounded-full ring-1 ring-background" style={{ width: DOT_PX, height: DOT_PX, background: bucket.color }} aria-hidden />
-        <span className="truncate">{title}</span>
-      </button>
-    )
-  }
-  return (
-    <button onClick={() => onOpen(e.session_id)} title={eventTip(e, title, bucket, colorMode)} aria-label={title}
-      className={`absolute z-[5] rounded-full ring-1 ring-background hover:z-10 hover:scale-150 ${e.muted ? 'opacity-50' : ''} ${selected ? 'outline outline-2 outline-ring' : ''}`}
-      style={{ ...style, width: DOT_PX, height: DOT_PX, background: bucket.color }} />
   )
 }
 

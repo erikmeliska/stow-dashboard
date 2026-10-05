@@ -22,6 +22,11 @@ function span(row, day) {
   return { start: seg.top, end: seg.point ? seg.top : seg.top + seg.height, point: !!seg.point, continued: seg.continued, continues: seg.continues };
 }
 
+/** Families with a segment on `day` (a day view loads from the day before; this drops what doesn't reach it). */
+export function onDay(events, day) {
+  return (events || []).filter((e) => span(e, day));
+}
+
 /**
  * Families → bars on `day` (events without a segment there are dropped).
  * `extentStart/extentEnd` cover the bar and its subs: what track packing reserves.

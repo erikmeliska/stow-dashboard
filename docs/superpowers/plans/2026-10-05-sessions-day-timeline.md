@@ -44,8 +44,8 @@
 
 **Produces:** `periodRange(date,'day')` → `{span:'day', since, until, days:[since], loadSince}`; `shiftPeriod(date,'day',±1)` → ±1 day; `periodLabel({span:'day'})` → `'EEE d MMM yyyy'`. `loadKey` unchanged (uses `since`/`until`).
 
-- [ ] Test: `periodRange(L(9,15),'day')` → since `L(9)`, until `L(10)`, `days.length===1`, `loadSince === L(8)`; `shiftPeriod(L(9),'day',-1)` → `L(8)`; `periodLabel` → `'Wed 9 Sep 2026'`.
-- [ ] Implement, run `node --test src/lib/cc/session-calendar.test.mjs`, commit.
+- [x] Test: `periodRange(L(9,15),'day')` → since `L(9)`, until `L(10)`, `days.length===1`, `loadSince === L(8)`; `shiftPeriod(L(9),'day',-1)` → `L(8)`; `periodLabel` → `'Wed 9 Sep 2026'`.
+- [x] Implement, run `node --test src/lib/cc/session-calendar.test.mjs`, commit.
 
 ### Task 2: `session-timeline.mjs` (pure)
 
@@ -58,16 +58,16 @@
 - `buildTimeline(events, day)` → `Client[]`; `Client = {id, name, unassigned, stats, peak, profile, projects: Project[]}`, `Project = {key, name, stats, peak, profile, lanes: Lane[]}`, `Lane = {workspace, label, tracks: Bar[][]}`; `stats = clusterStats(events)`.
 - `timeWindow(bars, {minHours=4})` → `{startHour, endHour}`.
 
-- [ ] Tests (each Review Focus item plus): ordering of clients/projects/lanes; peak = 3 for three overlapping sessions in different worktrees; touching sessions don't overlap (peak 1, same track).
-- [ ] Implement, run, commit.
+- [x] Tests (each Review Focus item plus): ordering of clients/projects/lanes; peak = 3 for three overlapping sessions in different worktrees; touching sessions don't overlap (peak 1, same track).
+- [x] Implement, run, commit.
 
 ### Task 3: Timeline UI + navigation
 
 **Files:** Create `src/app/sessions/timeline-view.js`; Modify `src/app/sessions/calendar-view.js` (export `EventDot`, `OutcomeMark`, `eventTip`; Day in the span toggle; Merge only for week; week headers + month day number/“+N more” open the day; render `DayTimeline` for `span==='day'`; day-filtered events for stats/banner/legend), `src/app/sessions/page.js` (`span` accepts `day`; load from `range.loadSince ?? range.since`).
 
-- [ ] Implement; `npm run lint`; check in the running app on 2026-10-05 (collapse, colours, click → detail, ← → / Today, back to week, dark mode); commit.
+- [x] Implement; `npm run lint`; check in the running app on 2026-10-05 (collapse, colours, click → detail, ← → / Today, back to week, dark mode); commit.
 
 ### Task 4: Docs + PR
 
-- [ ] CLAUDE.md "Session calendar" section: day view paragraph, `session-timeline.mjs` + `timeline-view.js` in Important Files.
-- [ ] `npm test`, `npm run lint`, rebase on `origin/main`, push, PR with "Closes #31".
+- [x] CLAUDE.md "Session calendar" section: day view paragraph, `session-timeline.mjs` + `timeline-view.js` in Important Files.
+- [x] `npm test`, `npm run lint`, rebase on `origin/main`, push, PR with "Closes #31".
