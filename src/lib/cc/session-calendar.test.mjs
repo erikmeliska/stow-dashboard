@@ -76,10 +76,11 @@ test('layoutPoints moves a dot that would overlap an earlier one into the next s
 });
 
 test('layoutDay puts overlapping events side by side, separate clusters full width', () => {
-  const lay = layoutDay([
+  const { placed: lay, overflow } = layoutDay([
     { id: 'a', start: 60, end: 180 }, { id: 'b', start: 120, end: 150 }, { id: 'c', start: 130, end: 200 },
     { id: 'd', start: 300, end: 360 },
   ]);
+  assert.deepEqual(overflow, [], 'no cap by default');
   assert.deepEqual(lay.get('a'), { col: 0, cols: 3 });
   assert.deepEqual(lay.get('b'), { col: 1, cols: 3 });
   assert.deepEqual(lay.get('c'), { col: 2, cols: 3 });
@@ -211,4 +212,108 @@ test('defaultColorMode: project when most shown sessions have no summary, else o
   assert.equal(defaultColorMode([sum, sum, {}]), 'outcome');
   assert.equal(defaultColorMode([]), 'outcome');
   assert.equal(defaultColorMode(null), 'outcome');
+});
+
+// ---- clusters + column cap (#30) ----
+
+import {
+  mergeKey, clusterDay, MAX_COLS, MERGE_MODES, DEFAULT_MERGE, clusterColor, workspaceLanes, clusterStats,
+} from './session-calendar.mjs';
+
+const seg = (id, top, end, e = {}) => ({ top, height: end - top, e: { session_id: id, project_key: 'P', ...e } });
+const ids = (item) => item.segs.map((s) => s.e.session_id);
+
+test('mergeKey: project key, client id (Unassigned shared), none = per session, muted kept apart', () => {
+  assert.deepEqual(MERGE_MODES, ['project', 'client', 'none']);
+  assert.equal(DEFAULT_MERGE, 'project');
+  assert.equal(mergeKey({ session_id: 's', project_key: 'P' }, 'project'), 'P');
+  assert.equal(mergeKey({ session_id: 's', base_dir: '/b' }, 'project'), '/b');
+  assert.equal(mergeKey({ session_id: 's', client_id: 'acme' }, 'client'), 'acme');
+  assert.equal(mergeKey({ session_id: 's' }, 'client'), mergeKey({ session_id: 't' }, 'client'));
+  assert.notEqual(mergeKey({ session_id: 's', project_key: 'P' }, 'none'), mergeKey({ session_id: 't', project_key: 'P' }, 'none'));
+  assert.notEqual(mergeKey({ session_id: 's', project_key: 'P', muted: true }, 'project'), 'P');
+});
+
+test('clusterDay merges a chain of overlapping same-project sessions, keeps others apart', () => {
+  const items = clusterDay([
+    seg('a', 60, 120), seg('b', 100, 200), seg('c', 190, 250), // chain → one cluster
+    seg('d', 300, 330), // later, same project → alone
+    seg('x', 70, 110, { project_key: 'Q' }), // other project overlapping a
+    seg('t', 250, 280), // touches c's end → does not merge
+    seg('m', 80, 90, { muted: true }), // muted twin of the same project
+  ], 'project');
+  const byFirst = Object.fromEntries(items.map((it) => [ids(it)[0], it]));
+  assert.deepEqual(ids(byFirst.a), ['a', 'b', 'c']);
+  assert.equal(byFirst.a.start, 60); assert.equal(byFirst.a.end, 250);
+  assert.match(byFirst.a.id, /^c:/);
+  assert.equal(byFirst.d.id, 'd');
+  assert.deepEqual(ids(byFirst.x), ['x']);
+  assert.deepEqual(ids(byFirst.t), ['t']);
+  assert.deepEqual(ids(byFirst.m), ['m']);
+  assert.equal(items.length, 5);
+  assert.deepEqual(items.map((it) => it.start), [...items.map((it) => it.start)].sort((p, q) => p - q), 'sorted by start');
+});
+
+test('clusterDay: none never merges; client merges two projects of one client', () => {
+  const segs = [seg('a', 60, 120, { client_id: 'k' }), seg('b', 90, 150, { project_key: 'Q', client_id: 'k' })];
+  assert.equal(clusterDay(segs, 'none').length, 2);
+  assert.equal(clusterDay(segs, 'project').length, 2);
+  const [c] = clusterDay(segs, 'client');
+  assert.deepEqual(ids(c), ['a', 'b']);
+});
+
+test('layoutDay caps columns: extra items fold into +N chips in the last column', () => {
+  assert.equal(MAX_COLS, 4);
+  const ten = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, start: 60 + i, end: 200 }));
+  const { placed, overflow } = layoutDay([...ten, { id: 'late', start: 300, end: 360 }], { maxCols: 4 });
+  assert.deepEqual([...placed.keys()].sort(), ['late', 's0', 's1', 's2']);
+  assert.deepEqual(placed.get('s2'), { col: 2, cols: 4 });
+  assert.deepEqual(placed.get('late'), { col: 0, cols: 1 });
+  assert.equal(overflow.length, 1);
+  assert.deepEqual(overflow[0], { id: '+0', col: 3, cols: 4, start: 63, end: 200, ids: ['s3', 's4', 's5', 's6', 's7', 's8', 's9'] });
+});
+
+test('layoutDay cap: no chip when the group fits; disjoint hidden ranges give separate chips', () => {
+  const four = Array.from({ length: 4 }, (_, i) => ({ id: `f${i}`, start: 0, end: 50 }));
+  const fit = layoutDay(four, { maxCols: 4 });
+  assert.equal(fit.overflow.length, 0);
+  assert.deepEqual(fit.placed.get('f3'), { col: 3, cols: 4 });
+  // a long anchor keeps one overlap group; two bursts of 4 short ones far apart
+  const items = [
+    { id: 'long', start: 0, end: 1000 },
+    ...Array.from({ length: 4 }, (_, i) => ({ id: `a${i}`, start: 100, end: 150 })),
+    ...Array.from({ length: 4 }, (_, i) => ({ id: `b${i}`, start: 600, end: 650 })),
+  ];
+  const { overflow } = layoutDay(items, { maxCols: 4 });
+  assert.equal(overflow.length, 2);
+  assert.deepEqual(overflow.map((o) => [o.start, o.end, o.ids.length]), [[100, 150, 2], [600, 650, 2]]);
+});
+
+test('clusterColor: majority bucket, else a mixed stripe of the top colours', () => {
+  const done = { summary: JSON.stringify({ v: 2, outcome: 'done' }) };
+  const partial = { summary: JSON.stringify({ v: 2, outcome: 'partial' }) };
+  const maj = clusterColor([done, done, done, partial], 'outcome');
+  assert.equal(maj.mixed, false);
+  assert.equal(maj.color, 'var(--status-good)');
+  assert.equal(maj.label, 'Done');
+  const mix = clusterColor([done, partial], 'outcome');
+  assert.equal(mix.mixed, true);
+  assert.deepEqual(mix.colors, ['var(--status-good)', 'var(--status-warning)']);
+});
+
+test('workspaceLanes: main checkout first, worktrees by name, spans as fractions', () => {
+  const lanes = workspaceLanes([
+    seg('w2', 150, 200, { workspace: 'agent-office:zeta' }),
+    seg('m', 100, 200),
+    seg('w1', 100, 150, { workspace: 'agent-office:alpha' }),
+    seg('w1b', 150, 175, { workspace: 'agent-office:alpha' }),
+  ], 100, 200);
+  assert.deepEqual(lanes.map((l) => l.workspace), [null, 'agent-office:alpha', 'agent-office:zeta']);
+  assert.equal(lanes[0].label, 'main checkout');
+  assert.deepEqual(lanes[1].spans, [{ top: 0, height: 0.5 }, { top: 0.5, height: 0.25 }]);
+  assert.deepEqual(lanes[2].spans, [{ top: 0.5, height: 0.5 }]);
+});
+
+test('clusterStats sums rollups', () => {
+  assert.deepEqual(clusterStats([{ cost_usd: 1, active_s: 60 }, { rollup: { cost_usd: 2.5, active_s: 30 } }]), { sessions: 2, cost_usd: 3.5, active_s: 90 });
 });

@@ -17,6 +17,7 @@ import { effectiveKind } from './session-link.mjs';
 import { needsSummary, parseSummary, summaryVersion } from './summary-view.mjs';
 import { sourceOf } from './session-filters.mjs';
 import { UNASSIGNED } from './session-projects.mjs';
+import { formatWorkspace } from './workspace.mjs';
 
 const WEEK = { weekStartsOn: 1 };
 export const MAX_SPAN_MS = 5 * 3600_000;
@@ -98,24 +99,141 @@ export function layoutPoints(items, gap = 12) {
   return out;
 }
 
-/** Greedy column layout for overlapping items of one day; `cols` is the width of the item's overlap cluster. */
-export function layoutDay(items) {
+// ---- concurrent sessions: clusters + column cap (#30) ----
+//
+// A busy day (dozens of agents at once) used to split into as many columns as
+// sessions overlap, a few pixels each. Two steps per day keep it readable:
+// clusterDay merges overlapping sessions of one project (or client) into one
+// block, then layoutDay caps every overlap group at MAX_COLS columns and folds
+// the rest into "+N" chips in the last column.
+
+export const MERGE_MODES = ['project', 'client', 'none'];
+export const DEFAULT_MERGE = 'project';
+export const MAX_COLS = 4;
+
+/** What a session merges on: its project, its client (Unassigned shared) or nothing. Muted rows never merge with work. */
+export function mergeKey(e, mergeBy) {
+  const k = mergeBy === 'client' ? (e.client_id || UNASSIGNED)
+    : mergeBy === 'none' ? `s:${e.session_id}`
+      : sessionProjectKey(e);
+  return e.muted ? `muted:${k}` : k;
+}
+
+/**
+ * Day segments ({top, height, e}) → items {id, start, end, segs}, sorted by
+ * start. Same-key segments chained by overlap (each starts before the chain's
+ * end; touching ones don't merge) become one cluster; a chain of one stays a
+ * plain item with the session id as its id.
+ */
+export function clusterDay(segs, mergeBy = DEFAULT_MERGE) {
+  const groups = new Map();
+  for (const s of segs) {
+    const k = mergeKey(s.e, mergeBy);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+  const out = [];
+  for (const [k, list] of groups) {
+    list.sort((x, y) => x.top - y.top || y.height - x.height);
+    let run = null;
+    const flush = () => {
+      if (!run) return;
+      const first = run.segs[0].e.session_id;
+      out.push({ ...run, id: run.segs.length > 1 ? `c:${k}:${first}` : first });
+      run = null;
+    };
+    for (const s of list) {
+      const end = s.top + s.height;
+      if (run && s.top < run.end) { run.segs.push(s); run.end = Math.max(run.end, end); continue; }
+      flush();
+      run = { start: s.top, end, segs: [s] };
+    }
+    flush();
+  }
+  return out.sort((x, y) => x.start - y.start || y.end - x.end);
+}
+
+/**
+ * Greedy column layout for the overlapping items of one day. `placed` maps an
+ * item id to {col, cols} (cols = width of its overlap group, at most maxCols).
+ * A group that needs more than maxCols columns keeps columns 0..maxCols-2 and
+ * gives the last one to `overflow` chips {id, col, cols, start, end, ids}: the
+ * hidden items merged by overlap, so separate bursts get separate chips.
+ * Items in a chip are absent from `placed`.
+ */
+export function layoutDay(items, { maxCols = Infinity } = {}) {
   const sorted = [...items].sort((x, y) => x.start - y.start || y.end - x.end);
-  const out = new Map();
-  let cluster = [], colsEnd = [], clusterEnd = -Infinity;
+  const placed = new Map();
+  const overflow = [];
+  let group = [], colsEnd = [], groupEnd = -Infinity;
   const flush = () => {
-    for (const id of cluster) out.get(id).cols = colsEnd.length;
-    cluster = []; colsEnd = []; clusterEnd = -Infinity;
+    const capped = colsEnd.length > maxCols;
+    const cols = Math.min(colsEnd.length, maxCols);
+    let chip = null;
+    for (const g of group) {
+      if (!capped || g.col < maxCols - 1) { placed.set(g.it.id, { col: g.col, cols }); continue; }
+      if (chip && g.it.start < chip.end) {
+        chip.ids.push(g.it.id); chip.end = Math.max(chip.end, g.it.end);
+      } else {
+        chip = { id: `+${overflow.length}`, col: maxCols - 1, cols, start: g.it.start, end: g.it.end, ids: [g.it.id] };
+        overflow.push(chip);
+      }
+    }
+    group = []; colsEnd = []; groupEnd = -Infinity;
   };
   for (const it of sorted) {
-    if (it.start >= clusterEnd) flush();
+    if (it.start >= groupEnd) flush();
     let col = colsEnd.findIndex((e) => e <= it.start);
     if (col === -1) { col = colsEnd.length; colsEnd.push(it.end); } else colsEnd[col] = it.end;
-    out.set(it.id, { col, cols: 0 });
-    cluster.push(it.id);
-    clusterEnd = Math.max(clusterEnd, it.end);
+    group.push({ it, col });
+    groupEnd = Math.max(groupEnd, it.end);
   }
   flush();
+  return { placed, overflow };
+}
+
+/** A cluster's colour under `mode`: the majority bucket (>= half), else a mix of the top three. */
+export function clusterColor(events, mode) {
+  const counts = new Map();
+  for (const e of events) {
+    const b = colorBy(e, mode);
+    const c = counts.get(b.key) || { ...b, count: 0 };
+    c.count++;
+    counts.set(b.key, c);
+  }
+  const ranked = [...counts.values()].sort((a, b) => b.count - a.count);
+  const top = ranked[0];
+  if (top.count * 2 >= events.length && (ranked.length === 1 || top.count > ranked[1].count)) {
+    return { color: top.color, colors: [top.color], label: top.label, mixed: false };
+  }
+  const head = ranked.slice(0, 3);
+  return { color: top.color, colors: head.map((b) => b.color), label: head.map((b) => b.label).join(' / '), mixed: true };
+}
+
+/**
+ * One lane per workspace inside a cluster (main checkout first, worktrees by
+ * name), each member's span as a fraction (0..1) of the cluster's start..end.
+ */
+export function workspaceLanes(segs, start, end) {
+  const span = Math.max(end - start, 1);
+  const lanes = new Map();
+  for (const s of segs) {
+    const ws = s.e.workspace || null;
+    if (!lanes.has(ws)) lanes.set(ws, { workspace: ws, label: ws ? formatWorkspace(ws) : 'main checkout', spans: [] });
+    lanes.get(ws).spans.push({ top: (s.top - start) / span, height: s.height / span });
+  }
+  for (const l of lanes.values()) l.spans.sort((a, b) => a.top - b.top);
+  return [...lanes.values()].sort((a, b) => (a.workspace == null ? -1 : b.workspace == null ? 1 : a.workspace.localeCompare(b.workspace)));
+}
+
+export function clusterStats(events) {
+  const out = { sessions: 0, cost_usd: 0, active_s: 0 };
+  for (const e of events) {
+    const r = e.rollup || e;
+    out.sessions++;
+    out.cost_usd += r.cost_usd || 0;
+    out.active_s += r.active_s || 0;
+  }
   return out;
 }
 
