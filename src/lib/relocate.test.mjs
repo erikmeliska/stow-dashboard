@@ -306,3 +306,48 @@ test('plan: a Claude folder from an earlier move is found via deps.moves (round 
     assert.equal(plan.steps.find(s => s.kind === 'claude-dir')?.detail.dest, path.join(f.claudeDir, claudeSlug(f.to)))
   } finally { await f.done() }
 })
+
+// ── review fixes ─────────────────────────────────────────────────────────────
+
+test('a git submodule checkout is a blocker (#11 review I-3)', async () => {
+  const f = await fixture()
+  try {
+    const exec = async (cmd, args) => args.includes('--show-superproject-working-tree') ? { stdout: '/P/super\n' } : f.deps.exec(cmd, args)
+    assert.match((await planRelocation({ from: f.from, to: f.to }, { ...f.deps, exec })).blockers.join(), /submodule of \/P\/super/)
+  } finally { await f.done() }
+})
+
+test('a ledger row already at or under the target is a blocker (#11 review I-8)', async () => {
+  const f = await fixture()
+  try {
+    const rows = [...f.deps.rows, { directory: path.join(f.to, 'pkg'), checkout: { root: f.to, subpath: 'pkg', git: false } }]
+    assert.match((await planRelocation({ from: f.from, to: f.to }, { ...f.deps, rows })).blockers.join(), /ledger already has/)
+  } finally { await f.done() }
+})
+
+const failingFs = (pred) => ({
+  ...fsp,
+  rename: async (a, b) => { if (pred('rename', a, b)) throw new Error('boom'); return fsp.rename(a, b) },
+  writeFile: async (a, ...rest) => { if (pred('writeFile', a)) throw new Error('boom'); return fsp.writeFile(a, ...rest) },
+})
+
+for (const [name, pred] of [
+  ['move-dir rename after creating parent dirs', (_, a) => _ === 'rename' && a.endsWith(`${path.sep}blog`) && !a.includes('.claude')],
+  ['claude-dir merge mid-file', (_, a) => _ === 'rename' && a.endsWith(`${path.sep}s1.jsonl`) && a.includes('.claude')],
+  ['usage-cache write', (_, a) => _ === 'writeFile' && a.includes('usage-cache.json.tmp')],
+  ['ledger write', (_, a) => _ === 'writeFile' && a.includes('projects_metadata.jsonl.tmp')],
+]) {
+  test(`failure inside a step's run (${name}) leaves everything as before (#11 review I-7)`, async () => {
+    const f = await fixture(); const env = await withStateDir(f)
+    try {
+      await seedAll(f, env)
+      if (name.startsWith('claude-dir')) { const t = await f.mkClaude(f.to); await rm(path.join(t, 's1.jsonl')); await writeFile(path.join(t, 's9.jsonl'), '') }
+      const before = await env.snapshot()
+      const plan = await planRelocation({ from: f.from, to: f.to }, env.deps)
+      assert.equal(plan.ok, true, plan.blockers.join())
+      const res = await executeRelocation({ from: f.from, to: f.to, planHash: plan.planHash }, { ...env.deps, fs: failingFs(pred) })
+      assert.equal(res.ok, false); assert.equal(res.rolledBack, true, JSON.stringify(res))
+      assert.deepEqual(await env.snapshot(), before)
+    } finally { await env.done(); await f.done() }
+  })
+}

@@ -359,7 +359,9 @@ export function ReorgReportDialog({ open, onOpenChange, projects, runningDirs, o
                 )}
             </DialogContent>
 
+            {/* Keyed per suggestion: force/plan/result never carry over to another move. */}
             <MoveDialog
+                key={moving?.id ?? 'none'}
                 suggestion={moving}
                 onClose={() => setMoving(null)}
                 onMoved={() => { changed(); load() }}

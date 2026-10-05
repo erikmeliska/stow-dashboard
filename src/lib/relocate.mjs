@@ -60,8 +60,15 @@ export async function planRelocation({ from, to, force = false }, deps) {
     const self = (t) => t === from || t === real
     if (trees.length && !self(trees[0])) blockers.push(`${from} is a linked worktree of ${trees[0]}`)
     else if (trees.length > 1) blockers.push(`linked git worktrees exist: ${trees.slice(1).join(', ')}`)
+    // A submodule's .git points at ../.git/modules/<name>; moving it breaks both sides.
+    const sup = await deps.exec('git', ['-C', from, 'rev-parse', '--show-superproject-working-tree']).catch(() => ({ stdout: '' }))
+    const superproject = String(sup?.stdout ?? '').trim()
+    if (superproject) blockers.push(`${from} is a git submodule of ${superproject}`)
   }
 
+  // A stale row already at the target would end up as a duplicate directory.
+  const atTarget = (deps.rows || []).filter(r => typeof r?.directory === 'string' && underDir(r.directory, to))
+  if (atTarget.length) blockers.push(`the ledger already has ${atTarget.length} row(s) at ${to} (a stale entry — run a full scan first)`)
   const dirty = (deps.rows || []).some(r => locationOf(r) === from && r.git_info?.uncommitted_changes > 0)
   if (dirty) (force ? warnings : blockers).push('uncommitted changes in the working tree')
 
