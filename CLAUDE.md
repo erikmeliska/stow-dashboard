@@ -125,7 +125,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/app/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters; Projects | Directories view (virtual projects, see below)
 - `src/lib/virtual-projects.mjs` - Pure, client-safe virtual-project view (#10): `annotateRecords` (register → `record.vp`), `locationMeta` (the only reader of `vp`), `buildVirtualProjects`, client/role/multi-copy filters + stats, `compareClients`, `withClientHeaders`, `validateMetaPatch`
 - `src/lib/project-meta-write.mjs` - Manual client / role / primary edits written to `.stow/project.json` over the register (injectable deps; never recreates a vanished checkout)
-- `src/app/api/projects/meta/route.js` - `PATCH` `{projectId, client}` (null = automatic) or `{directory, role}`
+- `src/app/api/projects/meta/route.js` - `PATCH` `{projectId, client}` or `{directory, role}` (null = automatic for both)
 - `src/components/ProjectLocations.js` - Locations section of the details sheet (client, checkouts, role, primary, Show)
 - `src/components/CountedMultiSelect.js` - Toolbar multi-select with counts (Groups, Client, Role)
 - `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status and process info
@@ -346,7 +346,7 @@ The table includes 3-state toggle filters (any → yes → no → any):
 - **Projects | Directories** toggle (persisted with the other table settings; Projects is the default). Projects = one row per register project: the *primary* checkout's record with `copyCount`, aggregated `last_modified` (newest member) and `usage` (summed, unpriced marker kept) on top, so every column renders unchanged. Checkouts (one representative record per checkout root — rows inside a checkout are members, not copies) are expandable sub-rows with a role pill. Directories = the old flat table.
 - In Projects view the git/process/README/tasks quick filters use **any-checkout** semantics (Running = some checkout runs); AI filters look at the primary.
 - **Group by client** (Columns menu, default on): client is forced as the first sort key, Unassigned last in both directions; header rows show the client's filtered project count and AI $. **Client** and **Role** filters (counts, OR within, pruned when a value vanishes); a project matches Role when any checkout has it. Search matches the client.
-- Details sheet opened from a project row shows **Locations**: client (select / new / Automatic), each checkout with role, primary radio and Show (switches the whole sheet to that checkout). Writes: `PATCH /api/projects/meta` → `.stow/project.json` — role at the checkout root (making one primary demotes other manual primaries), client on every existing checkout, Automatic removes the manual client only where a file has one — then `router.refresh()`.
+- Details sheet opened from a project row shows **Locations**: client (select / new / Automatic), each checkout with role (`auto` = derived, or a manual role), primary radio and Show (switches the whole sheet to that checkout). Writes: `PATCH /api/projects/meta` → `.stow/project.json` — role at the checkout root (making one primary demotes other manual primaries; `auto` removes the manual role), client on every existing checkout, Automatic removes the manual client only where a file has one — then `router.refresh()`.
 
 ### MCP Server
 
