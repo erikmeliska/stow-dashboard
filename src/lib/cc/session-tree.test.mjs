@@ -92,3 +92,13 @@ test('sortFamilies sorts by package numbers, stable, both directions', () => {
   assert.deepEqual(sortFamilies(fams, { key: 'sub_count', dir: 'desc' }).map((f) => f.session_id), ['2', '3', '1']);
   assert.deepEqual(sortFamilies(fams, { key: 'nope' }).map((f) => f.session_id), ['1', '2', '3']);
 });
+
+test('group by project folds worktree sessions into their project', () => {
+  const fams = [
+    { session_id: 'a', project_key: 'P', base_dir: '/p/blog', project_dir: '/p/blog', started_at: '2026-10-01T10:00:00Z', rollup: { cost_usd: 1 } },
+    { session_id: 'b', project_key: 'P', base_dir: '/p/blog', project_dir: '/p/blog/.agent-office/worktrees/x', started_at: '2026-10-01T11:00:00Z', rollup: { cost_usd: 2 } },
+    { session_id: 'c', project_dir: '/q/other', started_at: '2026-10-01T12:00:00Z', rollup: { cost_usd: 0.5 } },
+  ];
+  const groups = groupFamilies(fams, 'project');
+  assert.deepEqual(groups.map((g) => [g.label, g.count]), [['blog', 2], ['other', 1]]);
+});

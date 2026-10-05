@@ -9,6 +9,8 @@
  * the top-level transcript without either.
  */
 
+import { sessionProjectKey, sessionProjectLabel } from './session-project.mjs';
+
 const SUM = ['cost_usd', 'active_s', 'duration_s', 'turns', 'input_tokens', 'output_tokens', 'cache_read'];
 
 function zero() {
@@ -92,18 +94,17 @@ function isoWeek(d) {
   return `${y}-W${String(week).padStart(2, '0')}`;
 }
 
-const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '') || '—';
-
 /**
  * Group keys. `key` returns the bucket id (sorted descending for time keys,
- * by cost for the rest); `label` renders it. Local time for day/week so the
+ * by cost for the rest); `text(key, firstItem)` renders it. Local time for day/week so the
  * buckets match what the Started column shows.
  */
 export const GROUP_BY = {
   none: { label: 'Group: none' },
   day: { label: 'Day', key: (f) => (f.started_at ? localDay(new Date(f.started_at)) : '—'), order: 'desc' },
   week: { label: 'Week', key: (f) => (f.started_at ? isoWeek(shiftLocal(new Date(f.started_at))) : '—'), order: 'desc' },
-  project: { label: 'Project', key: (f) => f.project_dir || '—', text: (k) => projectName(k), order: 'cost' },
+  // Register project first, so worktree/scratchpad sessions fold into their project (#12).
+  project: { label: 'Project', key: (f) => sessionProjectKey(f) || '—', text: (k, f) => (f ? sessionProjectLabel(f) : k), order: 'cost' },
   branch: { label: 'Branch', key: (f) => f.git_branch || '(no branch)', order: 'cost' },
   ticket: { label: 'Ticket', key: (f) => f.ticket_id || '(no ticket)', order: 'cost' },
   model: { label: 'Model', key: (f) => f.model || '(unknown)', order: 'cost' },
@@ -130,7 +131,7 @@ export function groupFamilies(families, by) {
     map.get(k).push(f);
   }
   const groups = [...map.entries()].map(([key, items]) => ({
-    key, label: def.text ? def.text(key) : key, items, sum: sumRows(items.map((f) => f.rollup || f)), count: items.length,
+    key, label: def.text ? def.text(key, items[0]) : key, items, sum: sumRows(items.map((f) => f.rollup || f)), count: items.length,
   }));
   if (def.order === 'desc') groups.sort((a, b) => b.key.localeCompare(a.key));
   else groups.sort((a, b) => (b.sum.cost_usd - a.sum.cost_usd) || a.label.localeCompare(b.label));

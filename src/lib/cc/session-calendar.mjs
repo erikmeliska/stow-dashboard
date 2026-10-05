@@ -10,6 +10,7 @@ import {
   addDays, addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, format,
   startOfDay, startOfMonth, startOfWeek,
 } from 'date-fns';
+import { sessionProjectKey, sessionProjectLabel } from './session-project.mjs';
 import { effectiveKind } from './session-link.mjs';
 import { needsSummary, parseSummary, summaryVersion } from './summary-view.mjs';
 import { sourceOf } from './session-filters.mjs';
@@ -109,7 +110,6 @@ export function harnessBadge(s) {
 
 const NEUTRAL = 'var(--viz-axis)';
 const SEQ = ['var(--seq-1)', 'var(--seq-2)', 'var(--seq-3)', 'var(--seq-4)'];
-const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '—');
 const bin = (v, edges) => edges.findIndex((edge) => v < edge);
 
 export const COLOR_MODES = {
@@ -185,7 +185,7 @@ const PROJECT_LEGEND_MAX = 8;
 
 /** The bucket (key, label, colour) a session falls into under `mode`. */
 export function colorBy(e, mode) {
-  if (mode === 'project') return { key: e.project_dir || '', label: projectName(e.project_dir), color: projectColor(e.project_dir) };
+  if (mode === 'project') { const k = sessionProjectKey(e); return { key: k, label: sessionProjectLabel(e), color: projectColor(k) }; }
   const m = COLOR_MODES[mode]?.buckets ? COLOR_MODES[mode] : COLOR_MODES[DEFAULT_COLOR_MODE];
   const k = m.key(e);
   return m.buckets.find((b) => b.key === k) || m.buckets.at(-1);

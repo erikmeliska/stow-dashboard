@@ -108,3 +108,9 @@ test('search also matches the display title', () => {
   assert.deepEqual(filterSessions(rows, { search: 'login' }).map((r) => r.session_id), ['a']);
   assert.deepEqual(filterSessions(rows, { search: 'pricing' }).map((r) => r.session_id), ['b']);
 });
+
+test('search matches workspace and base_dir', () => {
+  const rows = [{ session_id: 'a', workspace: 'agent-office:pixel-77d1', base_dir: '/p/stow-dashboard', project_dir: '/x' }]
+  assert.equal(filterSessions(rows, { search: 'pixel-77' }).length, 1)
+  assert.equal(filterSessions(rows, { search: 'stow-dash' }).length, 1)
+})
