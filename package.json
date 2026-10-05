@@ -36,6 +36,7 @@
     "scan:force": "node scripts/scan.mjs -s -f",
     "usage": "node scripts/usage.mjs",
     "registry": "node scripts/registry.mjs",
+    "registry:export": "node scripts/registry-export.mjs",
     "pricing:sync": "node scripts/pricing-sync.mjs",
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
