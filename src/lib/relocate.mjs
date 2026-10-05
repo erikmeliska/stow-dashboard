@@ -87,6 +87,7 @@ export async function planRelocation({ from, to, force = false }, deps) {
   steps.push({ kind: 'alias', description: `Record ${from} → ${to} in path-moves.json (Claude transcripts and Codex rollouts resolve through it)`, detail: { from, to } })
   const rowCount = (deps.rows || []).filter(r => underDir(r.directory, from)).length
   steps.push({ kind: 'ledger', description: `Update ${rowCount} ledger row(s) under the project (the register location follows)`, detail: { from, to } })
+  warnings.push('A session ingest or usage refresh in another process (e.g. the dashboard while you use the CLI) is not paused — turn Auto refresh off during the move')
   warnings.push('~/.claude.json per-project settings (trust, allowed tools, MCP) are keyed by path and are not migrated')
 
   // What will happen (kinds + details), not the informational counts in the descriptions.
@@ -378,9 +379,9 @@ export async function resumeRelocation(journalFile, deps) {
  * for the CLI (state-dir resolution), omitted inside the Next server.
  */
 export async function defaultRelocateDeps({ base } = {}) {
-  const [{ execFile }, { promisify }, fsp, os, { loadRegistry }, { openStore, DB_NAME }, { runExclusive }, { collectProjectProcesses }, { getAnalysisStatus }] = await Promise.all([
+  const [{ execFile }, { promisify }, fsp, os, { loadRegistry }, { openStore, DB_NAME }, { runExclusive }, { runUsageExclusive }, { collectProjectProcesses }, { getAnalysisStatus }] = await Promise.all([
     import('node:child_process'), import('node:util'), import('node:fs/promises'), import('node:os'),
-    import('./registry/registry.mjs'), import('./cc/store.mjs'), import('./cc/ingest-run.mjs'),
+    import('./registry/registry.mjs'), import('./cc/store.mjs'), import('./cc/ingest-run.mjs'), import('./usage.mjs'),
     import('./processes.mjs'), import('./analyze-batch.mjs'),
   ])
   const stateOpts = base ? { base } : {}
@@ -402,7 +403,8 @@ export async function defaultRelocateDeps({ base } = {}) {
     rows,
     stateOpts,
     openStore: () => openStore(dbFile),
-    runExclusive,
+    // In this process: no session ingest and no usage refresh while the move runs.
+    runExclusive: (fn) => runExclusive(() => runUsageExclusive(fn)),
     analysisRunning: () => getAnalysisStatus().running,
     processesUnder: async (dir) => (await collectProjectProcesses([dir])).projects[dir]?.length ?? 0,
     store: {

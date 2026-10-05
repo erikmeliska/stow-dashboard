@@ -568,3 +568,18 @@ test('updateUsage reads path-moves.json next to its cache file', async () => {
     assert.ok(out.projects['/P/new'])
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('runUsageExclusive: updateUsage meanwhile is a deferred no-op that writes nothing (#11)', async () => {
+  const { runUsageExclusive } = await import('./usage.mjs')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'usage-excl-'))
+  try {
+    let release
+    const gate = new Promise((r) => { release = r })
+    const held = runUsageExclusive(async () => { await gate; return 'moved' })
+    const r = await updateUsage({ claudeDir: dir, codexDir: dir, cacheFile: path.join(dir, 'c.json'), outFile: path.join(dir, 'u.json'), projectDirs: [] })
+    assert.equal(r.deferred, true)
+    await assert.rejects(readFile(path.join(dir, 'c.json')))
+    release()
+    assert.equal(await held, 'moved')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
