@@ -1,4 +1,5 @@
-import { relocate, guardRequest } from '@/lib/reorg-service.mjs'
+import { relocate } from '@/lib/reorg-service.mjs'
+import { guardRequest } from '@/lib/request-guard.mjs'
 
 /**
  * POST /api/reorg/relocate

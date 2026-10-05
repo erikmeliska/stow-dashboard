@@ -12,6 +12,11 @@ async function defaultExists(dir) {
   try { return (await fs.stat(dir)).isDirectory() } catch { return false }
 }
 
+// `status` is what PATCH /api/projects/meta answers: only a checkout the
+// register already knows (or a known project id) is ever written, so a request
+// can't create `.stow/` in an arbitrary directory.
+const httpError = (status, message) => Object.assign(new Error(message), { status })
+
 const withDefaults = (deps = {}) => ({
   loadRegistry: defaultLoadRegistry,
   readStowMeta: defaultReadStowMeta,
@@ -29,8 +34,8 @@ export async function setLocationRole({ directory, role }, deps) {
   const d = withDefaults(deps)
   const registry = await d.loadRegistry()
   const project = registry.projects.find(p => p.locations.some(l => l.directory === directory))
-  if (!project) throw new Error(`${directory} is not a location in the register`)
-  if (!(await d.exists(directory))) throw new Error(`${directory} no longer exists on disk`)
+  if (!project) throw httpError(400, `${directory} is not a location in the register`)
+  if (!(await d.exists(directory))) throw httpError(409, `${directory} no longer exists on disk`)
   if (role === 'primary') {
     for (const l of project.locations) {
       if (l.directory === directory) continue
@@ -55,7 +60,7 @@ export async function setProjectClient({ projectId, client }, deps) {
   const d = withDefaults(deps)
   const registry = await d.loadRegistry()
   const project = registry.projects.find(p => p.key === projectId)
-  if (!project) throw new Error(`unknown project ${projectId}`)
+  if (!project) throw httpError(400, `unknown project ${projectId}`)
   for (const l of project.locations) {
     if (!(await d.exists(l.directory))) continue
     if (client === null) {

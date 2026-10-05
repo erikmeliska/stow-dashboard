@@ -1,4 +1,5 @@
-import { applySuggestion, guardRequest } from '@/lib/reorg-service.mjs'
+import { applySuggestion } from '@/lib/reorg-service.mjs'
+import { guardRequest } from '@/lib/request-guard.mjs'
 
 /**
  * POST /api/reorg/apply { id, running? }

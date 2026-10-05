@@ -40,9 +40,11 @@ test('setLocationRole primary demotes other manual primaries first', async () =>
 })
 
 test('setLocationRole refuses an unknown or vanished location', async () => {
-  await assert.rejects(setLocationRole({ directory: '/p/nope', role: 'stale' }, fakeDeps()), /not a location/)
   const d = fakeDeps()
-  await assert.rejects(setLocationRole({ directory: '/p/gone', role: 'stale' }, d), /no longer exists/)
+  for (const directory of ['/p/nope', '/p/blog/sub', '/p/blog/', '/p/blog-test/../blog', '/etc']) {
+    await assert.rejects(setLocationRole({ directory, role: 'stale' }, d), e => e.status === 400 && /not a location/.test(e.message), directory)
+  }
+  await assert.rejects(setLocationRole({ directory: '/p/gone', role: 'stale' }, d), e => e.status === 409 && /no longer exists/.test(e.message))
   assert.equal(d.writes.length, 0)
 })
 
@@ -59,7 +61,9 @@ test('setProjectClient null clears manual clients without creating files', async
 })
 
 test('setProjectClient refuses an unknown project', async () => {
-  await assert.rejects(setProjectClient({ projectId: 'git:nope', client: 'A' }, fakeDeps()), /unknown project/)
+  const d = fakeDeps()
+  await assert.rejects(setProjectClient({ projectId: 'git:nope', client: 'A' }, d), e => e.status === 400 && /unknown project/.test(e.message))
+  assert.equal(d.writes.length, 0)
 })
 
 test('default writer: real .stow files, primary handover and automatic client', async () => {
