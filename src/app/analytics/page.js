@@ -9,6 +9,7 @@ import {
 } from 'recharts'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { UNASSIGNED } from '@/lib/cc/session-projects.mjs'
 
 const RANGES = [['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days'], ['all', 'All']]
 const VIZ = ['var(--viz-1)', 'var(--viz-2)', 'var(--viz-3)', 'var(--viz-4)', 'var(--viz-5)', 'var(--viz-6)']
@@ -252,6 +253,19 @@ export default function AnalyticsPage() {
               </Card>
               <Card title="Top projects by cost" subtitle="list price, USD">
                 <HBar data={s.topProjects} nameKey="project" valueKey="cost_usd" valueFormatter={fmtCost} />
+              </Card>
+              <Card title="Top clients by cost" subtitle="list price, USD · client from the project register">
+                <HBar data={s.topClients || []} nameKey="client" valueKey="cost_usd" valueFormatter={fmtCost} />
+                {s.topClients?.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    {s.topClients.map((c) => (
+                      <Link key={c.client_id} href={`/sessions?client=${encodeURIComponent(c.client_id === UNASSIGNED ? 'unassigned' : c.client_id)}`}
+                        className="text-primary hover:underline" title={`${c.sessions} session${c.sessions === 1 ? '' : 's'} · open in Sessions`}>
+                        {c.client} →
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </Card>
               <Card title="Quality score distribution" subtitle="heuristic, 0–100">
                 <Columns data={s.quality} xKey="bucket" yKey="count" height={200} allTicks />

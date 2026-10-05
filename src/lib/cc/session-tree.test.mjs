@@ -102,3 +102,30 @@ test('group by project folds worktree sessions into their project', () => {
   const groups = groupFamilies(fams, 'project');
   assert.deepEqual(groups.map((g) => [g.label, g.count]), [['blog', 2], ['other', 1]]);
 });
+
+import { UNASSIGNED } from './session-projects.mjs';
+
+const vfam = (id, client_name, project_name, cost) => ({ session_id: id, client_id: client_name ? client_name.toLowerCase() : null, client_name, project_name, rollup: { cost_usd: cost } });
+const VFAMS = [vfam('a', 'Zeta', 'web', 1), vfam('b', null, 'sandbox', 5), vfam('c', 'Acme', 'api', 2), vfam('d', 'Acme', 'web', 3)];
+const vsid = (fs) => fs.map((f) => f.session_id);
+
+test('sort by client keeps Unassigned last in both directions', () => {
+  assert.deepEqual(vsid(sortFamilies(VFAMS, { key: 'client', dir: 'asc' })), ['c', 'd', 'a', 'b']);
+  assert.deepEqual(vsid(sortFamilies(VFAMS, { key: 'client', dir: 'desc' })), ['a', 'c', 'd', 'b']);
+});
+
+test('sort by project uses the virtual project name', () => {
+  assert.deepEqual(vsid(sortFamilies(VFAMS, { key: 'project', dir: 'asc' })), ['c', 'b', 'a', 'd']);
+  assert.deepEqual(vsid(sortFamilies(VFAMS, { key: 'project', dir: 'desc' })), ['a', 'd', 'b', 'c']);
+});
+
+test('group by client: buckets by cost, Unassigned last regardless of cost', () => {
+  const g = groupFamilies(VFAMS, 'client');
+  assert.deepEqual(g.map((x) => [x.key, x.label, x.count]), [['acme', 'Acme', 2], ['zeta', 'Zeta', 1], [UNASSIGNED, 'Unassigned', 1]]);
+});
+
+test('sort by project: a row with no project at all (label —) stays last in both directions', () => {
+  const rows = [{ session_id: 'x', project_name: '—', rollup: {} }, vfam('a', 'A', 'api', 1), vfam('b', 'B', 'web', 1)];
+  assert.deepEqual(vsid(sortFamilies(rows, { key: 'project', dir: 'asc' })), ['a', 'b', 'x']);
+  assert.deepEqual(vsid(sortFamilies(rows, { key: 'project', dir: 'desc' })), ['b', 'a', 'x']);
+});

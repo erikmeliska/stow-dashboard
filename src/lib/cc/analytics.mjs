@@ -6,8 +6,10 @@
  */
 
 import { localDay } from './session-tree.mjs'
+import { UNASSIGNED } from './session-projects.mjs'
 
 const MODEL_SLOTS = 5 // donut cap: top 5 models + 'Other' keeps the part-to-whole ≤ 6 segments
+const CLIENT_SLOTS = 8
 
 /** '7d' | '30d' | '90d' | 'all' → ISO cutoff (null = no cutoff). */
 export function sinceForRange(range, now = Date.now()) {
@@ -15,7 +17,11 @@ export function sinceForRange(range, now = Date.now()) {
   return days ? new Date(now - days * 86400_000).toISOString() : null
 }
 
-export function sessionAnalytics(db, { since = null } = {}) {
+/**
+ * `index` is session-projects.mjs's projectIndex (register join, #13); without
+ * it every session counts as Unassigned in `topClients`.
+ */
+export function sessionAnalytics(db, { since = null, index = new Map() } = {}) {
   // One WHERE fragment shared by every query; guard/tool tables join through sessions
   // so the time filter applies to them too.
   const where = since ? 'WHERE s.started_at >= ?' : ''
@@ -88,6 +94,26 @@ export function sessionAnalytics(db, { since = null } = {}) {
       cost_usd: r.cost_usd,
     }))
 
+  // By register client (#13), joined at read time: the store never holds the client.
+  // A key the register doesn't know (or no key) is Unassigned, listed last.
+  const clientMap = new Map()
+  for (const r of all(`
+    SELECT s.project_key, sum(parent_session_id IS NULL) sessions, coalesce(sum(cost_usd), 0) cost_usd
+    FROM sessions s ${where} GROUP BY s.project_key`)) {
+    const hit = r.project_key ? index.get(r.project_key) : null
+    const id = hit?.client_id || UNASSIGNED
+    const c = clientMap.get(id) || { client_id: id, client: hit?.client_name || 'Unassigned', sessions: 0, cost_usd: 0 }
+    c.sessions += r.sessions
+    c.cost_usd += r.cost_usd
+    clientMap.set(id, c)
+  }
+  const unassigned = clientMap.get(UNASSIGNED)
+  clientMap.delete(UNASSIGNED)
+  const topClients = [
+    ...[...clientMap.values()].sort((a, b) => b.cost_usd - a.cost_usd || a.client.localeCompare(b.client)).slice(0, CLIENT_SLOTS),
+    ...(unassigned ? [unassigned] : []),
+  ]
+
   const qualityRows = all(`
     SELECT min(4, cast(quality_score / 20 AS INTEGER)) b, count(*) n
     FROM sessions s ${where} ${where ? 'AND' : 'WHERE'} quality_score IS NOT NULL
@@ -110,6 +136,7 @@ export function sessionAnalytics(db, { since = null } = {}) {
     topTools,
     topSkills,
     topProjects,
+    topClients,
     quality: qualityBuckets(qualityRows),
   }
 }

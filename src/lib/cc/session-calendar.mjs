@@ -14,6 +14,7 @@ import { sessionProjectKey, sessionProjectLabel } from './session-project.mjs';
 import { effectiveKind } from './session-link.mjs';
 import { needsSummary, parseSummary, summaryVersion } from './summary-view.mjs';
 import { sourceOf } from './session-filters.mjs';
+import { UNASSIGNED } from './session-projects.mjs';
 
 const WEEK = { weekStartsOn: 1 };
 export const MAX_SPAN_MS = 5 * 3600_000;
@@ -128,6 +129,7 @@ export const COLOR_MODES = {
     },
   },
   project: { label: 'Project' },
+  client: { label: 'Client' },
   harness: {
     label: 'Harness',
     buckets: [
@@ -183,9 +185,18 @@ export const COLOR_MODES = {
 export const DEFAULT_COLOR_MODE = 'outcome';
 const PROJECT_LEGEND_MAX = 8;
 
+// Open-ended modes: one hashed hue per value (6 hues, so values can share; the legend disambiguates).
+// A client comes from the register join (#13); Unassigned is neutral grey.
+const HASHED = {
+  project: (e) => { const k = sessionProjectKey(e); return { key: k, label: sessionProjectLabel(e), color: projectColor(k) }; },
+  client: (e) => (e.client_id
+    ? { key: e.client_id, label: e.client_name || e.client_id, color: projectColor(e.client_id) }
+    : { key: UNASSIGNED, label: 'Unassigned', color: NEUTRAL }),
+};
+
 /** The bucket (key, label, colour) a session falls into under `mode`. */
 export function colorBy(e, mode) {
-  if (mode === 'project') { const k = sessionProjectKey(e); return { key: k, label: sessionProjectLabel(e), color: projectColor(k) }; }
+  if (HASHED[mode]) return HASHED[mode](e);
   const m = COLOR_MODES[mode]?.buckets ? COLOR_MODES[mode] : COLOR_MODES[DEFAULT_COLOR_MODE];
   const k = m.key(e);
   return m.buckets.find((b) => b.key === k) || m.buckets.at(-1);
@@ -193,8 +204,8 @@ export function colorBy(e, mode) {
 
 /**
  * Legend for the shown events: fixed buckets in their order (with counts, empty
- * ones kept so the scale reads complete); for projects the most frequent ones,
- * capped, with a "+N more" tail.
+ * ones kept so the scale reads complete); for projects/clients the most frequent
+ * ones, capped, with a "+N more" tail (Unassigned clients after it).
  */
 export function colorLegend(events, mode) {
   const counts = new Map();
@@ -204,11 +215,14 @@ export function colorLegend(events, mode) {
     c.count++;
     counts.set(b.key, c);
   }
-  if (mode === 'project') {
+  if (HASHED[mode]) {
+    const un = mode === 'client' ? counts.get(UNASSIGNED) : null;
+    if (un) counts.delete(UNASSIGNED);
     const all = [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-    if (all.length <= PROJECT_LEGEND_MAX + 1) return all;
     const rest = all.slice(PROJECT_LEGEND_MAX);
-    return [...all.slice(0, PROJECT_LEGEND_MAX), { key: 'more', label: `+${rest.length} more`, color: null, count: rest.reduce((a, b) => a + b.count, 0) }];
+    const head = all.length <= PROJECT_LEGEND_MAX + 1 ? all
+      : [...all.slice(0, PROJECT_LEGEND_MAX), { key: 'more', label: `+${rest.length} more`, color: null, count: rest.reduce((a, b) => a + b.count, 0) }];
+    return un ? [...head, un] : head;
   }
   const m = COLOR_MODES[mode]?.buckets ? COLOR_MODES[mode] : COLOR_MODES[DEFAULT_COLOR_MODE];
   return m.buckets.map((b) => ({ ...b, count: counts.get(b.key)?.count || 0 }));

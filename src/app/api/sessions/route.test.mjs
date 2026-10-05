@@ -82,3 +82,25 @@ test('?project=<dir> does not pull in a nested register project', () => {
   const projectKeyOf = (dir) => ({ '/p/app': 'A', '/p/app/packages/web': 'W' })[dir] ?? null;
   assert.deepEqual(handle(new URLSearchParams('project=/p/app'), db, { projectKeyOf }).sessions.map((s) => s.session_id), ['root']);
 });
+
+import { projectIndex } from '../../../lib/cc/session-projects.mjs';
+
+test('handle annotates list, detail, children and parent rows with client and virtual project', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, prow('s1', '/p/blog-huha', '2026-10-01T10:00:00Z'));
+  upsertSession(db, prow('c1', '/p/blog-huha', '2026-10-01T10:30:00Z'));
+  setParent(db, 'c1', 's1');
+  setPlacements(db, [{ session_id: 's1', project_key: 'git:x/blog', workspace: null, base_dir: '/p/blog-huha' }]);
+  const index = projectIndex({ projects: [{ key: 'git:x/blog', name: 'blog', client: { id: 'intelimail', name: 'Intelimail' } }] });
+  const out = handle(new URLSearchParams(), db, { index });
+  const s1 = out.sessions.find((s) => s.session_id === 's1');
+  assert.equal(s1.client_name, 'Intelimail');
+  assert.equal(s1.client_id, 'intelimail');
+  assert.equal(s1.project_name, 'blog');
+  assert.equal(out.sessions.find((s) => s.session_id === 'c1').client_id, null);
+  const d = handle(new URLSearchParams('id=s1'), db, { index });
+  assert.equal(d.session.client_name, 'Intelimail');
+  assert.ok('client_id' in d.children[0]);
+  assert.equal(handle(new URLSearchParams('id=c1'), db, { index }).parent.client_name, 'Intelimail');
+  assert.equal(handle(new URLSearchParams(), db).sessions[0].client_id, null, 'no index → unassigned, not a crash');
+});

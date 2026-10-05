@@ -148,3 +148,28 @@ test('Color by project: main and worktree session share one bucket', () => {
   const b = colorBy({ project_key: 'P', base_dir: '/p', project_dir: '/p/.agent-office/worktrees/x' }, 'project');
   assert.equal(a.key, b.key); assert.equal(a.color, b.color); assert.equal(b.label, 'p');
 });
+
+import { UNASSIGNED } from './session-projects.mjs';
+
+test('colorBy client: hashed hue per client id, neutral for unassigned', () => {
+  const a = colorBy({ client_id: 'intelimail', client_name: 'Intelimail' }, 'client');
+  assert.equal(a.key, 'intelimail');
+  assert.equal(a.label, 'Intelimail');
+  assert.match(a.color, /^var\(--viz-[1-6]\)$/);
+  assert.deepEqual(colorBy({ client_id: null }, 'client'), { key: UNASSIGNED, label: 'Unassigned', color: 'var(--viz-axis)' });
+  assert.equal(COLOR_MODES.client.label, 'Client');
+});
+
+test('colorLegend client: most frequent first, Unassigned last, capped with +N more', () => {
+  const ev = [
+    ...Array(3).fill({ client_id: 'a', client_name: 'A' }),
+    ...Array(5).fill({ client_id: null }),
+    ...'bcdefghij'.split('').map((c) => ({ client_id: c, client_name: c.toUpperCase() })),
+  ];
+  const legend = colorLegend(ev, 'client');
+  assert.equal(legend[0].label, 'A');
+  assert.equal(legend.at(-1).key, UNASSIGNED);
+  assert.equal(legend.at(-1).count, 5);
+  assert.equal(legend.at(-2).key, 'more');
+  assert.equal(legend.length, 10);
+});

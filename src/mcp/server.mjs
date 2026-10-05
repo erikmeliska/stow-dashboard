@@ -28,8 +28,10 @@ import { buildSessionTree } from '../lib/cc/session-tree.mjs'
 import { effectiveKind } from '../lib/cc/session-link.mjs'
 import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '../lib/cc/session-project.mjs'
-import { buildProjectIndex } from '../lib/cc/project-key.mjs'
-import { loadRegistry } from '../lib/registry/registry.mjs'
+import { loadProjectIndex } from '../lib/cc/project-index.mjs'
+import { annotateSessions, UNASSIGNED } from '../lib/cc/session-projects.mjs'
+import { filterSessions } from '../lib/cc/session-filters.mjs'
+import { clientsSummary, clientProjects, clientArg } from './sessions-by-client.mjs'
 import { batchModel, rangeBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
@@ -49,6 +51,11 @@ const STATE = { base: PROJECT_ROOT }
 
 // Opened per call: the state dir is resolved against the repo root (STATE), like the ledger.
 const openSessionStore = () => openStore(dataFile(DB_NAME, STATE))
+const registerUnavailable = () => ({ isError: true, content: [{ type: 'text', text: 'The virtual-project register is unavailable (no scanned ledger yet, or data/registry.json is malformed).' }] })
+const unknownClient = (registry, q) => ({
+    isError: true,
+    content: [{ type: 'text', text: `Unknown client "${q}". Available: ${[...(registry?.clients || []).map((c) => `${c.name} (${c.id})`), 'unassigned'].join(', ')}` }],
+})
 const dayIso = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00`).toISOString() : d || null)
 const DATA_FILE = ledgerFile(STATE)
 
@@ -557,10 +564,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO)' },
                         until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
                         project: { type: 'string', description: 'Project directory (optional; also matches sessions in its worktrees and sub-dirs)' },
+                        client: { type: 'string', description: "Client id or name from the virtual-project register, or 'unassigned' (optional; see list_clients)" },
+                        project_key: { type: 'string', description: 'Virtual project key (git:…, stow:…, path:…) from list_client_projects (optional)' },
+                        workspace: { type: 'string', description: "'main' (main checkout), 'worktrees' (any worktree), or an exact workspace like 'agent-office:pixel-77d1' (optional)" },
                         kind: { type: 'string', enum: ['work', 'scheduled', 'agent-spawn', 'trivial', 'all'], description: 'Default work' },
                         limit: { type: 'number', description: 'Maximum sessions (default 500)' },
                     },
                     required: ['since', 'until'],
+                },
+            },
+            {
+                name: 'list_clients',
+                description: "List clients (from the virtual-project register) with their project count and, for an optional period, AI session count and cost. Unassigned projects are reported as client 'unassigned'.",
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO); with until, adds session numbers' },
+                        until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
+                    },
+                },
+            },
+            {
+                name: 'list_client_projects',
+                description: "List the virtual projects of one client, each with its checkouts (directory + role). Pass the client id or name, or 'unassigned'.",
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        client: { type: 'string', description: "Client id or name (see list_clients), or 'unassigned'" },
+                    },
+                    required: ['client'],
                 },
             },
             {
@@ -1079,13 +1111,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'list_sessions': {
             const db = openSessionStore()
             try {
-                // Sub-dirs owned by another register project stay out of a ?project= list.
-                let projectDirKey
-                if (args.project) {
-                    try { projectDirKey = buildProjectIndex({ register: await loadRegistry(STATE) }).lookup(args.project) } catch { /* no register: whole subtree */ }
+                // Register (memoised, fail-soft): client join (#13), and sub-dirs owned by another
+                // register project stay out of a ?project= list.
+                const { registry, index, projectKeyOf } = await loadProjectIndex(STATE)
+                let client = null
+                if (args.client) {
+                    const r = clientArg(registry, args.client)
+                    if (r.error) return r.error === 'unavailable' ? registerUnavailable() : unknownClient(registry, args.client)
+                    client = r.client
                 }
-                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, projectDirKey, limit: 5000 })
-                const fams = buildSessionTree(rows, listSubagents(db, rows.map((r) => r.session_id)))
+                const projectDirKey = args.project && projectKeyOf ? projectKeyOf(args.project) : undefined
+                const rows = annotateSessions(listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, projectDirKey, limit: 5000 }), index)
+                const fams = filterSessions(buildSessionTree(rows, listSubagents(db, rows.map((r) => r.session_id))), {
+                    clients: client ? [client === 'unassigned' ? UNASSIGNED : client.id] : [],
+                    projects: args.project_key ? [args.project_key] : [],
+                    workspace: args.workspace || 'any',
+                })
                 const want = args.kind || 'work'
                 const out = fams
                     .filter((f) => want === 'all' || effectiveKind(f) === want)
@@ -1095,6 +1136,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         return {
                             session_id: f.session_id, started_at: f.started_at, ended_at: f.ended_at,
                             project: sessionProjectLabel(f), project_dir: f.project_dir, project_key: f.project_key || null, workspace: f.workspace || null,
+                            client: f.client_name || 'Unassigned', client_id: f.client_id || 'unassigned',
                             harness: f.entrypoint, model: f.model,
                             active_min: Math.round((f.rollup.active_s || 0) / 60), turns: f.rollup.turns,
                             cost_usd: Number((f.rollup.cost_usd || 0).toFixed(2)), sub_sessions: f.sub_count,
@@ -1107,6 +1149,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             } finally {
                 db.close()
             }
+        }
+
+        case 'list_clients': {
+            const { registry } = await loadProjectIndex(STATE)
+            if (!registry) return registerUnavailable()
+            const sessionsByKey = new Map()
+            if (args.since || args.until) {
+                const db = openSessionStore()
+                try {
+                    const where = [], params = []
+                    if (args.since) { where.push('started_at >= ?'); params.push(dayIso(args.since)) }
+                    if (args.until) { where.push('started_at < ?'); params.push(dayIso(args.until)) }
+                    for (const r of db.prepare(`SELECT project_key, sum(parent_session_id IS NULL) sessions, coalesce(sum(cost_usd), 0) cost_usd
+                        FROM sessions WHERE ${where.join(' AND ')} GROUP BY project_key`).all(...params)) {
+                        sessionsByKey.set(r.project_key, { sessions: r.sessions, cost_usd: r.cost_usd })
+                    }
+                } finally {
+                    db.close()
+                }
+            }
+            return { content: [{ type: 'text', text: JSON.stringify(clientsSummary(registry, sessionsByKey), null, 2) }] }
+        }
+
+        case 'list_client_projects': {
+            const { registry } = await loadProjectIndex(STATE)
+            if (!registry) return registerUnavailable()
+            const { client, error } = clientArg(registry, args.client)
+            if (error) return unknownClient(registry, args.client)
+            return { content: [{ type: 'text', text: JSON.stringify(clientProjects(registry, client), null, 2) }] }
         }
 
         case 'summarize_sessions': {

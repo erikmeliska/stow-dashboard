@@ -114,3 +114,39 @@ test('search matches workspace and base_dir', () => {
   assert.equal(filterSessions(rows, { search: 'pixel-77' }).length, 1)
   assert.equal(filterSessions(rows, { search: 'stow-dash' }).length, 1)
 })
+
+import { UNASSIGNED } from './session-projects.mjs'
+
+const VP = [
+  { session_id: 'a', client_id: 'intelimail', project_key: 'git:x/blog', workspace: null },
+  { session_id: 'b', client_id: 'intelimail', project_key: 'git:x/app', workspace: 'agent-office:pixel-1' },
+  { session_id: 'c', client_id: null, project_key: 'path:/p/sandbox', workspace: 'claude-worktree:tmp' },
+  { session_id: 'd', client_id: 'acme', project_key: null, base_dir: '/p/loose', workspace: null },
+]
+
+test('client filter: OR over selected ids, UNASSIGNED matches null', () => {
+  assert.deepEqual(ids(filterSessions(VP, { clients: ['intelimail'] })), ['a', 'b'])
+  assert.deepEqual(ids(filterSessions(VP, { clients: [UNASSIGNED, 'acme'] })), ['c', 'd'])
+  assert.deepEqual(ids(filterSessions(VP, { clients: [] })), ['a', 'b', 'c', 'd'])
+})
+
+test('project filter matches the session project key (register key, else main-checkout dir)', () => {
+  assert.deepEqual(ids(filterSessions(VP, { projects: ['git:x/app', 'path:/p/sandbox'] })), ['b', 'c'])
+  assert.deepEqual(ids(filterSessions(VP, { projects: ['/p/loose'] })), ['d'])
+})
+
+test('workspace filter: main, worktrees, exact value', () => {
+  assert.deepEqual(ids(filterSessions(VP, { workspace: 'main' })), ['a', 'd'])
+  assert.deepEqual(ids(filterSessions(VP, { workspace: 'worktrees' })), ['b', 'c'])
+  assert.deepEqual(ids(filterSessions(VP, { workspace: 'agent-office:pixel-1' })), ['b'])
+  assert.deepEqual(ids(filterSessions(VP, { workspace: 'any' })), ['a', 'b', 'c', 'd'])
+})
+
+test('client, project and workspace combine with AND', () => {
+  assert.deepEqual(ids(filterSessions(VP, { clients: ['intelimail'], workspace: 'main' })), ['a'])
+})
+
+test('search also matches the client name', () => {
+  const rows = [{ session_id: 'x', client_name: 'Intelimail', project_name: 'blog', project_dir: '/p/blog-huha' }]
+  assert.deepEqual(ids(filterSessions(rows, { search: 'inteli' })), ['x'])
+})

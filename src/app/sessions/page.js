@@ -13,9 +13,11 @@ import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
 import { colorBy, COLOR_MODES, loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
+import { facetCounts, UNASSIGNED } from '@/lib/cc/session-projects.mjs'
 import { CalendarView } from './calendar-view'
 import { WorkspaceBadge } from './workspace-badge'
 import { ColorLegend, ColorSelect, useColorMode } from './color-controls'
+import { FacetSelect } from './facet-select'
 
 function fmtTokens(n) {
   if (n == null) return '—'
@@ -59,7 +61,7 @@ const ACTION_CLS = {
   override: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
 }
 
-function DetailPanel({ detail, project, onFilterProject, onOpen, onSummarize, summarizing, summaryError }) {
+function DetailPanel({ detail, project, onFilterProject, clientFilter, onFilterClient, onOpen, onSummarize, summarizing, summaryError }) {
   if (!detail) return <p className="text-sm text-muted-foreground">Select a session to see its tools, skills and guard hits.</p>
   if (!detail.session) return <p className="text-sm text-muted-foreground">Session not found.</p>
   const s = detail.session
@@ -77,6 +79,18 @@ function DetailPanel({ detail, project, onFilterProject, onOpen, onSummarize, su
           {s.entrypoint && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Entrypoint (how the session was started)">{s.entrypoint}</span>}
         </div>
         <div className="text-xs text-muted-foreground break-all">{s.project_dir}</div>
+        <div className="text-xs mt-0.5">
+          <span className="text-muted-foreground">Client: </span>
+          {clientFilter.length === 1 && clientFilter[0] === (s.client_id || UNASSIGNED) ? (
+            <button onClick={() => onFilterClient([])} className="inline-flex items-center gap-1 text-primary hover:underline" title="Clear the client filter">
+              {s.client_name || 'Unassigned'} <X className="h-3 w-3" />
+            </button>
+          ) : (
+            <button onClick={() => onFilterClient([s.client_id || UNASSIGNED])} className="inline-flex items-center gap-1 text-primary hover:underline" title="Only sessions of this client">
+              {s.client_name || 'Unassigned'} <Filter className="h-3 w-3" />
+            </button>
+          )}
+        </div>
         {(s.base_dir || s.project_dir) && (
           project === (s.base_dir || s.project_dir) ? (
             <button onClick={() => onFilterProject(null)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
@@ -308,7 +322,7 @@ function GroupRows({ group, showHeader, children }) {
     <>
       {showHeader && (
         <tr className="bg-muted/50 text-xs">
-          <td colSpan={5} className="py-1 pr-3 pl-1 font-medium">{group.label} <span className="font-normal text-muted-foreground">· {group.count} session{group.count === 1 ? '' : 's'}</span></td>
+          <td colSpan={6} className="py-1 pr-3 pl-1 font-medium">{group.label} <span className="font-normal text-muted-foreground">· {group.count} session{group.count === 1 ? '' : 's'}</span></td>
           <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{group.sum.turns}</td>
           <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">{fmtTokens(group.sum.input_tokens + group.sum.output_tokens)}</td>
           <td className="py-1 pr-3 text-right tabular-nums font-medium">{fmtCost(group.sum.cost_usd)}</td>
@@ -356,8 +370,11 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen, colorMode }) {
             {fmtStart(s.started_at)}
           </span>
         </td>
+        <td className={`${CELL} truncate max-w-[10rem]`} title={s.client_name || 'Unassigned'}>
+          {s.client_name || <span className="text-muted-foreground">—</span>}
+        </td>
         <td className={`${CELL} truncate max-w-[16rem]`} title={s.project_dir || ''}>
-          {sessionProjectLabel(s)}
+          {s.project_name || sessionProjectLabel(s)}
           <WorkspaceBadge workspace={s.workspace} className="ml-1" />
           {s.kind === 'scheduled' && <span className="ml-1">{SCHEDULED_BADGE}</span>}
           {isChildHead && <span className="ml-1 text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">{kindLabel(s.kind)}</span>}
@@ -381,7 +398,7 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen, colorMode }) {
       {expanded && fam.agents.map((a) => (
         <tr key={a.agent_id} className="border-b bg-muted/20 text-xs text-muted-foreground" title={`${a.agent_id} · ${a.model || ''}`}>
           <td className={`${CELL} whitespace-nowrap tabular-nums pl-6`}><span className="inline-flex items-center gap-1"><CornerDownRight className="h-3 w-3" />{fmtStart(a.started_at)}</span></td>
-          <td className={`${CELL} truncate max-w-[24rem] text-foreground`} colSpan={2}><Bot className="inline h-3 w-3 mr-1 text-muted-foreground" />{fmtAgent(a)}</td>
+          <td className={`${CELL} truncate max-w-[24rem] text-foreground`} colSpan={3}><Bot className="inline h-3 w-3 mr-1 text-muted-foreground" />{fmtAgent(a)}</td>
           <td className={`${CELL} whitespace-nowrap`}>{a.model || '—'}</td>
           <td className={CELL}>subagent</td>
           <td className={NUM}>{a.turns ?? '—'}</td>
@@ -400,7 +417,7 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen, colorMode }) {
           title={c.session_id}
         >
           <td className={`${CELL} whitespace-nowrap tabular-nums pl-6`}><span className="inline-flex items-center gap-1"><CornerDownRight className="h-3 w-3 text-muted-foreground" />{fmtStart(c.started_at)}</span></td>
-          <td className={`${CELL} truncate max-w-[24rem]`} colSpan={2}><ShieldCheck className="inline h-3 w-3 mr-1 text-amber-700 dark:text-amber-400" />{kindLabel(c.kind)}</td>
+          <td className={`${CELL} truncate max-w-[24rem]`} colSpan={3}><ShieldCheck className="inline h-3 w-3 mr-1 text-amber-700 dark:text-amber-400" />{kindLabel(c.kind)}</td>
           <td className={`${CELL} text-muted-foreground whitespace-nowrap`}>{c.model || '—'}</td>
           <td className={`${CELL} text-muted-foreground`}>{c.entrypoint || 'linked'}</td>
           <td className={NUM}>{c.turns}</td>
@@ -438,6 +455,13 @@ function SessionsView() {
   const [qualityFilter, setQualityFilter] = useState('any')
   const [sourceFilter, setSourceFilter] = useState('any')
   const [quick, setQuick] = useState(() => new Set())
+  // Virtual projects (#13). `?client=<id>` (or 'unassigned') deep-links one client, e.g. from /analytics.
+  const [clientFilter, setClientFilterState] = useState(() => {
+    const c = searchParams.get('client')
+    return c ? [c.toLowerCase() === 'unassigned' ? UNASSIGNED : c] : []
+  })
+  const [projectFilter, setProjectFilter] = useState([])
+  const [workspaceFilter, setWorkspaceFilter] = useState('any')
   const [groupBy, setGroupBy] = useState('none')
   const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
   const [colorMode, setColorMode] = useColorMode()
@@ -510,10 +534,23 @@ function SessionsView() {
   }
 
   const families = useMemo(() => buildSessionTree(sessions, agents), [sessions, agents])
+  // Counted before filtering so the numbers don't collapse as you tick; a selection that left the data stays at (0).
+  const facets = useMemo(
+    () => facetCounts(families, { keep: { clients: clientFilter, projects: projectFilter, workspace: workspaceFilter } }),
+    [families, clientFilter, projectFilter, workspaceFilter])
+  // Names of clients/projects seen in earlier loads, so a kept zero-count entry still reads as a name.
+  const seenNames = useRef(new Map())
+  for (const c of facets.clients) if (c.count) seenNames.current.set(`c:${c.id}`, c.name)
+  for (const p of facets.projects) if (p.count) seenNames.current.set(`p:${p.key}`, p.name)
+  const clientOptions = facets.clients.map((c) => ({ value: c.id, label: seenNames.current.get(`c:${c.id}`) || c.name, count: c.count, muted: c.id === UNASSIGNED }))
+  const projectOptions = facets.projects
+    .filter((p) => !clientFilter.length || clientFilter.includes(p.client_id || UNASSIGNED) || projectFilter.includes(p.key))
+    .map((p) => ({ value: p.key, label: seenNames.current.get(`p:${p.key}`) || p.name, count: p.count, title: p.key }))
   const availableModels = Array.from(new Set(sessions.map((s) => s.model).filter(Boolean))).sort()
   // Filters apply to the family head; its subagents and linked sessions ride along.
-  const filtered = filterSessions(families, { search: searchQuery, model: modelFilter, quality: qualityFilter, source: sourceFilter, quick: [...quick] })
-  const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any' || sourceFilter !== 'any' || quick.size > 0
+  const filtered = filterSessions(families, { search: searchQuery, model: modelFilter, quality: qualityFilter, source: sourceFilter, quick: [...quick], clients: clientFilter, projects: projectFilter, workspace: workspaceFilter })
+  const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any' || sourceFilter !== 'any' || quick.size > 0 ||
+    clientFilter.length > 0 || projectFilter.length > 0 || workspaceFilter !== 'any'
   const groups = useMemo(() => groupFamilies(sortFamilies(filtered, sort), groupBy), [filtered, sort, groupBy])
   const totalCost = filtered.reduce((a, f) => a + (f.rollup.cost_usd || 0), 0)
   const subAgents = filtered.reduce((a, f) => a + f.agents.length, 0)
@@ -525,6 +562,10 @@ function SessionsView() {
   }
   function toggleQuick(k) {
     setQuick((prev) => { const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k); return next })
+  }
+  function setClientFilter(next) {
+    setClientFilterState(next)
+    setParams({ client: next.length === 1 ? (next[0] === UNASSIGNED ? 'unassigned' : next[0]) : null })
   }
   function sortBy(key) {
     setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: key === 'started_at' ? 'desc' : 'desc' }))
@@ -572,6 +613,18 @@ function SessionsView() {
               placeholder="Search ticket or project…"
               className="h-7 w-48 rounded-md border bg-transparent px-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
+            <FacetSelect label="Client" title="Client (from the project register)" options={clientOptions} selected={clientFilter} onChange={setClientFilter} />
+            <FacetSelect label="Project" title="Virtual project (all checkouts and worktrees)" options={projectOptions} selected={projectFilter} onChange={setProjectFilter} />
+            <select value={workspaceFilter} onChange={(e) => setWorkspaceFilter(e.target.value)} className={`${SEL} max-w-[11rem]`} title="Where the session ran: the main checkout or a worktree">
+              <option value="any">Workspace: any</option>
+              <option value="main">Main checkout ({facets.workspaces.main})</option>
+              <option value="worktrees">All worktrees ({facets.workspaces.worktrees})</option>
+              {facets.workspaces.byKind.map((k) => (
+                <optgroup key={k.kind} label={k.label}>
+                  {k.items.map((it) => <option key={it.value} value={it.value}>{it.label} ({it.count})</option>)}
+                </optgroup>
+              ))}
+            </select>
             <select
               value={modelFilter}
               onChange={(e) => setModelFilter(e.target.value)}
@@ -643,7 +696,8 @@ function SessionsView() {
             <thead className="sticky top-0 bg-background">
               <tr className="text-left text-xs text-muted-foreground border-b">
                 <Th sortKey="started_at" sort={sort} onSort={sortBy}>Started</Th>
-                <th className="py-2 pr-3 font-medium">Project</th>
+                <Th sortKey="client" sort={sort} onSort={sortBy} title="Client from the project register; Unassigned stays last">Client</Th>
+                <Th sortKey="project" sort={sort} onSort={sortBy} title="Virtual project (all checkouts and worktrees)">Project</Th>
                 <th className="py-2 pr-3 font-medium">Ticket</th>
                 <th className="py-2 pr-3 font-medium">Model</th>
                 <Th sortKey="sub_count" sort={sort} onSort={sortBy} title="Subagents and linked sessions (security reviews) — numbers on the row include them">Sub</Th>
@@ -687,6 +741,8 @@ function SessionsView() {
             detail={detail}
             project={project}
             onFilterProject={(dir) => setParams({ project: dir || null })}
+            clientFilter={clientFilter}
+            onFilterClient={setClientFilter}
             onOpen={open}
             onSummarize={summarize}
             summarizing={summarizing}

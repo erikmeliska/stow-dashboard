@@ -235,3 +235,23 @@ test('topProjects folds worktree sessions into the project', () => {
   assert.deepEqual({ ...alpha[0] }, { project: 'alpha', project_key: 'PA', project_dir: '/p/alpha', sessions: 2, cost_usd: 3.5 })
   db.close()
 })
+
+import { projectIndex, UNASSIGNED } from './session-projects.mjs'
+
+test('topClients folds project_key costs into clients; unknown keys are Unassigned, last', () => {
+  const db = seedStore()
+  setPlacements(db, [
+    { session_id: 's1', project_key: 'git:x/alpha', workspace: null, base_dir: '/p/alpha' },
+    { session_id: 's3', project_key: 'git:x/alpha', workspace: null, base_dir: '/p/alpha' },
+    { session_id: 's2', project_key: 'stow:gone', workspace: null, base_dir: '/p/beta' },
+  ])
+  const index = projectIndex({ projects: [{ key: 'git:x/alpha', name: 'alpha', client: { id: 'acme', name: 'Acme' } }] })
+  const { topClients } = sessionAnalytics(db, { index })
+  assert.deepEqual(topClients.map((c) => [c.client_id, c.client, c.sessions, c.cost_usd]), [
+    ['acme', 'Acme', 2, 11.5],
+    [UNASSIGNED, 'Unassigned', 1, 3],
+  ])
+  assert.deepEqual(sessionAnalytics(db, { since: '2026-08-01T00:00:00Z', index }).topClients.map((c) => [c.client_id, c.sessions]),
+    [['acme', 1], [UNASSIGNED, 1]], 'the period applies')
+  assert.deepEqual(sessionAnalytics(db).topClients.map((c) => c.client_id), [UNASSIGNED], 'no index → everything Unassigned')
+})
