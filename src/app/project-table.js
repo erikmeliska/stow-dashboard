@@ -250,6 +250,11 @@ export function ProjectTable({ projects, ownRepos }) {
 
     // Process monitoring
     const { getRunningInfo, isProjectRunning } = useProcesses()
+    // Reorg (#11): a running project is never suggested as abandoned.
+    const reorgRunningDirs = React.useMemo(
+        () => (reorgOpen ? projects.filter(p => isProjectRunning(p.directory)).map(p => p.directory) : []),
+        [reorgOpen, projects, isProjectRunning]
+    )
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -1296,6 +1301,7 @@ export function ProjectTable({ projects, ownRepos }) {
             open={reorgOpen}
             onOpenChange={setReorgOpen}
             projects={projects}
+            runningDirs={reorgRunningDirs}
             onOpenProject={(p) => setDetailsSheet({ open: true, project: p, virtualProject: null })}
         />
         <div className="h-full flex flex-col min-w-0">
