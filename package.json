@@ -37,6 +37,7 @@
     "usage": "node scripts/usage.mjs",
     "registry": "node scripts/registry.mjs",
     "registry:export": "node scripts/registry-export.mjs",
+    "relocate": "node --disable-warning=ExperimentalWarning scripts/relocate.mjs",
     "pricing:sync": "node scripts/pricing-sync.mjs",
     "analyze": "node scripts/analyze.mjs",
     "mcp": "node src/mcp/server.mjs",
