@@ -5,7 +5,11 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { dataFile, ledgerFile } from '../state-dir.mjs'
 import { clientKey } from './client.mjs'
+import { loadRegistry } from './registry.mjs'
 
 export const EXPORT_FORMAT = 'stow-dashboard/agent-office'
 export const EXPORT_VERSION = 1
@@ -97,4 +101,52 @@ export function buildAgentOfficeExport(registry, { now = Date.now(), includeUnas
     skipped,
     stats: { buildings: out.length, floors: out.reduce((n, b) => n + b.floors.length, 0), skipped: skipped.length },
   }
+}
+
+export const EXPORT_FILE = 'agent-office.json'
+
+/** Checkout roots the scanner (#9) recorded as linked git worktrees. */
+export function linkedWorktreeRoots(records) {
+  const roots = new Set()
+  for (const r of records) {
+    const c = r?.checkout
+    if (c?.root && c.main && c.main !== c.root) roots.add(c.root)
+  }
+  return roots
+}
+
+async function readLinkedWorktrees(opts) {
+  let text
+  try { text = await readFile(ledgerFile(opts), 'utf8') } catch (e) {
+    if (e.code === 'ENOENT') return new Set()
+    throw e
+  }
+  const rows = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try { rows.push(JSON.parse(line)) } catch { /* skip malformed line */ }
+  }
+  return linkedWorktreeRoots(rows)
+}
+
+/**
+ * loadRegistry → build → (write) data/agent-office.json via tmp + rename, so
+ * a failed run leaves the previous file intact. `write: false` only builds.
+ */
+export async function exportAgentOffice({ base, includeUnassigned = false, client, write = true, now = Date.now(), load = loadRegistry, exists } = {}) {
+  const opts = base ? { base } : {}
+  const [registry, worktrees] = await Promise.all([load(opts), readLinkedWorktrees(opts)])
+  const doc = buildAgentOfficeExport(registry, { now, includeUnassigned, client, worktrees, ...(exists ? { exists } : {}) })
+  if (!write) return { doc, file: null }
+  const file = dataFile(EXPORT_FILE, opts)
+  await mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await writeFile(tmp, JSON.stringify(doc, null, 2) + '\n')
+    await rename(tmp, file)
+  } catch (e) {
+    await rm(tmp, { force: true })
+    throw e
+  }
+  return { doc, file }
 }

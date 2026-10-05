@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import {
-  buildAgentOfficeExport, floorId, githubRepo, isWorktreePath, EXPORT_FORMAT,
+  buildAgentOfficeExport, floorId, githubRepo, isWorktreePath, linkedWorktreeRoots,
+  exportAgentOffice, EXPORT_FORMAT, EXPORT_FILE,
 } from './agent-office-export.mjs'
 
 const B = '/Users/u/Projekty/_Bizz/Intelimail'
@@ -137,4 +141,53 @@ test('linked git worktrees (from the ledger) are dropped like worktree paths', (
   const [f] = buildAgentOfficeExport(reg(p), { now: NOW, exists: all, worktrees: new Set([linked]) }).buildings[0].floors
   assert.equal(f.dir, `${B}/app`)
   assert.deepEqual(f.locations.map(l => l.dir), [`${B}/app`])
+})
+
+async function stateDir(t) {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'stow-ao-'))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const prev = process.env.STOW_STATE_DIR
+  process.env.STOW_STATE_DIR = base
+  t.after(() => { if (prev === undefined) delete process.env.STOW_STATE_DIR; else process.env.STOW_STATE_DIR = prev })
+  return base
+}
+
+test('exportAgentOffice writes data/agent-office.json atomically', async (t) => {
+  const base = await stateDir(t)
+  const { doc, file } = await exportAgentOffice({ base, now: NOW, load: async () => reg(blog), exists: all })
+  assert.equal(file, path.join(base, 'data', EXPORT_FILE))
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), doc)
+  assert.deepEqual((await readdir(path.join(base, 'data'))).filter(n => n.endsWith('.tmp')), [])
+})
+
+test('exportAgentOffice: write:false returns the doc only; unknown client rejects and keeps the old file', async (t) => {
+  const base = await stateDir(t)
+  await mkdir(path.join(base, 'data'))
+  await writeFile(path.join(base, 'data', EXPORT_FILE), 'old')
+
+  const r = await exportAgentOffice({ base, write: false, now: NOW, load: async () => reg(blog), exists: all })
+  assert.equal(r.file, null)
+  await assert.rejects(exportAgentOffice({ base, client: 'nope', load: async () => reg(blog), exists: all }), e => e.code === 'UNKNOWN_CLIENT')
+  assert.equal(await readFile(path.join(base, 'data', EXPORT_FILE), 'utf8'), 'old')
+})
+
+test('linkedWorktreeRoots: roots whose checkout.main is another work tree', () => {
+  const rows = [
+    { directory: '/r', checkout: { root: '/r', subpath: '', git: true } },
+    { directory: '/r-feat/pkg', checkout: { root: '/r-feat', subpath: 'pkg', git: true, main: '/r' } },
+    { directory: '/x' },
+    null,
+  ]
+  assert.deepEqual([...linkedWorktreeRoots(rows)], ['/r-feat'])
+})
+
+test('exportAgentOffice drops linked worktrees found in the ledger', async (t) => {
+  const base = await stateDir(t)
+  const linked = `${B}/app-feature`
+  await mkdir(path.join(base, 'data'))
+  await writeFile(path.join(base, 'data', 'projects_metadata.jsonl'),
+    JSON.stringify({ directory: linked, checkout: { root: linked, subpath: '', git: true, main: `${B}/app` } }) + '\n')
+  const p = project({ ...app, primary: linked, locations: [loc(linked, 'primary', '2026-10-05T10:00:00Z'), loc(`${B}/app`, 'experiment')] })
+  const { doc } = await exportAgentOffice({ base, write: false, now: NOW, load: async () => reg(p), exists: all })
+  assert.equal(doc.buildings[0].floors[0].dir, `${B}/app`)
 })
