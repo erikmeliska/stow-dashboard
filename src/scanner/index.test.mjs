@@ -345,3 +345,14 @@ test('discoverProjects still finds nested projects (semaphore wrapping is result
         assert.ok(results.includes(path.join(root, 'app-b')), 'found app-b')
     } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
+
+test('getLatestMtime ignores .stow/ so writing the project file does not trigger a rescan', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-mtime-'))
+    await fs.writeFile(path.join(dir, 'a.js'), 'x')
+    const old = new Date('2020-01-01T00:00:00Z')
+    await fs.utimes(path.join(dir, 'a.js'), old, old)
+    await fs.mkdir(path.join(dir, '.stow'))
+    await fs.writeFile(path.join(dir, '.stow', 'project.json'), '{"id":"p_test"}')
+    assert.equal(await getLatestMtime(dir), old.toISOString())
+    await fs.rm(dir, { recursive: true })
+})

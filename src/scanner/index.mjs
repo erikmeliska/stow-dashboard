@@ -10,7 +10,7 @@ import { isMetaDocPath } from '../lib/distill.mjs'
 import { Semaphore } from '../lib/semaphore.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
-    '.git', 'node_modules', 'venv', '.venv',
+    '.git', '.stow', 'node_modules', 'venv', '.venv',
     '__pycache__', '.pytest_cache', 'build', 'dist',
     'python3.7', 'python3.8', 'python3.9', 'python3.10',
     'python3.11', 'python3.12', '.next', 'vendor'
