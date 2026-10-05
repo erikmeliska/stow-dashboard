@@ -1,4 +1,5 @@
 import fs from 'fs/promises'
+import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { setTimeout } from 'node:timers'
@@ -11,6 +12,7 @@ import { Semaphore } from '../lib/semaphore.mjs'
 import { resolveLocations, LOCATION_CONCURRENCY } from '../lib/checkout-location.mjs'
 import { ensureStowFile } from '../lib/stow-project-file.mjs'
 import { stowRoots, assignIdentities, carryForwardMoved } from '../lib/checkout-merge.mjs'
+import { stowHomeOf } from '../lib/registry/identity.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
     '.git', '.stow', 'node_modules', 'venv', '.venv',
@@ -558,23 +560,41 @@ export class ProjectScanner {
     // Virtual projects (#9): checkout root + identity + project_id on every
     // row — cached ones too, so an existing ledger is backfilled on the first
     // scan after upgrade. Only rows without `checkout` cost git spawns (a
-    // re-extracted row is a fresh object, so it is re-resolved). Checkout roots
-    // with no remote get a `.stow/project.json` id; AI data follows a move.
-    async assignProjects(rows, { priorRows = [...this.existingProjectsCache.values()] } = {}) {
+    // re-extracted row is a fresh object, so it is re-resolved). Checkouts
+    // with no remote get a `.stow/project.json` id (a linked worktree uses its
+    // main work tree's); AI data follows a move. `recheckExclude` re-asserts
+    // `.stow/` in info/exclude for dirty no-remote repos (full scan only —
+    // it's a git spawn each). `exists` lets a row still listed but gone from
+    // disk donate its AI data (the quick refresh never drops rows).
+    async assignProjects(rows, {
+        priorRows = [...this.existingProjectsCache.values()],
+        recheckExclude = true,
+        exists = existsSync,
+    } = {}) {
         await resolveLocations(rows, { exec: this.exec })
 
         const ids = new Map()
         let created = 0
         const limiter = new Semaphore(LOCATION_CONCURRENCY)
-        await Promise.all([...stowRoots(rows)].map(([root, { git }]) => limiter.run(async () => {
-            const res = await ensureStowFile(root, { git, ...(this.exec && { exec: this.exec }) })
-            if (res.error) this.onProgress({ type: 'stow_file_error', directory: root, error: res.error })
+        const homes = [...stowRoots(rows)]
+        // A row still listed but gone from disk (quick refresh): never write
+        // there (that would recreate the folder) — keep the id it last had.
+        for (const [home] of homes) {
+            if (exists(home)) continue
+            const stored = rows.find(r => stowHomeOf(r) === home && r.identity?.kind === 'stow')
+            ids.set(home, stored ? stored.identity.key.slice('stow:'.length) : null)
+        }
+        await Promise.all(homes.filter(([home]) => !ids.has(home)).map(([home, { git, dirty }]) => limiter.run(async () => {
+            const res = await ensureStowFile(home, {
+                git, recheckExclude: recheckExclude && dirty, ...(this.exec && { exec: this.exec }),
+            })
+            if (res.error) this.onProgress({ type: 'stow_file_error', directory: home, error: res.error })
             if (res.created) created++
-            ids.set(root, res.id)
+            ids.set(home, res.id)
         })))
         assignIdentities(rows, ids)
 
-        const moved = carryForwardMoved(rows, priorRows)
+        const moved = carryForwardMoved(rows, priorRows, { exists })
         for (const m of moved) this.onProgress({ type: 'moved', ...m })
         const projects = new Set(rows.map(r => r.project_id)).size
         this.onProgress({ type: 'projects_assigned', projects, stow_created: created, moved: moved.length })

@@ -205,3 +205,43 @@ test('loadRegistry reads each .stow meta at the checkout root, once', async () =
     await fs.rm(base, { recursive: true, force: true })
   }
 })
+
+test('one checkout whose rows disagree on remotes stays one location of one project', () => {
+  const records = [
+    inCheckout('r', '/p/app', '/p/app', remote('git@github.com:o/app.git')),
+    inCheckout('w', '/p/app/web', '/p/app', remote('git@gitlab.com:o/app.git')),
+    inCheckout('a', '/p/app/api', '/p/app'),
+  ]
+  const { projects } = buildRegistry(records, { now: NOW })
+  assert.deepEqual(projects.map(p => [p.key, p.locations.map(l => [l.directory, l.members])]),
+    [['git:github.com/o/app', [['/p/app', 3]]]])
+})
+
+test('no-remote repo + its linked worktree → one stow project, two locations; worktree role is not the main\'s manual role', () => {
+  const metas = new Map([['/p/main', { meta: { id: 'p_mainmainmain', role: 'deploy' }, warnings: [] }]])
+  const records = [
+    inCheckout('m', '/p/main', '/p/main'),
+    rec('w', '/p/wt', { checkout: { root: '/p/wt', subpath: '', git: true, main: '/p/main' }, last_code_modified: day(0) }),
+  ]
+  const [p] = buildRegistry(records, { metas, now: NOW }).projects
+  assert.equal(p.key, 'stow:p_mainmainmain')
+  assert.deepEqual(p.locations.map(l => [l.directory, l.role, l.role_source]),
+    [['/p/wt', 'primary', 'derived'], ['/p/main', 'deploy', 'manual']])
+})
+
+test('loadRegistry also reads the main work tree\'s meta for a linked worktree', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-reg-'))
+  const saved = process.env.STOW_STATE_DIR
+  process.env.STOW_STATE_DIR = base
+  try {
+    await fs.mkdir(path.join(base, 'data'))
+    await fs.writeFile(path.join(base, 'data', 'projects_metadata.jsonl'),
+      JSON.stringify(rec('w', '/P/wt', { checkout: { root: '/P/wt', subpath: '', git: true, main: '/P/main' } })) + '\n')
+    const readMeta = async dir => (dir === '/P/main' ? { meta: { id: 'p_mainmainmain' }, warnings: [] } : { meta: null, warnings: [] })
+    const r = await loadRegistry({ readMeta, now: NOW })
+    assert.deepEqual(r.projects.map(p => p.key), ['stow:p_mainmainmain'])
+  } finally {
+    if (saved === undefined) delete process.env.STOW_STATE_DIR; else process.env.STOW_STATE_DIR = saved
+    await fs.rm(base, { recursive: true, force: true })
+  }
+})

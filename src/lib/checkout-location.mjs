@@ -17,19 +17,28 @@ const execFileAsync = promisify(execFile)
 export const LOCATION_CONCURRENCY = 16
 
 export async function resolveLocation(directory, { exec = execFileAsync } = {}) {
-    let root
+    let top = '', common = ''
     try {
-        const { stdout } = await exec('git', ['-C', directory, 'rev-parse', '--show-toplevel'])
-        root = String(stdout).trim()
+        const { stdout } = await exec('git', ['-C', directory, 'rev-parse', '--show-toplevel', '--git-common-dir'])
+        ;[top = '', common = ''] = String(stdout).split('\n').map(s => s.trim())
     } catch {
-        root = ''
+        top = ''
     }
-    if (!root) return { root: directory, subpath: '', git: false }
-    const subpath = path.relative(root, directory)
+    if (!top) return { root: directory, subpath: '', git: false }
+    let loc
+    const subpath = path.relative(top, directory)
     // macOS reports the realpath: a scan root reached through a symlink would
     // give `../…`. Keep the row's own directory as the root then.
-    if (subpath.startsWith('..') || path.isAbsolute(subpath)) return { root: directory, subpath: '', git: true }
-    return { root, subpath, git: true }
+    if (subpath.startsWith('..') || path.isAbsolute(subpath)) loc = { root: directory, subpath: '', git: true }
+    else loc = { root: top, subpath, git: true }
+    // A linked worktree shares the main work tree's repo; `main` is where a
+    // no-remote project's .stow id lives, so every worktree gets the same one.
+    if (common) {
+        const gitDir = path.resolve(directory, common)
+        const main = path.dirname(gitDir)
+        if (path.basename(gitDir) === '.git' && main !== loc.root) loc.main = main
+    }
+    return loc
 }
 
 /** Sets `row.checkout` on rows that lack one (all rows with `force`). */

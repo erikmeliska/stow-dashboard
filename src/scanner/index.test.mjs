@@ -480,3 +480,73 @@ test('refreshProjectGit keeps checkout/identity/project_id (they live outside gi
     assert.deepEqual(project.identity, { key: 'git:x/y', kind: 'git' })
     assert.equal(project.project_id, 'git:x/y')
 })
+
+test('a no-remote folder that became a git repo after its .stow was written: the next scan excludes .stow/', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-gitinit-')))
+    const dir = path.join(base, 'notes')
+    await fs.mkdir(path.join(dir, '.stow'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'README.md'), '# n\n')
+    await fs.writeFile(path.join(dir, '.stow', 'project.json'), '{"version":1,"id":"p_notesnotesn"}\n')
+    gitIn(dir, 'init', '-q')
+    gitIn(dir, 'add', 'README.md')
+    gitIn(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed')
+    try {
+        const [row] = await new ProjectScanner({ scanRoots: [base] }).scanProjects()
+        assert.equal(row.project_id, 'stow:p_notesnotesn')
+        assert.equal(gitIn(dir, 'status', '--porcelain', '-u'), '')
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('a no-remote repo and its linked worktree share one .stow id (kept in the main work tree)', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-wt-')))
+    const main = path.join(base, 'app')
+    await fs.mkdir(main)
+    gitIn(main, 'init', '-q')
+    await fs.writeFile(path.join(main, 'README.md'), '# app\n')
+    gitIn(main, 'add', '.')
+    gitIn(main, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed')
+    gitIn(main, 'worktree', 'add', '-q', path.join(base, 'app-wt'))
+    try {
+        const rows = await new ProjectScanner({ scanRoots: [base] }).scanProjects()
+        assert.equal(rows.length, 2)
+        assert.equal(new Set(rows.map(r => r.project_id)).size, 1)
+        assert.match(rows[0].project_id, /^stow:p_/)
+        await assert.rejects(fs.access(path.join(base, 'app-wt', '.stow')))
+        const id = rows[0].project_id.slice('stow:'.length)
+        const metas = new Map([[main, { meta: { id }, warnings: [] }]])
+        assert.deepEqual(buildRegistry(rows, { metas }).projects[0].locations.map(l => l.directory).sort(), [main, path.join(base, 'app-wt')])
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('assignProjects (quick refresh): a moved folder found before any full scan inherits from the stale row still listed', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-quickmove-')))
+    const newDir = path.join(base, 'new')
+    await fs.mkdir(path.join(newDir, '.stow'), { recursive: true })
+    await fs.writeFile(path.join(newDir, '.stow', 'project.json'), '{"version":1,"id":"p_quickquickq"}\n')
+    const stale = { directory: path.join(base, 'old'), checkout: { root: path.join(base, 'old'), subpath: '', git: false },
+        identity: { key: 'stow:p_quickquickq', kind: 'stow' }, project_id: 'stow:p_quickquickq', ai_analysis: { category: '_Tools' } }
+    const found = { directory: newDir, project_name: 'new' }
+    try {
+        const rows = [stale, found]
+        await new ProjectScanner({ scanRoots: [base] }).assignProjects(rows, { priorRows: [stale] })
+        assert.equal(found.project_id, 'stow:p_quickquickq')
+        assert.equal(stale.project_id, 'stow:p_quickquickq') // stored id kept, nothing recreated
+        await assert.rejects(fs.access(path.join(base, 'old')))
+        assert.deepEqual(found.ai_analysis, { category: '_Tools' })
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('assignProjects on rows that already have a checkout: no git spawn, project_id follows git_info.remotes', async () => {
+    const exec = async () => assert.fail('no git spawn expected')
+    const row = { directory: '/nowhere/app', checkout: { root: '/nowhere/app', subpath: '', git: true },
+        identity: { key: 'stow:p_oldoldoldol', kind: 'stow' }, project_id: 'stow:p_oldoldoldol',
+        git_info: { remotes: ['git@github.com:o/app.git'] } }
+    await new ProjectScanner({ scanRoots: [], exec }).assignProjects([row], { priorRows: [], recheckExclude: false })
+    assert.equal(row.project_id, 'git:github.com/o/app')
+})

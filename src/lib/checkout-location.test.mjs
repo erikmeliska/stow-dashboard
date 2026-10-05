@@ -37,6 +37,16 @@ test('resolveLocation: empty toplevel output → non-git', async () => {
     assert.deepEqual(await resolveLocation('/p/bare', { exec }), { root: '/p/bare', subpath: '', git: false })
 })
 
+test('resolveLocation: linked worktree → main is the main work tree (where its .stow id lives)', async () => {
+    const exec = fakeExec({ '/p/app-wt/src': '/p/app-wt\n/p/app/.git\n' })
+    assert.deepEqual(await resolveLocation('/p/app-wt/src', { exec }), { root: '/p/app-wt', subpath: 'src', git: true, main: '/p/app' })
+})
+
+test('resolveLocation: relative common dir of an ordinary checkout → no main', async () => {
+    const exec = fakeExec({ '/p/app/web': '/p/app\n../.git\n' })
+    assert.deepEqual(await resolveLocation('/p/app/web', { exec }), { root: '/p/app', subpath: 'web', git: true })
+})
+
 test('resolveLocations only fills rows without checkout unless force', async () => {
     let calls = 0
     const exec = async () => { calls++; throw new Error('not a repo') }

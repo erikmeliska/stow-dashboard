@@ -6,7 +6,7 @@
  * the ledger rows inside one checkout are its members, not separate copies.
  */
 import path from 'node:path'
-import { identityOf, locationOf, remoteOwner } from './identity.mjs'
+import { checkoutIdentities, locationOf, remoteOwner, stowHomeOf } from './identity.mjs'
 import { buildClientCatalog, bizzClient, cleanClientName } from './client.mjs'
 import fs from 'node:fs/promises'
 import { dataFile, ledgerFile } from '../state-dir.mjs'
@@ -39,11 +39,11 @@ const byActivity = (a, b) =>
 export function buildRegistry(records, { metas = new Map(), config = { clients: [] }, now = Date.now() } = {}) {
   const metaOf = dir => metas.get(dir) || { meta: null, warnings: [] }
 
+  const identities = checkoutIdentities(records, home => metaOf(home).meta)
   const groups = new Map()
   for (const record of records) {
     if (!record || typeof record.directory !== 'string') continue
-    const { meta } = metaOf(locationOf(record))
-    const id = identityOf(record, meta)
+    const id = identities.get(locationOf(record))
     let g = groups.get(id.key)
     if (!g) groups.set(id.key, g = { ...id, rows: [] })
     g.rows.push(record)
@@ -187,7 +187,8 @@ export async function loadRegistry({ base, readMeta = readStowMeta, now = Date.n
   const opts = base ? { base } : {}
   const [records, config] = await Promise.all([readLedger(opts), readRegistryConfig(opts)])
   const metas = new Map()
-  const dirs = [...new Set(records.filter(r => typeof r?.directory === 'string').map(locationOf))]
+  const rows = records.filter(r => typeof r?.directory === 'string')
+  const dirs = [...new Set([...rows.map(locationOf), ...rows.map(stowHomeOf)])]
   for (let i = 0; i < dirs.length; i += META_CONCURRENCY) {
     const chunk = dirs.slice(i, i + META_CONCURRENCY)
     const got = await Promise.all(chunk.map(d => readMeta(d)))

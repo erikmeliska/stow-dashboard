@@ -102,3 +102,35 @@ test('unwritable root → error, no throw', { skip: process.getuid?.() === 0 }, 
         await fs.rm(dir, { recursive: true })
     }
 })
+
+test('existing file in a git root (e.g. git init after the file was written): recheckExclude adds .stow/ to info/exclude', async () => {
+    const dir = await tmp()
+    await fs.mkdir(path.join(dir, '.stow'))
+    await fs.writeFile(file(dir), '{"id":"p_there"}')
+    const exclude = path.join(dir, 'exclude')
+    let calls = 0
+    const exec = async () => { calls++; return { stdout: exclude + '\n' } }
+    assert.deepEqual(await ensureStowFile(dir, { git: true, enabled: true, exec }), { id: 'p_there', created: false, error: null })
+    assert.equal(calls, 0) // no git spawn unless asked
+    assert.deepEqual(await ensureStowFile(dir, { git: true, enabled: true, exec, recheckExclude: true }), { id: 'p_there', created: false, error: null })
+    assert.equal(await fs.readFile(exclude, 'utf8'), '.stow/\n')
+    await fs.rm(dir, { recursive: true })
+})
+
+test('exclude step fails after the file was written → the id is still used', { skip: process.getuid?.() === 0 }, async () => {
+    const dir = await tmp()
+    const locked = path.join(dir, 'locked')
+    await fs.mkdir(locked)
+    await fs.writeFile(path.join(locked, 'exclude'), '')
+    await fs.chmod(path.join(locked, 'exclude'), 0o400)
+    const exec = async () => ({ stdout: path.join(locked, 'exclude') + '\n' })
+    try {
+        const r = await ensureStowFile(dir, { git: true, enabled: true, exec })
+        assert.match(r.id, /^p_/)
+        assert.equal(r.created, true)
+        assert.equal(JSON.parse(await fs.readFile(file(dir), 'utf8')).id, r.id)
+    } finally {
+        await fs.chmod(path.join(locked, 'exclude'), 0o600)
+        await fs.rm(dir, { recursive: true })
+    }
+})

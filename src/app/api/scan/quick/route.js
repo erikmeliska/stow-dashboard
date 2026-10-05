@@ -218,19 +218,19 @@ export async function POST() {
                     progress(project.directory)
                 })))
 
-                // Virtual projects (#9): a discovered row needs its checkout,
-                // identity and project_id. Rows that already have a checkout cost
-                // no git spawn, so this stays cheap; skipped when nothing was found.
-                if (discovered.length > 0) {
-                    try {
-                        const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS, onProgress: (e) => {
-                            if (e.type === 'stow_file_error' || e.type === 'moved') sendEvent(e)
-                        } })
-                        const priorRows = projects.filter(p => !discovered.includes(p.directory))
-                        await scanner.assignProjects([...projectMap.values()], { priorRows })
-                    } catch (err) {
-                        sendEvent({ type: 'assign_error', message: err.message })
-                    }
+                // Virtual projects (#9): checkout, identity and project_id for every
+                // row, every cycle — a discovered row needs them, and a remote added
+                // or changed since the last full scan must reach project_id (the
+                // register view already follows git_info). Rows that have a checkout
+                // cost no git spawn; .stow reads are cheap. A row still listed but
+                // gone from disk donates its AI data to its moved successor.
+                try {
+                    const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS, onProgress: (e) => {
+                        if (e.type === 'stow_file_error' || e.type === 'moved') sendEvent(e)
+                    } })
+                    await scanner.assignProjects([...projectMap.values()], { priorRows: projects, recheckExclude: false })
+                } catch (err) {
+                    sendEvent({ type: 'assign_error', message: err.message })
                 }
 
                 // Single JSONL write

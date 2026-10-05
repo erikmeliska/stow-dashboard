@@ -46,7 +46,9 @@ export async function gatherFacts(project) {
   }
   let topLevel = []
   try {
-    topLevel = (await readdir(dir)).filter(n => n !== 'node_modules' && n !== '.git').sort().slice(0, 40)
+    // .stow is the scanner's identity file (#9): listing it would change
+    // input_hash and re-run the analysis of every no-remote project.
+    topLevel = (await readdir(dir)).filter(n => n !== 'node_modules' && n !== '.git' && n !== '.stow').sort().slice(0, 40)
   } catch { /* missing dir */ }
   let commits = []
   let lastCodeCommit = null

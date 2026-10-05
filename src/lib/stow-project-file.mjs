@@ -9,7 +9,7 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { readStowMeta, writeStowMeta } from './registry/stow-meta.mjs'
+import { readStowMeta, writeStowMeta, excludeFromGit } from './registry/stow-meta.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,19 +23,31 @@ export function stowWritesEnabled(env = process.env) {
  * EACCES, …); the caller falls back to a `path:` identity and keeps going.
  * `exec` follows the scanner's convention (resolves `{ stdout }`).
  */
-export async function ensureStowFile(root, { git = false, exec = execFileAsync, enabled = stowWritesEnabled() } = {}) {
-    const { meta, warnings } = await readStowMeta(root)
-    if (meta) return { id: meta.id, created: false, error: null }
-    if (warnings.length) return { id: null, created: false, error: warnings[0] }
-    if (!enabled) return { id: null, created: false, error: null }
+export async function ensureStowFile(root, {
+    git = false, exec = execFileAsync, enabled = stowWritesEnabled(), recheckExclude = false,
+} = {}) {
     // A non-git root has no info/exclude to update; don't spawn git for it.
     const stowExec = git
         ? async (cmd, args) => (await exec(cmd, args)).stdout
         : async () => { throw new Error('not a git work tree') }
+    const { meta, warnings } = await readStowMeta(root)
+    if (meta) {
+        // The exclude line is added when the file is created; a root that
+        // became a repo later (git init) or whose exclude write failed gets
+        // it here. The caller asks only for dirty work trees, to stay cheap.
+        if (git && recheckExclude) await excludeFromGit(root, { exec: stowExec }).catch(() => {})
+        return { id: meta.id, created: false, error: null }
+    }
+    if (warnings.length) return { id: null, created: false, error: warnings[0] }
+    if (!enabled) return { id: null, created: false, error: null }
     try {
         const written = await writeStowMeta(root, {}, { exec: stowExec })
         return { id: written.id, created: true, error: null }
     } catch (err) {
+        // The writer renames the file into place before updating info/exclude:
+        // if only that last step failed, the id on disk is still good.
+        const again = await readStowMeta(root)
+        if (again.meta) return { id: again.meta.id, created: true, error: err.code || err.message }
         return { id: null, created: false, error: err.code || err.message }
     }
 }

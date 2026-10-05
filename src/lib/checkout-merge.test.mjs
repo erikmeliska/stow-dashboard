@@ -16,12 +16,25 @@ test('stowRoots: only checkout roots without a remote identity, once each, with 
         { directory: '/plain', checkout: { root: '/plain', subpath: '', git: false } },
         row('/m/mirror', '/m/mirror', remote('/local/path/only')),
     ]
-    assert.deepEqual([...stowRoots(rows)], [['/n/tool', { git: true }], ['/plain', { git: false }], ['/m/mirror', { git: true }]])
+    assert.deepEqual([...stowRoots(rows)],
+        [['/n/tool', { git: true, dirty: false }], ['/plain', { git: false, dirty: false }], ['/m/mirror', { git: true, dirty: false }]])
+})
+
+test('stowRoots: keyed by stow home — a linked worktree asks for the main work tree; dirty if any member is', () => {
+    const wt = { directory: '/p/wt', checkout: { root: '/p/wt', subpath: '', git: true, main: '/p/main' } }
+    const rows = [row('/p/main', '/p/main'), wt, row('/p/main/sub', '/p/main', { git_info: { uncommitted_changes: 2 } })]
+    assert.deepEqual([...stowRoots(rows)], [['/p/main', { git: true, dirty: true }]])
 })
 
 test('stowRoots: a checkout where any member has a remote needs no file', () => {
     const rows = [row('/r/x', '/r/x'), row('/r/x/sub', '/r/x', remote('https://gitlab.com/a/x'))]
     assert.equal(stowRoots(rows).size, 0)
+})
+
+test('assignIdentities: per checkout — a member without remotes joins its root\'s git project', () => {
+    const rows = [row('/r/app', '/r/app', remote('git@github.com:o/app.git')), row('/r/app/api', '/r/app')]
+    assignIdentities(rows)
+    assert.deepEqual(rows.map(r => r.project_id), ['git:github.com/o/app', 'git:github.com/o/app'])
 })
 
 test('assignIdentities: git remote, stow id at the root, path fallback at the root; project_id = key', () => {
@@ -68,4 +81,23 @@ test('carryForwardMoved: prior rows without identity (pre-#9 ledger) donate noth
     const prior = [{ directory: '/old', ai_analysis: { category: 'x' } }]
     const rows = [{ ...row('/new', '/new'), identity: { key: 'path:/new', kind: 'path' } }]
     assert.deepEqual(carryForwardMoved(rows, prior), [])
+})
+
+test('carryForwardMoved: a new row already in the prior ledger without analysis (quick-refresh discovery) still inherits', () => {
+    const k = { key: 'stow:p_x', kind: 'stow' }
+    const prior = [
+        { ...row('/old', '/old'), identity: k, ai_analysis: { category: 'x' } },
+        { ...row('/new', '/new'), identity: k },
+    ]
+    const rows = [{ ...row('/new', '/new'), identity: k }]
+    assert.equal(carryForwardMoved(rows, prior).length, 1)
+    assert.deepEqual(rows[0].ai_analysis, { category: 'x' })
+})
+
+test('carryForwardMoved: a row still in the list but gone from disk is a donor when `exists` says so', () => {
+    const k = { key: 'stow:p_x', kind: 'stow' }
+    const old = { ...row('/old', '/old'), identity: k, ai_analysis: { category: 'x' } }
+    const rows = [old, { ...row('/new', '/new'), identity: k }]
+    assert.deepEqual(carryForwardMoved(rows, rows, { exists: d => d !== '/old' }), [{ from: '/old', to: '/new', key: 'stow:p_x' }])
+    assert.deepEqual(carryForwardMoved([old, { ...row('/n2', '/n2'), identity: k }], [old]), [])
 })
