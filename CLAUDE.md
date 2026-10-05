@@ -32,6 +32,7 @@ npm run tauri:dev    # Run desktop app in dev mode
 npm run analyze      # AI project analysis batch (incremental; --force, --retry-errors, --pilot, --data <file>)
 npm run registry     # Read-only summary of the virtual-project register (--multi, --unassigned, --json)
 npm run registry:export  # Write data/agent-office.json (client → building, project → floor) for agent-office (--unassigned, --stdout; --client <name> prints only, never writes)
+npm run relocate -- --from <dir> --to <dir> [--apply] [--force] [--resume <journal>]  # Physical project move with link migration; dry-run unless --apply (see Reorg & physical moves)
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
@@ -205,7 +206,16 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/cc-import-summaries.mjs` - CLI for the PoC summary import
 - `scripts/cc-eval.mjs` - CLI for on-demand AI summaries (`npm run cc:eval -- --summaries`)
 - `src/app/api/sessions/route.js` + `summarize/route.js` + `src/app/sessions/page.js` - Session list/detail API, summarize action, and the session viewer
-- `src/components/ReorgReportDialog.js` - Reorg report from AI `suggested_path` derivations
+- `src/components/ReorgReportDialog.js` - Reorg report over the register (#11): four sections, virtual action per row, Dismiss, ⋯ → "Move on disk…" dry-run panel
+- `src/lib/reorg.mjs` - Pure `buildReorgReport` (client-placement / stale-copy / abandoned / orphan) + `fingerprintOf`
+- `src/lib/reorg-apply.mjs` - Virtual reorg actions → `writeStowMeta` (client/role) or `removeLedgerRows` (orphans)
+- `src/lib/reorg-dismissed.mjs` - Dismissals in `data/reorg-dismissed.json` (id → evidence fingerprint)
+- `src/lib/reorg-service.mjs` - What the `/api/reorg*` routes call (`getReport`, `applySuggestion`, `dismissSuggestion`, `relocate`, `guardRequest`)
+- `src/app/api/reorg/route.js` + `apply/` + `dismiss/` + `relocate/` - Reorg report, virtual action, dismiss/undismiss, move dry-run/execute
+- `src/lib/path-moves.mjs` - Append-only `data/path-moves.json` alias table + `resolveMovedPath` (applied by cc ingest, usage aggregation, Claude-folder discovery)
+- `src/lib/claude-project-dirs.mjs` - `claudeSlug`, `findClaudeProjectDirs` (`~/.claude/projects/<slug>` matched by transcript cwd, alias-resolved)
+- `src/lib/relocate.mjs` - `planRelocation` (dry-run, blockers, `planHash`), `executeRelocation` (journal + full rollback), `resumeRelocation`, `defaultRelocateDeps`
+- `scripts/relocate.mjs` - CLI over relocate.mjs (`npm run relocate`)
 - `src/app/api/analyze/route.js` + `status/` - Start/poll the background AI analysis job
 - `src/app/api/usage/rebuild/route.js` - Rebuild the usage ledger on demand
 - `scripts/prepare-tauri.mjs` - Prepares standalone build for Tauri bundling
@@ -339,6 +349,26 @@ A virtual layer over the ledger — **Client → Project → Location** (checkou
 - **Roles** `primary | deploy | experiment | stale`: manual wins; otherwise primary = most recently active (tie → shortest path); others `stale` by name token (`old|backup|bak|archive`) or > 180 days idle, `deploy` by token (`prod|production|deploy|live`), else `experiment`.
 - **Agent Office export (#14)**: `npm run registry:export` writes `data/agent-office.json` (`{format: "stow-dashboard/agent-office", version: 1, generated_at, filter: {client, unassigned}, buildings, skipped, stats}`); `GET /api/registry/agent-office` serves the same document without writing. Building = register client (`id` = `clientKey`), floor = register project: `id` = `<slug(name)>-<6 hex of sha1(project_key)>` (`^[a-z0-9-]{1,40}$`, stable across moves), `dir` = the primary checkout, `repo` = `owner/name` for github.com remotes only (else `null`), `remote` = #8's normalised remote (never `git_info.remotes`), `last_activity` (ISO), `locations` `{dir, role}` primary first. Worktrees are never floors or locations: `.agent-office/worktrees/*`, `.claude/worktrees/*` and linked git worktrees (ledger `checkout.main` ≠ `checkout.root`) are dropped, as are directories gone from disk; a dropped primary falls back to its own main checkout (ledger `checkout.main`, or the path in front of the worktrees dir — the busy-worker case, where the main sits idle as `stale`), then to the most recently active remaining checkout, a project with none left goes to `skipped` (`no-location`). Floors sort by `last_activity` desc; no truncation (agent-office caps 16 floors per building). Unassigned projects only with `--unassigned` / `?unassigned=1`; `--client` matches by `clientKey`, a typo exits 1 / 404; the CLI's `--client` implies `--stdout`, so a one-client subset never replaces the full file. Refreshed only on demand — neither the scan nor the refresh cycle writes it.
 
+### Reorg & physical moves (#11)
+
+The Reorg dialog (toolbar → Reorg) is built from the register, not from per-directory AI output. `GET /api/reorg` → `buildReorgReport` over `loadRegistry` + ledger rows (no new git/fs calls besides `exists`):
+
+- **client-placement**: a resolved client (source `ai`/`owner`/`path`; `manual` and low-confidence AI skipped) whose primary checkout isn't under a `_Bizz/<folder>` whose `clientKey` is the client's id or one of its `registry.json` aliases. Action: *Confirm client* = manual client in `.stow/project.json`. Optional move to an existing `_Bizz/<folder>` spelling from the ledger, else `<BASE_DIR>/_Bizz/<client>`.
+- **stale-copy**: a non-primary location (not a manual role, not derived `deploy`) that is clean (git: no uncommitted, ahead 0; non-git: same size + type mix) and ≥ 6 months behind the primary. Action: *Mark as stale* (manual role). Never a move.
+- **abandoned**: an experiment (manual `experiment` role, AI maturity `idea|prototype|abandoned-wip` or type `prototype-poc`) with `ai_derived.status` `dead`/`archive-candidate`, nothing running (`runningDirs` from the client), not already archived (every location manual-stale) and not under an `_Archive(s)` folder. Action: *Archive* = manual `stale` on every location (#8 has no archived flag). Optional move to `<BASE_DIR>/_Archive` (or an existing `_Archives`).
+- **orphan**: every location of the project is gone from disk (stale ledger rows). Action: *Remove from register* = drop those ledger rows.
+- The client only sends a suggestion id; the server rebuilds the report and runs that suggestion's own action (unknown/stale id → 409). Dismissals hide a suggestion until its evidence fingerprint changes. Write routes take same-origin JSON on a loopback Host only (`guardRequest`); the move target must lie inside `SCAN_ROOTS`.
+
+**Physical move** — the exception, never the default button. `planRelocation` is the dry-run; blockers: not a register location, target exists or is inside the source, different device, a process/container/Claude session running under it, linked git worktrees (or the source is one), uncommitted changes (`--force` overrides only this), a target Claude slug > 200 chars. `executeRelocation` re-plans and refuses unless `planHash` matches the dry-run, then runs with a journal in `data/relocations/` and undoes completed steps in reverse on any failure (`npm run relocate -- --resume <journal>` after a crash). Steps:
+1. `fs.rename` the folder (missing parent dirs created, removed again on rollback)
+2. `~/.claude/projects/<slug>` renamed (or merged file by file into an existing target slug; a name collision blocks), **incl. `memory/`** — folders are found by transcript cwd resolved through `path-moves.json`, so moving a project again (e.g. back) finds its folder
+3. `cc-sessions.db`: `project_dir`/`cwd`/`base_dir`, `raw_ref`, `subagents.raw_ref`, `ingest_state.path` in one transaction (exact old values kept for rollback)
+4. `usage-cache.json` keys re-keyed in place (order kept; offsets untouched → no re-parse, no ghosts)
+5. `path-moves.json` alias appended — Claude transcripts and Codex rollouts are **never edited**; `ingestAll` (via `runIngest`) and `aggregateUsage`/`updateUsage` map old cwds through it, so `cc:ingest --full` and `usage --rebuild` keep the new path. A malformed `path-moves.json` is never overwritten: ingest/usage throw and the report shows the error.
+6. Ledger rows under the folder (`directory`, `checkout.root`, `checkout.main`) — that *is* the register location; `.stow` and remotes travel with the folder.
+
+In-process, the move holds `runExclusive` (ingest-run) + `runUsageExclusive` (usage): a refresh-cycle ingest/usage update meanwhile returns `{deferred: true}`. Summary and analysis batches refuse the move. Not locked: an ingest/usage run in **another process** (turn Auto refresh off when using the CLI). `~/.claude.json` per-project settings are keyed by path and only warned about. Verified end to end on a throwaway project: `claude --resume` and memory work at the new path and after moving back; session count and AI `$` unchanged across `cc:ingest --full` and `usage --rebuild`.
+
 ### Quick Filters
 
 The table includes 3-state toggle filters (any → yes → no → any):
@@ -375,7 +405,7 @@ Tools (25):
 
 ### State Dir (where data/ and .env.local actually live)
 
-All writable state — `data/projects_metadata.jsonl`, `data/usage.json`, `data/usage-cache.json`, `data/run-logs/`, `.env.local` — lives in one *state dir*, resolved by `src/lib/state-dir.mjs`. **Never build these paths by hand** (`path.join(process.cwd(), 'data', …)` or module-relative): the desktop app can't write inside its own bundle, so it keeps state in `~/Library/Application Support/StowDashboardDeno`, and hand-rolled paths are how the web app, the CLIs and the MCP server ended up reading two different ledgers.
+All writable state — `data/projects_metadata.jsonl`, `data/usage.json`, `data/usage-cache.json`, `data/run-logs/`, `data/path-moves.json`, `data/reorg-dismissed.json`, `data/relocations/`, `.env.local` — lives in one *state dir*, resolved by `src/lib/state-dir.mjs`. **Never build these paths by hand** (`path.join(process.cwd(), 'data', …)` or module-relative): the desktop app can't write inside its own bundle, so it keeps state in `~/Library/Application Support/StowDashboardDeno`, and hand-rolled paths are how the web app, the CLIs and the MCP server ended up reading two different ledgers.
 
 Resolution order (`resolveStateDir({ base })`):
 1. `STOW_STATE_DIR` — explicit override; the Deno shell sets it, and `STOW_STATE_DIR=. npm run scan` forces repo-local state.
