@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, setParent } from './store.mjs'
+import { openStore, upsertSession, replaceTools, replaceSkills, replaceGuardHits, setParent, setPlacements } from './store.mjs'
 import { sessionAnalytics, portfolioAnalytics, sinceForRange } from './analytics.mjs'
 import { localDay } from './session-tree.mjs'
 
@@ -113,7 +113,7 @@ test('sessionAnalytics buckets quality scores', () => {
 test('sessionAnalytics lists top projects by cost', () => {
   const db = seedStore()
   const a = sessionAnalytics(db, { since: '2026-08-01T00:00:00Z' })
-  assert.deepEqual({ ...a.topProjects[0] }, { project: 'beta', project_dir: '/p/beta', sessions: 1, cost_usd: 3.0 })
+  assert.deepEqual({ ...a.topProjects[0] }, { project: 'beta', project_key: null, project_dir: '/p/beta', sessions: 1, cost_usd: 3.0 })
   assert.equal(a.topProjects.length, 2)
   db.close()
 })
@@ -218,5 +218,20 @@ test('sessionAnalytics perDay buckets by local day, like /sessions', () => {
   setParent(db, 'k', 'a')
   const a = sessionAnalytics(db)
   assert.deepEqual(a.perDay.map((d) => [d.day, d.sessions, d.cost_usd, d.tokens]), [[localDay(late), 1, 3, 2]])
+  db.close()
+})
+
+test('topProjects folds worktree sessions into the project', () => {
+  const db = seedStore()
+  const base = { cwd: 'x', model: 'm', duration_s: 0, active_s: 0, input_tokens: 0, output_tokens: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, turns: 1, status: 'done', raw_ref: 'x', ingested_at: 'now' }
+  upsertSession(db, { ...base, session_id: 'w1', project_dir: '/p/alpha/.agent-office/worktrees/x', started_at: '2026-09-01T11:00:00Z', ended_at: '2026-09-01T11:10:00Z', cost_usd: 2 })
+  setPlacements(db, [
+    { session_id: 's1', project_key: 'PA', workspace: null, base_dir: '/p/alpha' },
+    { session_id: 'w1', project_key: 'PA', workspace: 'agent-office:x', base_dir: '/p/alpha' },
+  ])
+  const top = sessionAnalytics(db, { since: '2026-08-01T00:00:00Z' }).topProjects
+  const alpha = top.filter((t) => t.project === 'alpha')
+  assert.equal(alpha.length, 1)
+  assert.deepEqual({ ...alpha[0] }, { project: 'alpha', project_key: 'PA', project_dir: '/p/alpha', sessions: 2, cost_usd: 3.5 })
   db.close()
 })

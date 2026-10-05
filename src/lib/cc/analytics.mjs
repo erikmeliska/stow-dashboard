@@ -73,11 +73,16 @@ export function sessionAnalytics(db, { since = null } = {}) {
     FROM skill_usage k JOIN sessions s ON s.session_id = k.session_id ${where}
     GROUP BY k.skill ORDER BY count DESC LIMIT 10`)
 
+  // By register project (#12), so worktree/scratchpad sessions count toward it;
+  // unplaced rows fall back to their main-checkout dir, then the raw dir.
   const topProjects = all(`
-    SELECT s.project_dir, sum(parent_session_id IS NULL) sessions, coalesce(sum(cost_usd), 0) cost_usd
-    FROM sessions s ${where} GROUP BY s.project_dir ORDER BY cost_usd DESC LIMIT 8`)
+    SELECT coalesce(s.project_key, s.base_dir, s.project_dir) k, max(s.project_key) project_key,
+           max(coalesce(s.base_dir, s.project_dir)) project_dir,
+           sum(parent_session_id IS NULL) sessions, coalesce(sum(cost_usd), 0) cost_usd
+    FROM sessions s ${where} GROUP BY k ORDER BY cost_usd DESC LIMIT 8`)
     .map((r) => ({
       project: (r.project_dir || '').split('/').filter(Boolean).at(-1) || '—',
+      project_key: r.project_key,
       project_dir: r.project_dir,
       sessions: r.sessions,
       cost_usd: r.cost_usd,
