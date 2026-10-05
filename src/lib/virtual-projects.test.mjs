@@ -145,3 +145,64 @@ test('buildVirtualProjects takes the client from the primary when locations disa
   ])
   assert.equal(p.client, 'B')
 })
+
+import { anyLocation, clientStats, roleStats, filterVirtual, pruneSelection } from './virtual-projects.mjs'
+
+const P = buildVirtualProjects([
+  rec('/p/blog', { project_id: 'g:blog', client: 'InteliMail', role: 'primary' }),
+  rec('/p/blog-x', { project_id: 'g:blog', client: 'InteliMail ', role: 'experiment' }),
+  rec('/p/shop', { project_id: 'g:shop', client: 'acme', role: 'primary' }),
+  rec('/p/loose'),
+])
+const vids = rows => rows.map(r => r.vpId)
+
+test('anyLocation checks every checkout of a project, or the record itself', () => {
+  const blog = P.find(r => r.vpId === 'g:blog')
+  assert.equal(anyLocation(blog, l => l.directory === '/p/blog-x'), true)
+  assert.equal(anyLocation(blog, l => l.directory === '/p/nope'), false)
+  assert.equal(anyLocation(rec('/p/z'), l => l.directory === '/p/z'), true)
+})
+
+test('clientStats: trimmed names merge, A→Z case-insensitive, Unassigned last', () => {
+  assert.deepEqual(clientStats(P), [
+    { value: 'acme', label: 'acme', count: 1 },
+    { value: 'InteliMail', label: 'InteliMail', count: 1 },
+    { value: UNASSIGNED, label: 'Unassigned', count: 1 },
+  ])
+})
+
+test('clientStats over plain records (directory view) counts records', () => {
+  const recs = [rec('/a', { project_id: 'g', client: 'X' }), rec('/b', { project_id: 'g', client: 'X ' })]
+  assert.deepEqual(clientStats(recs), [{ value: 'X', label: 'X', count: 2 }])
+})
+
+test('roleStats counts projects having at least one checkout in the role', () => {
+  assert.deepEqual(roleStats(P), [
+    { value: 'primary', label: 'primary', count: 2 },
+    { value: 'experiment', label: 'experiment', count: 1 },
+  ])
+})
+
+test('filterVirtual by client, including Unassigned', () => {
+  assert.deepEqual(vids(filterVirtual(P, { clients: ['acme'] })), ['g:shop'])
+  assert.deepEqual(vids(filterVirtual(P, { clients: [UNASSIGNED] })), ['dir:/p/loose'])
+  assert.deepEqual(vids(filterVirtual(P, { clients: ['acme', UNASSIGNED] })), ['g:shop', 'dir:/p/loose'])
+})
+
+test('filterVirtual by role matches when any checkout has it', () => {
+  assert.deepEqual(vids(filterVirtual(P, { roles: ['experiment'] })), ['g:blog'])
+})
+
+test('filterVirtual multiCopy is 3-state', () => {
+  assert.deepEqual(vids(filterVirtual(P, { multiCopy: true })), ['g:blog'])
+  assert.deepEqual(vids(filterVirtual(P, { multiCopy: false })), ['g:shop', 'dir:/p/loose'])
+  assert.equal(filterVirtual(P, { multiCopy: null }).length, 3)
+})
+
+test('pruneSelection drops vanished values and keeps identity when unchanged', () => {
+  const stats = clientStats(P)
+  const sel = ['acme', 'Gone Ltd']
+  assert.deepEqual(pruneSelection(sel, stats), ['acme'])
+  const ok = ['acme']
+  assert.equal(pruneSelection(ok, stats), ok)
+})

@@ -132,3 +132,49 @@ export function buildVirtualProjects(records) {
   }
   return out
 }
+
+/** `pred` on every checkout of a project row, or on the row itself (directory view). */
+export function anyLocation(row, pred) {
+  return Array.isArray(row?.locations) ? row.locations.some(pred) : pred(row)
+}
+
+export const clientOf = row => (row.vpId ? row.client : locationMeta(row).client)
+const rolesOf = row => (row.vpId ? row.roles : [locationMeta(row).role].filter(Boolean))
+const copiesOf = row => (row.vpId ? row.copyCount : 1)
+
+export function clientStats(rows) {
+  const counts = new Map()
+  let unassigned = 0
+  for (const r of rows) {
+    const c = clientOf(r)
+    if (c) counts.set(c, (counts.get(c) || 0) + 1)
+    else unassigned++
+  }
+  const out = [...counts]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(([value, count]) => ({ value, label: value, count }))
+  if (unassigned) out.push({ value: UNASSIGNED, label: 'Unassigned', count: unassigned })
+  return out
+}
+
+export function roleStats(rows) {
+  return ROLES
+    .map(role => ({ value: role, label: role, count: rows.filter(r => rolesOf(r).includes(role)).length }))
+    .filter(s => s.count > 0)
+}
+
+export function filterVirtual(rows, { clients = [], roles = [], multiCopy = null } = {}) {
+  return rows.filter(r => {
+    if (clients.length && !clients.includes(clientOf(r) ?? UNASSIGNED)) return false
+    if (roles.length && !rolesOf(r).some(x => roles.includes(x))) return false
+    if (multiCopy !== null && (copiesOf(r) > 1) !== multiCopy) return false
+    return true
+  })
+}
+
+/** Keep only values still in `stats`; the same array when nothing changed (no effect loop). */
+export function pruneSelection(selected, stats) {
+  const present = new Set(stats.map(s => s.value))
+  const kept = selected.filter(v => present.has(v))
+  return kept.length === selected.length ? selected : kept
+}
