@@ -13,11 +13,16 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 export function parseArgs(argv) {
   const out = { from: null, to: null, apply: false, force: false, resume: null }
+  const value = (i, flag) => {
+    const v = argv[i]
+    if (!v || v.startsWith('--')) throw new Error(`${flag} needs a value`)
+    return v
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--from') out.from = argv[++i]
-    else if (a === '--to') out.to = argv[++i]
-    else if (a === '--resume') out.resume = argv[++i]
+    if (a === '--from') out.from = value(++i, a)
+    else if (a === '--to') out.to = value(++i, a)
+    else if (a === '--resume') out.resume = value(++i, a)
     else if (a === '--apply') out.apply = true
     else if (a === '--force') out.force = true
     else throw new Error(`unknown argument ${a}`)

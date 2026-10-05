@@ -9,6 +9,7 @@ test('dry-run is the default; --apply opts in', () => {
   assert.throws(() => parseArgs(['--from', '/a']), /--to/)
   assert.throws(() => parseArgs(['--to', '/b']), /--from/)
   assert.throws(() => parseArgs(['--from', '/a', '--to', '/b', '--bogus']), /unknown/)
+  assert.throws(() => parseArgs(['--from', '/a', '--to', '--apply']), /--to needs a value/)
 })
 
 test('--resume needs only a journal', () => {
