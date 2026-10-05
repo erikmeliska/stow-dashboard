@@ -21,7 +21,7 @@ function deps(o = {}) {
     undismiss: async (id) => { calls.push(['undismiss', id]); dismissed = { ...dismissed }; delete dismissed[id] },
     loadPathMoves: o.loadPathMoves ?? (async () => []),
     applyAction: async (action) => { calls.push(['apply', action]) },
-    baseDir: '/P', exists: (p) => p === '/P/blog',
+    baseDir: '/P', scanRoots: ['/P'], exists: (p) => p === '/P/blog',
     relocateDeps: async () => ({ marker: true }),
     planRelocation: async (args) => { calls.push(['plan', args]); return { ok: true, planHash: 'h' } },
     executeRelocation: async (args) => { calls.push(['execute', args]); return { ok: true } },
@@ -69,4 +69,22 @@ test('relocate: dryRun only plans, never executes; apply needs a planHash', asyn
   await assert.rejects(relocate({ from: 'rel', to: '/P/x', dryRun: true, deps: d }), (e) => e.status === 400)
   await relocate({ from: '/P/blog', to: '/P/x', planHash: 'h', deps: d })
   assert.deepEqual(d.calls.at(-1), ['execute', { from: '/P/blog', to: '/P/x', planHash: 'h', force: false }])
+})
+
+test('guardRequest: JSON from the same origin only (CSRF)', async () => {
+  const { guardRequest } = await import('./reorg-service.mjs')
+  const h = (o) => new Headers({ host: 'localhost:3088', ...o })
+  assert.equal(guardRequest(h({ 'content-type': 'application/json' })), null)
+  assert.equal(guardRequest(h({ 'content-type': 'application/json; charset=utf-8', origin: 'http://localhost:3088' })), null)
+  assert.match(guardRequest(h({ 'content-type': 'text/plain' })), /json/i)
+  assert.match(guardRequest(h({ 'content-type': 'application/json', origin: 'https://evil.example' })), /origin/i)
+  assert.match(guardRequest(h({ 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' })), /origin/i)
+})
+
+test('relocate: the target must lie inside a scan root', async () => {
+  const d = deps({ scanRoots: ['/P'] })
+  await assert.rejects(relocate({ from: '/P/blog', to: '/etc/blog', dryRun: true, deps: d }), (e) => e.status === 400 && /scan root/.test(e.message))
+  await assert.rejects(relocate({ from: '/P/blog', to: '/P', dryRun: true, deps: d }), (e) => e.status === 400)
+  await assert.rejects(relocate({ from: '/P/blog', to: '/P/../etc/x', dryRun: true, deps: d }), (e) => e.status === 400)
+  assert.equal((await relocate({ from: '/P/blog', to: '/P/_Bizz/Acme/blog', dryRun: true, deps: d })).planHash, 'h')
 })

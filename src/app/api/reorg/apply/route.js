@@ -1,4 +1,4 @@
-import { applySuggestion } from '@/lib/reorg-service.mjs'
+import { applySuggestion, guardRequest } from '@/lib/reorg-service.mjs'
 
 /**
  * POST /api/reorg/apply { id, running? }
@@ -6,6 +6,8 @@ import { applySuggestion } from '@/lib/reorg-service.mjs'
  * disk) and returns the refreshed report. Unknown/stale id → 409.
  */
 export async function POST(request) {
+    const refused = guardRequest(request.headers)
+    if (refused) return Response.json({ error: refused }, { status: 403 })
     let body = {}
     try { body = await request.json() } catch { /* no body */ }
     if (typeof body?.id !== 'string') return Response.json({ error: 'id is required' }, { status: 400 })

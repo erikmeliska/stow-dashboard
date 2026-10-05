@@ -17,7 +17,7 @@ import { loadPathMoves } from './path-moves.mjs'
 import { loadRegistry, readRegistryConfig } from './registry/registry.mjs'
 import { planRelocation, executeRelocation, defaultRelocateDeps } from './relocate.mjs'
 import { ledgerFile } from './state-dir.mjs'
-import { getBaseDir } from './scan-roots.mjs'
+import { getBaseDir, getScanRoots } from './scan-roots.mjs'
 
 async function readRows() {
   let text
@@ -41,6 +41,7 @@ export function defaultServiceDeps() {
     loadPathMoves: () => loadPathMoves(),
     applyAction: (action) => applyAction(action),
     baseDir: getBaseDir(),
+    scanRoots: getScanRoots(),
     exists: existsSync,
     relocateDeps: () => defaultRelocateDeps(),
     planRelocation,
@@ -49,6 +50,26 @@ export function defaultServiceDeps() {
 }
 
 const httpError = (status, message) => Object.assign(new Error(message), { status })
+
+/**
+ * CSRF guard for the state-changing routes: these run local filesystem and
+ * register writes, so only same-origin JSON is accepted. A cross-site form or
+ * `text/plain` fetch can't set application/json without a CORS preflight
+ * (which this server never answers), and a browser always sends Origin /
+ * Sec-Fetch-Site on cross-site requests. → an error message, or null if ok.
+ */
+export function guardRequest(headers) {
+  const type = headers.get('content-type') || ''
+  if (!/^application\/json\b/i.test(type)) return 'expected an application/json request'
+  if (headers.get('sec-fetch-site') === 'cross-site') return 'cross-origin request refused'
+  const origin = headers.get('origin')
+  if (origin) {
+    let host = null
+    try { host = new URL(origin).host } catch { /* opaque origin */ }
+    if (host !== headers.get('host')) return 'cross-origin request refused'
+  }
+  return null
+}
 
 async function build({ runningDirs = [], includeDismissed = false, deps }) {
   const [register, rows, config, dismissed] = await Promise.all([deps.loadRegistry(), deps.readRows(), deps.readConfig(), deps.loadDismissed()])
@@ -88,6 +109,10 @@ export async function dismissSuggestion({ id, undo = false, runningDirs = [], de
 export async function relocate({ from, to, dryRun = false, planHash, force = false, deps = defaultServiceDeps() }) {
   if (typeof from !== 'string' || typeof to !== 'string' || !path.isAbsolute(from) || !path.isAbsolute(to)) {
     throw httpError(400, 'from and to must be absolute paths')
+  }
+  const target = path.resolve(to)
+  if (target !== to.replace(/\/+$/, '') || !(deps.scanRoots || []).some(r => target.startsWith(path.resolve(r) + '/'))) {
+    throw httpError(400, 'to must be a normalised path inside a scan root (SCAN_ROOTS)')
   }
   if (!dryRun && typeof planHash !== 'string') throw httpError(400, 'run a dry-run first: planHash is required')
   const rdeps = await deps.relocateDeps()

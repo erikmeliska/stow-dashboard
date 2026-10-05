@@ -1,6 +1,8 @@
-import { dismissSuggestion } from '@/lib/reorg-service.mjs'
+import { dismissSuggestion, guardRequest } from '@/lib/reorg-service.mjs'
 
 async function handle(request, undo) {
+    const refused = guardRequest(request.headers)
+    if (refused) return Response.json({ error: refused }, { status: 403 })
     let body = {}
     try { body = await request.json() } catch { /* no body */ }
     if (typeof body?.id !== 'string') return Response.json({ error: 'id is required' }, { status: 400 })

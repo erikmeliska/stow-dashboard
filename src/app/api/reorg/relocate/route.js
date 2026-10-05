@@ -1,4 +1,4 @@
-import { relocate } from '@/lib/reorg-service.mjs'
+import { relocate, guardRequest } from '@/lib/reorg-service.mjs'
 
 /**
  * POST /api/reorg/relocate
@@ -7,6 +7,8 @@ import { relocate } from '@/lib/reorg-service.mjs'
  * The physical move is the exception to the report's virtual actions (#11).
  */
 export async function POST(request) {
+    const refused = guardRequest(request.headers)
+    if (refused) return Response.json({ error: refused }, { status: 403 })
     let body = {}
     try { body = await request.json() } catch { /* no body */ }
     try {
