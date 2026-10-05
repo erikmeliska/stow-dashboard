@@ -349,3 +349,14 @@ test('path moves (#11) rewrite project_dir/cwd on ingest, and a full re-ingest k
   await ingestAll({ ...opts, moves: [] });
   assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
 });
+
+test('runExclusive holds the ingest slot: runIngest meanwhile is a deferred no-op (#11)', async () => {
+  const { runExclusive, runIngest } = await import('./ingest-run.mjs');
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const held = runExclusive(async () => { await gate; return 'moved'; });
+  const during = await runIngest();
+  assert.equal(during.deferred, true);
+  release();
+  assert.equal(await held, 'moved');
+});

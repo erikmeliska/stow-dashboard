@@ -358,6 +358,7 @@ let inFlight = null;
  * concurrent callers (refresh cycle + page reload) share one run.
  */
 export function runIngest({ full = false } = {}) {
+  if (exclusive) return Promise.resolve({ ...DEFERRED });
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const db = openStore();
@@ -365,4 +366,20 @@ export function runIngest({ full = false } = {}) {
     finally { db.close(); inFlight = null; }
   })();
   return inFlight;
+}
+
+const DEFERRED = { sessions: 0, changed: 0, skipped: 0, linked: 0, placed: null, deferred: true, ms: 0 };
+let exclusive = null;
+
+/**
+ * Run `fn` while no ingest runs in this process (#11 relocation): waits for an
+ * in-flight ingest, then holds the store, so a runIngest() call meanwhile
+ * returns a no-op `{deferred: true}` at once instead of racing the DB rewrite.
+ */
+export async function runExclusive(fn) {
+  while (exclusive) await exclusive.catch(() => {});
+  while (inFlight) await inFlight.catch(() => {});
+  const run = (async () => fn())();
+  exclusive = run;
+  try { return await run; } finally { if (exclusive === run) exclusive = null; }
 }
