@@ -249,3 +249,14 @@ test('validateMetaPatch rejects bad input', () => {
     assert.equal(validateMetaPatch(body).ok, false, JSON.stringify(body))
   }
 })
+
+test('withClientHeaders passes expanded sub-rows through under their parent', () => {
+  const all = [{ vpId: 'a', client: 'A' }, { vpId: 'b', client: 'B' }]
+  const page = [
+    { original: all[0], depth: 0 },
+    { original: { directory: '/x', vp: { client: 'Other' } }, depth: 1 },
+    { original: all[1], depth: 0 },
+  ]
+  const out = withClientHeaders(page, all)
+  assert.deepEqual(out.map(x => x.type === 'header' ? `h:${x.client}` : x.row.depth), ['h:A', 0, 1, 'h:B', 0])
+})

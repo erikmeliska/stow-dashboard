@@ -191,7 +191,8 @@ export function compareClients(a, b, desc = false) {
 /**
  * Interleave a header before the first row of each client run on the page.
  * Totals cover every filtered row of the client (`allRows`), not just the
- * page. `pageRows` are TanStack rows (`row.original` is the data).
+ * page. `pageRows` are TanStack rows (`row.original` is the data); expanded
+ * sub-rows (`depth > 0`) follow their parent without a header of their own.
  */
 export function withClientHeaders(pageRows, allRows) {
   const totals = new Map()
@@ -206,6 +207,7 @@ export function withClientHeaders(pageRows, allRows) {
   const out = []
   let prev
   for (const row of pageRows) {
+    if (row.depth > 0) { out.push({ type: 'row', row }); continue }
     const client = clientOf(row.original) ?? null
     const key = client ?? UNASSIGNED
     if (key !== prev) {

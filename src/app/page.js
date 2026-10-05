@@ -9,6 +9,8 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { WelcomeScreen } from '@/components/WelcomeScreen'
 import { getBaseDir } from '@/lib/scan-roots.mjs'
 import { ledgerFile, dataFile } from '@/lib/state-dir.mjs'
+import { loadRegistry } from '@/lib/registry/registry.mjs'
+import { annotateRecords } from '@/lib/virtual-projects.mjs'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +22,18 @@ async function readUsageData() {
         return JSON.parse(await fs.readFile(dataFile('usage.json'), 'utf8'))
     } catch {
         return { projects: {} }
+    }
+}
+
+// The virtual-project register (#8/#9) → client/role/location per record.
+// A broken register (e.g. malformed registry.json) must not take the page down:
+// records then stand for themselves (one project per directory, Unassigned).
+async function readRegistry() {
+    try {
+        return await loadRegistry()
+    } catch (err) {
+        console.error('[projects] register unavailable:', err.message)
+        return null
     }
 }
 
@@ -45,11 +59,13 @@ async function getLastSyncTime() {
 }
 
 export default async function DashboardPage() {
-    const [projects, lastSyncTime, usageData] = await Promise.all([
+    const [rawProjects, lastSyncTime, usageData, registry] = await Promise.all([
         readProjectsData(),
         getLastSyncTime(),
-        readUsageData()
+        readUsageData(),
+        readRegistry()
     ])
+    const projects = annotateRecords(rawProjects, registry)
 
     // Build a directory → open-task-count map once. Resilient: any failure → 0.
     const openTaskCounts = new Map()

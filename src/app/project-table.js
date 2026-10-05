@@ -4,12 +4,13 @@ import * as React from "react"
 import {
     flexRender,
     getCoreRowModel,
+    getExpandedRowModel,
     getFilteredRowModel,
     getPaginationRowModel,
     getSortedRowModel,
     useReactTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal, CheckSquare, FolderTree } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, GitBranch, Github, Gitlab, Check, X, FileText, Eye, Filter, Play, Circle, Container, RotateCcw, Sparkles, SquareTerminal, CheckSquare, FolderTree, ChevronRight, Building2, Layers } from 'lucide-react'
 
 import { Button } from "@/components/ui/button"
 import {
@@ -43,6 +44,11 @@ import { ReadmeDialog } from "@/components/ReadmeDialog"
 import { ProjectDetailsSheet } from "@/components/ProjectDetailsSheet"
 import { ReorgReportDialog } from "@/components/ReorgReportDialog"
 import { useProcesses } from "@/hooks/useProcesses"
+import { CountedMultiSelect } from "@/components/CountedMultiSelect"
+import {
+    buildVirtualProjects, clientStats, roleStats, filterVirtual, anyLocation, pruneSelection,
+    withClientHeaders, compareClients, locationMeta, clientOf, UNASSIGNED,
+} from "@/lib/virtual-projects.mjs"
 
 const STORAGE_KEY = 'stow-dashboard-table-settings'
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -156,7 +162,19 @@ const defaultFilters = () => ({
     analyzed: null,
     misplaced: null,
     poorDocs: null,
+    multiCopy: null,
 })
+
+const VIEWS = ['projects', 'directories']
+const defaultView = 'projects'
+const defaultGroupByClient = true
+
+const ROLE_PILL_CLASS = {
+    primary: 'bg-green-500/20 text-green-700 dark:text-green-400',
+    deploy: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
+    experiment: 'bg-violet-500/20 text-violet-700 dark:text-violet-400',
+    stale: 'bg-muted text-muted-foreground',
+}
 
 export function ProjectTable({ projects, ownRepos }) {
     const [isHydrated, setIsHydrated] = React.useState(false)
@@ -167,7 +185,14 @@ export function ProjectTable({ projects, ownRepos }) {
     const [selectedGroups, setSelectedGroups] = React.useState([])
     const [aiFacets, setAiFacets] = React.useState(emptyAiFacets)
     const [readmeDialog, setReadmeDialog] = React.useState({ open: false, project: null })
-    const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null })
+    const [detailsSheet, setDetailsSheet] = React.useState({ open: false, project: null, virtualProject: null })
+    // Virtual projects (#10): Projects (one row per register project, checkouts as
+    // sub-rows) or Directories (one row per ledger record, as before).
+    const [view, setView] = React.useState(defaultView)
+    const [groupByClient, setGroupByClient] = React.useState(defaultGroupByClient)
+    const [selectedClients, setSelectedClients] = React.useState([])
+    const [selectedRoles, setSelectedRoles] = React.useState([])
+    const [expanded, setExpanded] = React.useState({})
     const [reorgOpen, setReorgOpen] = React.useState(false)
     const [pagination, setPagination] = React.useState({ pageIndex: 0, pageSize: 20 })
 
@@ -203,6 +228,11 @@ export function ProjectTable({ projects, ownRepos }) {
         setGlobalFilter("")
         setSelectedGroups([])
         setAiFacets(emptyAiFacets())
+        setView(defaultView)
+        setGroupByClient(defaultGroupByClient)
+        setSelectedClients([])
+        setSelectedRoles([])
+        setExpanded({})
         clearAllFilters()
     }
 
@@ -219,7 +249,7 @@ export function ProjectTable({ projects, ownRepos }) {
     }
 
     // Process monitoring
-    const { getPortsForProject, getRunningInfo, isProjectRunning } = useProcesses()
+    const { getRunningInfo, isProjectRunning } = useProcesses()
 
     // Search filter function (same logic as globalFilterFn)
     const matchesSearch = React.useCallback((project, searchValue) => {
@@ -236,15 +266,26 @@ export function ProjectTable({ projects, ownRepos }) {
         if (project.ai_analysis?.category?.toLowerCase().includes(search)) return true
         if (project.ai_analysis?.client?.toLowerCase().includes(search)) return true
         if (project.ai_derived?.tech?.join(' ').toLowerCase().includes(search)) return true
+        if (clientOf(project)?.toLowerCase().includes(search)) return true
 
         return false
     }, [])
 
+    // Rows of the current view: virtual projects or plain ledger records
+    const baseRows = React.useMemo(
+        () => (view === 'projects' ? buildVirtualProjects(projects) : projects),
+        [view, projects],
+    )
+
     // Projects filtered by search (for group stats calculation)
     const searchFilteredProjects = React.useMemo(() => {
-        if (!globalFilter) return projects
-        return projects.filter(project => matchesSearch(project, globalFilter))
-    }, [projects, globalFilter, matchesSearch])
+        if (!globalFilter) return baseRows
+        return baseRows.filter(project => matchesSearch(project, globalFilter))
+    }, [baseRows, globalFilter, matchesSearch])
+
+    // Client / copy-role filter entries with counts (same base as groups)
+    const clientFilterStats = React.useMemo(() => clientStats(searchFilteredProjects), [searchFilteredProjects])
+    const roleFilterStats = React.useMemo(() => roleStats(searchFilteredProjects), [searchFilteredProjects])
 
     // Extract groups with counts from search-filtered projects
     const groupStats = React.useMemo(() => {
@@ -293,6 +334,13 @@ export function ProjectTable({ projects, ownRepos }) {
             )
         }
 
+        // Client / role / multiple copies (multiple copies only means something for projects)
+        result = filterVirtual(result, {
+            clients: selectedClients,
+            roles: selectedRoles,
+            multiCopy: view === 'projects' ? filters.multiCopy : null,
+        })
+
         // AI facet filters (OR within a facet, AND across facets — same as groups)
         for (const facet of FACET_KEYS) {
             const selected = aiFacets[facet]
@@ -306,63 +354,63 @@ export function ProjectTable({ projects, ownRepos }) {
         // Quick filters (null = any, true = must have, false = must not have)
         if (filters.running !== null) {
             result = result.filter(project => {
-                const isRunning = isProjectRunning(project.directory)
+                const isRunning = anyLocation(project, l => isProjectRunning(l.directory))
                 return filters.running ? isRunning : !isRunning
             })
         }
 
         if (filters.hasGit !== null) {
             result = result.filter(project => {
-                const hasGit = project.git_info?.git_detected
+                const hasGit = anyLocation(project, l => l.git_info?.git_detected)
                 return filters.hasGit ? hasGit : !hasGit
             })
         }
 
         if (filters.hasRemote !== null) {
             result = result.filter(project => {
-                const hasRemote = project.git_info?.remotes && project.git_info.remotes.length > 0
+                const hasRemote = anyLocation(project, l => l.git_info?.remotes?.length > 0)
                 return filters.hasRemote ? hasRemote : !hasRemote
             })
         }
 
         if (filters.uncommitted !== null) {
             result = result.filter(project => {
-                const hasUncommitted = project.git_info?.uncommitted_changes > 0 || project.git_info?.is_clean === false
+                const hasUncommitted = anyLocation(project, l => l.git_info?.uncommitted_changes > 0 || l.git_info?.is_clean === false)
                 return filters.uncommitted ? hasUncommitted : !hasUncommitted
             })
         }
 
         if (filters.behind !== null) {
             result = result.filter(project => {
-                const isBehind = project.git_info?.behind > 0
+                const isBehind = anyLocation(project, l => l.git_info?.behind > 0)
                 return filters.behind ? isBehind : !isBehind
             })
         }
 
         if (filters.ahead !== null) {
             result = result.filter(project => {
-                const isAhead = project.git_info?.ahead > 0
+                const isAhead = anyLocation(project, l => l.git_info?.ahead > 0)
                 return filters.ahead ? isAhead : !isAhead
             })
         }
 
         if (filters.hasOwnCommits !== null) {
             result = result.filter(project => {
-                const hasOwn = project.git_info?.user_commits > 0
+                const hasOwn = anyLocation(project, l => l.git_info?.user_commits > 0)
                 return filters.hasOwnCommits ? hasOwn : !hasOwn
             })
         }
 
         if (filters.hasReadme !== null) {
             result = result.filter(project => {
-                const hasReadme = project.hasReadme
+                const hasReadme = anyLocation(project, l => l.hasReadme)
                 return filters.hasReadme ? hasReadme : !hasReadme
             })
         }
 
         if (filters.hasTasks !== null) {
             result = result.filter(project => {
-                const hasTasks = (project.openTaskCount || 0) > 0
+                const hasTasks = anyLocation(project, l => (l.openTaskCount || 0) > 0)
                 return filters.hasTasks ? hasTasks : !hasTasks
             })
         }
@@ -392,7 +440,7 @@ export function ProjectTable({ projects, ownRepos }) {
         }
 
         return result
-    }, [searchFilteredProjects, selectedGroups, aiFacets, filters, getPortsForProject, isProjectRunning])
+    }, [searchFilteredProjects, selectedGroups, selectedClients, selectedRoles, view, aiFacets, filters, isProjectRunning])
 
     const toggleGroup = (groupName) => {
         setSelectedGroups(prev =>
@@ -405,6 +453,27 @@ export function ProjectTable({ projects, ownRepos }) {
 
     const clearGroups = () => {
         setSelectedGroups([])
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const toggleIn = setter => value => {
+        setter(prev => prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value])
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+    const toggleClient = toggleIn(setSelectedClients)
+    const toggleRole = toggleIn(setSelectedRoles)
+    const clearClients = () => {
+        setSelectedClients([])
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+    const clearRoles = () => {
+        setSelectedRoles([])
+        setPagination(prev => ({ ...prev, pageIndex: 0 }))
+    }
+
+    const switchView = (next) => {
+        setView(next)
+        setExpanded({})
         setPagination(prev => ({ ...prev, pageIndex: 0 }))
     }
 
@@ -435,6 +504,13 @@ export function ProjectTable({ projects, ownRepos }) {
         }
     }, [groupStats, selectedGroups])
 
+    // Auto-remove selected clients / roles that vanished (rescan, reassignment)
+    React.useEffect(() => {
+        setSelectedClients(prev => pruneSelection(prev, clientFilterStats))
+        setSelectedRoles(prev => pruneSelection(prev, roleFilterStats))
+    // Selections in the deps too, so a restored (localStorage) selection is pruned as well
+    }, [clientFilterStats, roleFilterStats, selectedClients, selectedRoles])
+
     // Auto-remove selected facet values that no longer exist in the filtered facet stats
     React.useEffect(() => {
         setAiFacets(prev => {
@@ -461,6 +537,10 @@ export function ProjectTable({ projects, ownRepos }) {
             if (settings.globalFilter) setGlobalFilter(settings.globalFilter)
             if (settings.selectedGroups) setSelectedGroups(settings.selectedGroups)
             if (settings.aiFacets) setAiFacets({ ...emptyAiFacets(), ...settings.aiFacets })
+            if (VIEWS.includes(settings.view)) setView(settings.view)
+            if (typeof settings.groupByClient === 'boolean') setGroupByClient(settings.groupByClient)
+            if (Array.isArray(settings.selectedClients)) setSelectedClients(settings.selectedClients)
+            if (Array.isArray(settings.selectedRoles)) setSelectedRoles(settings.selectedRoles)
         }
         setIsHydrated(true)
     }, [])
@@ -475,21 +555,92 @@ export function ProjectTable({ projects, ownRepos }) {
             filters,
             globalFilter,
             selectedGroups,
-            aiFacets
+            aiFacets,
+            view,
+            groupByClient,
+            selectedClients,
+            selectedRoles,
         })
-    }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, aiFacets, isHydrated])
+    }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, aiFacets, view, groupByClient, selectedClients, selectedRoles, isHydrated])
     
     const columns = [
         {
             accessorKey: "project_name",
-            header: "Project",
+            header: ({ column }) => (
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 -ml-2"
+                    onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                >
+                    Project
+                    <ArrowUpDown className="ml-1 h-3 w-3" />
+                </Button>
+            ),
             cell: ({ row }) => {
                 const name = row.getValue("project_name")
+                const p = row.original
+                if (row.depth > 0) {
+                    // A checkout of the parent project: its path tail and copy role
+                    const role = locationMeta(p).role
+                    return (
+                        <div className="flex items-center gap-1.5 pl-6 max-w-[200px]">
+                            <span className="truncate text-sm text-muted-foreground" title={p.directory}>{p.projectDir || name}</span>
+                            <span className={cn("px-1.5 py-0.5 rounded text-xs whitespace-nowrap", ROLE_PILL_CLASS[role] || 'bg-muted text-muted-foreground')}>
+                                {role ?? 'no role'}
+                            </span>
+                        </div>
+                    )
+                }
                 return (
-                    <div className="capitalize truncate max-w-[140px]" title={name}>
-                        {name}
+                    <div className="flex items-center gap-1 max-w-[200px]">
+                        {p.copyCount > 1 ? (
+                            <button
+                                type="button"
+                                onClick={row.getToggleExpandedHandler()}
+                                className="shrink-0 text-muted-foreground hover:text-foreground"
+                                aria-label={row.getIsExpanded() ? 'Hide checkouts' : 'Show checkouts'}
+                            >
+                                <ChevronRight className={cn("h-4 w-4 transition-transform", row.getIsExpanded() && "rotate-90")} />
+                            </button>
+                        ) : view === 'projects' && <span className="w-4 shrink-0" />}
+                        <span className="capitalize truncate" title={name}>{name}</span>
+                        {p.copyCount > 1 && (
+                            <span className="shrink-0 px-1 rounded bg-secondary text-secondary-foreground text-xs tabular-nums" title={`${p.copyCount} checkouts of this project`}>
+                                ×{p.copyCount}
+                            </span>
+                        )}
+                        {p.primaryConflict && (
+                            <span className="shrink-0 h-2 w-2 rounded-full bg-amber-500" title="Two checkouts are marked primary" />
+                        )}
                     </div>
                 )
+            },
+        },
+        {
+            id: "client",
+            // null → undefined so sortUndefined keeps Unassigned last in both directions
+            accessorFn: row => clientOf(row) ?? undefined,
+            sortingFn: (a, b) => compareClients(a.getValue("client"), b.getValue("client")),
+            sortUndefined: 'last',
+            header: ({ column }) => (
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 -ml-2"
+                    onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+                >
+                    Client
+                    <ArrowUpDown className="ml-1 h-3 w-3" />
+                </Button>
+            ),
+            cell: ({ row }) => {
+                const client = row.getValue("client")
+                const source = row.original.vpId ? row.original.clientSource : locationMeta(row.original).clientSource
+                if (row.depth > 0) return null
+                return client
+                    ? <span className="text-sm truncate max-w-[120px] inline-block align-middle" title={source ? `${client} — client from: ${source}` : client}>{client}</span>
+                    : <span className="text-sm text-muted-foreground">Unassigned</span>
             },
         },
         {
@@ -1013,7 +1164,11 @@ export function ProjectTable({ projects, ownRepos }) {
                                         variant="ghost"
                                         size="sm"
                                         className="h-8 w-8 p-0"
-                                        onClick={() => setDetailsSheet({ open: true, project })}
+                                        onClick={() => setDetailsSheet({
+                                            open: true,
+                                            project,
+                                            virtualProject: project.vpId ? project : (row.getParentRow()?.original ?? null),
+                                        })}
                                     >
                                         <Eye className="h-4 w-4" />
                                     </Button>
@@ -1029,10 +1184,27 @@ export function ProjectTable({ projects, ownRepos }) {
         },
     ]
 
+    // Group by client: client is forced as the primary sort key; the user's
+    // own sort applies inside each client and is stored without it.
+    // Memoized: a fresh array every render re-sorts, which auto-resets the page
+    // index, which re-renders — an endless loop.
+    const grouping = view === 'projects' && groupByClient
+    const effectiveSorting = React.useMemo(() => (grouping
+        ? [{ id: 'client', desc: false }, ...sorting.filter(s => s.id !== 'client')]
+        : sorting), [grouping, sorting])
+    const onSortingChange = (updater) => {
+        const next = typeof updater === 'function' ? updater(effectiveSorting) : updater
+        setSorting(grouping ? next.filter(s => s.id !== 'client') : next)
+    }
+
     const table = useReactTable({
         data: filteredProjects,
         columns,
-        onSortingChange: setSorting,
+        onSortingChange,
+        getSubRows: row => (view === 'projects' && row.copyCount > 1 ? row.locations : undefined),
+        getExpandedRowModel: getExpandedRowModel(),
+        onExpandedChange: setExpanded,
+        paginateExpandedRows: false,
         onColumnFiltersChange: setColumnFilters,
         getCoreRowModel: getCoreRowModel(),
         getPaginationRowModel: getPaginationRowModel(),
@@ -1040,7 +1212,8 @@ export function ProjectTable({ projects, ownRepos }) {
         getFilteredRowModel: getFilteredRowModel(),
         onColumnVisibilityChange: setColumnVisibility,
         state: {
-            sorting,
+            sorting: effectiveSorting,
+            expanded,
             columnFilters,
             columnVisibility,
             globalFilter,
@@ -1096,6 +1269,11 @@ export function ProjectTable({ projects, ownRepos }) {
     const openSheetProject = detailsSheet.project
         ? (projects.find(p => p.id === detailsSheet.project.id) ?? detailsSheet.project)
         : null
+    // Same for the virtual project, so a client/role edit shows up in the open sheet.
+    const openSheetVirtual = detailsSheet.virtualProject
+        ? ((view === 'projects' ? baseRows : buildVirtualProjects(projects)).find(p => p.vpId === detailsSheet.virtualProject.vpId) ?? detailsSheet.virtualProject)
+        : null
+    const sheetClients = clientFilterStats.filter(s => s.value !== UNASSIGNED).map(s => s.value)
 
     return (
         <>
@@ -1107,20 +1285,36 @@ export function ProjectTable({ projects, ownRepos }) {
         />
         <ProjectDetailsSheet
             open={detailsSheet.open}
-            onOpenChange={(open) => setDetailsSheet({ open, project: open ? detailsSheet.project : null })}
+            onOpenChange={(open) => setDetailsSheet(open ? { ...detailsSheet, open } : { open: false, project: null, virtualProject: null })}
             project={openSheetProject}
+            virtualProject={openSheetVirtual}
+            clients={sheetClients}
         />
         <ReorgReportDialog
             open={reorgOpen}
             onOpenChange={setReorgOpen}
             projects={projects}
-            onOpenProject={(p) => setDetailsSheet({ open: true, project: p })}
+            onOpenProject={(p) => setDetailsSheet({ open: true, project: p, virtualProject: null })}
         />
         <div className="h-full flex flex-col min-w-0">
             {/* Filters - fixed */}
             <div className="flex-none flex flex-col gap-2 py-2">
                 {/* Row 1: Search + Columns */}
                 <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex rounded-md border p-0.5" role="group" aria-label="Table view">
+                        {VIEWS.map(v => (
+                            <Button
+                                key={v}
+                                variant={view === v ? 'secondary' : 'ghost'}
+                                size="sm"
+                                className="h-7 px-2 capitalize"
+                                aria-pressed={view === v}
+                                onClick={() => switchView(v)}
+                            >
+                                {v}
+                            </Button>
+                        ))}
+                    </div>
                     <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <Input
                             placeholder="Search projects..."
@@ -1137,39 +1331,30 @@ export function ProjectTable({ projects, ownRepos }) {
                             </button>
                         )}
                     </div>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" className={selectedGroups.length > 0 ? "border-primary" : ""}>
-                                <Filter className="mr-1.5 h-4 w-4" />
-                                <span className="hidden sm:inline">Groups</span>
-                                {selectedGroups.length > 0 && (
-                                    <span className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
-                                        {selectedGroups.length}
-                                    </span>
-                                )}
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-56 max-h-80 overflow-y-auto">
-                            {selectedGroups.length > 0 && (
-                                <div
-                                    className="px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:text-foreground"
-                                    onClick={clearGroups}
-                                >
-                                    Clear all filters
-                                </div>
-                            )}
-                            {groupStats.map(({ name, count }) => (
-                                <DropdownMenuCheckboxItem
-                                    key={name}
-                                    checked={selectedGroups.includes(name)}
-                                    onCheckedChange={() => toggleGroup(name)}
-                                >
-                                    <span className="flex-1">{name}</span>
-                                    <span className="ml-2 text-xs text-muted-foreground">{count}</span>
-                                </DropdownMenuCheckboxItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <CountedMultiSelect
+                        label="Groups"
+                        icon={Filter}
+                        stats={groupStats.map(({ name, count }) => ({ value: name, label: name, count }))}
+                        selected={selectedGroups}
+                        onToggle={toggleGroup}
+                        onClear={clearGroups}
+                    />
+                    <CountedMultiSelect
+                        label="Client"
+                        icon={Building2}
+                        stats={clientFilterStats}
+                        selected={selectedClients}
+                        onToggle={toggleClient}
+                        onClear={clearClients}
+                    />
+                    <CountedMultiSelect
+                        label="Role"
+                        icon={Layers}
+                        stats={roleFilterStats}
+                        selected={selectedRoles}
+                        onToggle={toggleRole}
+                        onClear={clearRoles}
+                    />
 
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -1239,6 +1424,15 @@ export function ProjectTable({ projects, ownRepos }) {
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                            {view === 'projects' && (
+                                <DropdownMenuCheckboxItem
+                                    checked={groupByClient}
+                                    onCheckedChange={(value) => setGroupByClient(!!value)}
+                                    className="border-b mb-1"
+                                >
+                                    Group by client
+                                </DropdownMenuCheckboxItem>
+                            )}
                             {table
                                 .getAllColumns()
                                 .filter((column) => column.getCanHide())
@@ -1300,6 +1494,7 @@ export function ProjectTable({ projects, ownRepos }) {
                         { key: 'analyzed', label: 'Analyzed', shortLabel: 'AI' },
                         { key: 'misplaced', label: 'Misplaced', shortLabel: 'Mispl' },
                         { key: 'poorDocs', label: 'Poor docs', shortLabel: 'Docs' },
+                        ...(view === 'projects' ? [{ key: 'multiCopy', label: 'Multiple copies', shortLabel: '×N' }] : []),
                     ].map(({ key, label, shortLabel }) => {
                         const value = filters[key]
                         return (
@@ -1356,6 +1551,38 @@ export function ProjectTable({ projects, ownRepos }) {
                     </div>
                 )}
 
+                {/* Selected clients / roles as chips */}
+                {(selectedClients.length > 0 || selectedRoles.length > 0) && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {selectedClients.map(client => (
+                            <span
+                                key={`client:${client}`}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary rounded text-xs cursor-pointer hover:bg-primary/20 transition-colors"
+                                onClick={() => toggleClient(client)}
+                            >
+                                {client === UNASSIGNED ? 'Unassigned' : client}
+                                <X className="h-3 w-3" />
+                            </span>
+                        ))}
+                        {selectedRoles.map(role => (
+                            <span
+                                key={`role:${role}`}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary rounded text-xs cursor-pointer hover:bg-primary/20 transition-colors"
+                                onClick={() => toggleRole(role)}
+                            >
+                                role: {role}
+                                <X className="h-3 w-3" />
+                            </span>
+                        ))}
+                        <button
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => { clearClients(); clearRoles() }}
+                        >
+                            Clear all
+                        </button>
+                    </div>
+                )}
+
                 {/* Selected AI facets as chips */}
                 {facetSelectionCount > 0 && (
                     <div className="flex flex-wrap gap-1.5">
@@ -1403,12 +1630,26 @@ export function ProjectTable({ projects, ownRepos }) {
                     </TableHeader>
                     <TableBody>
                         {table.getRowModel().rows?.length ? (
-                            table.getRowModel().rows.map((row) => (
+                            (grouping
+                                ? withClientHeaders(table.getRowModel().rows, filteredProjects)
+                                : table.getRowModel().rows.map(row => ({ type: 'row', row }))
+                            ).map((item) => item.type === 'header' ? (
+                                <TableRow key={`h:${item.client ?? UNASSIGNED}`} className="bg-muted/40 hover:bg-muted/40">
+                                    <TableCell colSpan={table.getVisibleLeafColumns().length} className="py-1.5 text-xs font-medium">
+                                        {item.client ?? 'Unassigned'}
+                                        <span className="ml-2 font-normal text-muted-foreground">
+                                            {item.count} {item.count === 1 ? 'project' : 'projects'}
+                                            {(item.costUsd > 0 || item.unpriced) && <> · {formatUsdWithUnpriced(item.costUsd, item.unpriced)}</>}
+                                        </span>
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
                                 <TableRow
-                                    key={row.id}
-                                    data-state={row.getIsSelected() && "selected"}
+                                    key={item.row.id}
+                                    data-state={item.row.getIsSelected() && "selected"}
+                                    className={item.row.depth > 0 ? "bg-muted/20" : undefined}
                                 >
-                                    {row.getVisibleCells().map((cell) => (
+                                    {item.row.getVisibleCells().map((cell) => (
                                         <TableCell key={cell.id}>
                                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                                         </TableCell>
@@ -1428,8 +1669,8 @@ export function ProjectTable({ projects, ownRepos }) {
             {/* Pagination - fixed */}
             <div className="flex-none flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 py-2 border-t">
                 <div className="text-sm text-muted-foreground">
-                    {table.getFilteredRowModel().rows.length} project(s)
-                    {selectedGroups.length > 0 && ` (filtered)`}
+                    {table.getCoreRowModel().rows.length} {view === 'projects' ? 'project(s)' : 'directories'}
+                    {(selectedGroups.length > 0 || selectedClients.length > 0 || selectedRoles.length > 0) && ` (filtered)`}
                 </div>
                 <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                     <div className="flex items-center gap-2">
