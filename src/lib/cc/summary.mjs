@@ -326,7 +326,7 @@ export function distillGeminiDb(dbOrPath, { maxChars = 30000 } = {}) {
     /* ignore missing table or other query error */
   } finally {
     if (shouldClose && db) {
-      try { db.close(); } catch {}
+      try { db.close(); } catch { /* already closed */ }
     }
   }
   return limitChars(parts.join('\n'), maxChars);
@@ -570,7 +570,7 @@ export async function summarizeSession(db, id, opts = {}) {
         const lines = [];
         for (const line of text.split('\n')) {
           if (!line.trim()) continue;
-          try { lines.push(JSON.parse(line)); } catch {}
+          try { lines.push(JSON.parse(line)); } catch { /* skip malformed line */ }
         }
         distillate = distillGemini(lines, opts);
       } catch {

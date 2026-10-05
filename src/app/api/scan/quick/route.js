@@ -32,7 +32,7 @@ async function getGitInfo(repoPath) {
         try {
             currentUser = await git.getConfig('user.name').then(r => r.value || 'Unknown')
             currentEmail = await git.getConfig('user.email').then(r => r.value || 'Unknown')
-        } catch {}
+        } catch { /* best effort */ }
 
         const log = await git.log({ maxCount: 1000 })
         const allCommits = log.all || []
@@ -67,7 +67,7 @@ async function getGitInfo(repoPath) {
             hasRemoteTracking = status.tracking !== null
             uncommittedChanges = status.files?.length || 0
             isClean = status.isClean()
-        } catch {}
+        } catch { /* best effort */ }
 
         return {
             project_created: firstCommit?.date || null,

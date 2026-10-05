@@ -154,6 +154,7 @@ function getProjectProcessMap(projects) {
 
 // Table rendering
 function stripAnsi(s) {
+    // eslint-disable-next-line no-control-regex -- strips ANSI escapes
     return String(s).replace(/\x1b\[[^m]*m/g, '').replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, '')
 }
 
@@ -422,7 +423,7 @@ async function commandQuickScan() {
                 try {
                     currentUser = await git.getConfig('user.name').then(r => r.value || 'Unknown')
                     currentEmail = await git.getConfig('user.email').then(r => r.value || 'Unknown')
-                } catch {}
+                } catch { /* best effort */ }
 
                 const log = await git.log({ maxCount: 1000 })
                 const allCommits = log.all || []

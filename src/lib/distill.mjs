@@ -128,7 +128,7 @@ export function formatDistillate(project, facts, { readmeChars = 1500, baseDir =
   // would otherwise make the text invalid as a subprocess argv element
   // (ERR_INVALID_ARG_VALUE) before any model ever sees it.
   // eslint-disable-next-line no-control-regex
-  return lines.join('\n').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F�﻿]/g, '')
+  return lines.join('\n').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\uFFFD\uFEFF]/g, '')
 }
 
 export function distillProject(project, facts, opts = {}) {
