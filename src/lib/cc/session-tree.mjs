@@ -10,6 +10,7 @@
  */
 
 import { sessionProjectKey, sessionProjectLabel } from './session-project.mjs';
+import { UNASSIGNED } from './session-projects.mjs';
 
 const SUM = ['cost_usd', 'active_s', 'duration_s', 'turns', 'input_tokens', 'output_tokens', 'cache_read'];
 
@@ -105,6 +106,8 @@ export const GROUP_BY = {
   week: { label: 'Week', key: (f) => (f.started_at ? isoWeek(shiftLocal(new Date(f.started_at))) : '—'), order: 'desc' },
   // Register project first, so worktree/scratchpad sessions fold into their project (#12).
   project: { label: 'Project', key: (f) => sessionProjectKey(f) || '—', text: (k, f) => (f ? sessionProjectLabel(f) : k), order: 'cost' },
+  // Register client (#13), joined at read time; `last` pins Unassigned to the bottom.
+  client: { label: 'Client', key: (f) => f.client_id || UNASSIGNED, text: (k, f) => (k === UNASSIGNED ? 'Unassigned' : f?.client_name || k), order: 'cost', last: UNASSIGNED },
   branch: { label: 'Branch', key: (f) => f.git_branch || '(no branch)', order: 'cost' },
   ticket: { label: 'Ticket', key: (f) => f.ticket_id || '(no ticket)', order: 'cost' },
   model: { label: 'Model', key: (f) => f.model || '(unknown)', order: 'cost' },
@@ -134,7 +137,7 @@ export function groupFamilies(families, by) {
     key, label: def.text ? def.text(key, items[0]) : key, items, sum: sumRows(items.map((f) => f.rollup || f)), count: items.length,
   }));
   if (def.order === 'desc') groups.sort((a, b) => b.key.localeCompare(a.key));
-  else groups.sort((a, b) => (b.sum.cost_usd - a.sum.cost_usd) || a.label.localeCompare(b.label));
+  else groups.sort((a, b) => (a.key === def.last) - (b.key === def.last) || (b.sum.cost_usd - a.sum.cost_usd) || a.label.localeCompare(b.label));
   return groups;
 }
 
@@ -147,9 +150,12 @@ export const SORT_KEYS = {
   active_s: (f) => (f.rollup || f).active_s || 0,
   quality_score: (f) => (f.quality_score == null ? -1 : f.quality_score),
   sub_count: (f) => f.sub_count || 0,
+  // null = unassigned / unknown: sorts last in both directions.
+  client: (f) => f.client_name || null,
+  project: (f) => f.project_name || (sessionProjectKey(f) ? sessionProjectLabel(f) : null),
 };
 
-/** Stable sort by one of SORT_KEYS; `dir` 'asc' | 'desc'. Unknown key → input order. */
+/** Stable sort by one of SORT_KEYS; `dir` 'asc' | 'desc'; null values last either way. Unknown key → input order. */
 export function sortFamilies(families, { key = 'started_at', dir = 'desc' } = {}) {
   const get = SORT_KEYS[key];
   if (!get) return [...families];
@@ -157,6 +163,7 @@ export function sortFamilies(families, { key = 'started_at', dir = 'desc' } = {}
   return [...families]
     .map((f, i) => ({ f, i, v: get(f) }))
     .sort((a, b) => {
+      if (a.v == null || b.v == null) return (a.v == null) - (b.v == null) || a.i - b.i;
       const c = typeof a.v === 'string' ? a.v.localeCompare(b.v) : a.v - b.v;
       return c !== 0 ? c * sign : a.i - b.i;
     })
