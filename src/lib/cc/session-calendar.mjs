@@ -154,6 +154,30 @@ export function clusterDay(segs, mergeBy = DEFAULT_MERGE) {
 }
 
 /**
+ * Dots (point segments, height 0) inside clusters: a dot whose start lies in a
+ * same-key item (start <= top < end, touching the end doesn't count) joins it
+ * and is counted there, turning a lone block into a cluster; the rest stay
+ * standalone dots. Returns {items, points}; items keep clusterDay's ids/order.
+ */
+export function absorbPoints(items, points, mergeBy = DEFAULT_MERGE) {
+  const keyed = items.map((it) => ({ it, k: mergeKey(it.segs[0].e, mergeBy), extra: [] }));
+  const rest = [];
+  for (const p of points) {
+    const k = mergeKey(p.e, mergeBy);
+    const host = keyed.find((h) => h.k === k && h.it.start <= p.top && p.top < h.it.end);
+    if (host) host.extra.push(p); else rest.push(p);
+  }
+  return {
+    items: keyed.map(({ it, k, extra }) => {
+      if (!extra.length) return it;
+      const segs = [...it.segs, ...extra].sort((x, y) => x.top - y.top || y.height - x.height);
+      return { ...it, segs, id: `c:${k}:${it.segs[0].e.session_id}` };
+    }),
+    points: rest,
+  };
+}
+
+/**
  * Greedy column layout for the overlapping items of one day. `placed` maps an
  * item id to {col, cols} (cols = width of its overlap group, at most maxCols).
  * A group that needs more than maxCols columns keeps columns 0..maxCols-2 and
@@ -212,7 +236,8 @@ export function clusterColor(events, mode) {
 
 /**
  * One lane per workspace inside a cluster (main checkout first, worktrees by
- * name), each member's span as a fraction (0..1) of the cluster's start..end.
+ * name), each member's span as a fraction (0..1) of the cluster's start..end;
+ * a dot member is a span with height 0 and `point: true`.
  */
 export function workspaceLanes(segs, start, end) {
   const span = Math.max(end - start, 1);
@@ -220,7 +245,7 @@ export function workspaceLanes(segs, start, end) {
   for (const s of segs) {
     const ws = s.e.workspace || null;
     if (!lanes.has(ws)) lanes.set(ws, { workspace: ws, label: ws ? formatWorkspace(ws) : 'main checkout', spans: [] });
-    lanes.get(ws).spans.push({ top: (s.top - start) / span, height: s.height / span });
+    lanes.get(ws).spans.push({ top: (s.top - start) / span, height: s.height / span, ...(s.point ? { point: true } : {}) });
   }
   for (const l of lanes.values()) l.spans.sort((a, b) => a.top - b.top);
   return [...lanes.values()].sort((a, b) => (a.workspace == null ? -1 : b.workspace == null ? 1 : a.workspace.localeCompare(b.workspace)));

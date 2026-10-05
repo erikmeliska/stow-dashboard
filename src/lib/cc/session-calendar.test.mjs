@@ -317,3 +317,39 @@ test('workspaceLanes: main checkout first, worktrees by name, spans as fractions
 test('clusterStats sums rollups', () => {
   assert.deepEqual(clusterStats([{ cost_usd: 1, active_s: 60 }, { rollup: { cost_usd: 2.5, active_s: 30 } }]), { sessions: 2, cost_usd: 3.5, active_s: 90 });
 });
+
+// ---- dots (#32) inside clusters (#30) ----
+
+import { absorbPoints } from './session-calendar.mjs';
+
+const dot = (id, top, e = {}) => ({ top, height: 0, point: true, e: { session_id: id, project_key: 'P', ...e } });
+
+test('absorbPoints: a dot inside a same-project cluster is counted there and stays a dot member', () => {
+  const items = clusterDay([seg('a', 60, 120), seg('b', 100, 200), seg('lone', 300, 360)], 'project');
+  const { items: out, points } = absorbPoints(items, [
+    dot('in', 150), // inside a+b → joins the cluster
+    dot('edge', 200), // at the cluster's end → touching, stays a dot
+    dot('other', 150, { project_key: 'Q' }), // other project → stays a dot
+    dot('muted', 150, { muted: true }), // muted never merges with work
+    dot('solo', 320), // inside a lone block → the block becomes a cluster of 2
+  ], 'project');
+  const ab = out.find((it) => ids(it).includes('a'));
+  assert.deepEqual(ids(ab), ['a', 'b', 'in']);
+  assert.equal(ab.start, 60); assert.equal(ab.end, 200, 'a dot never stretches the cluster');
+  assert.equal(clusterStats(ab.segs.map((s) => s.e)).sessions, 3);
+  const solo = out.find((it) => ids(it).includes('lone'));
+  assert.deepEqual(ids(solo), ['lone', 'solo']);
+  assert.match(solo.id, /^c:P:lone$/);
+  assert.deepEqual(points.map((p) => p.e.session_id), ['edge', 'other', 'muted']);
+  // Rendered as a dot when the cluster is expanded: its lane span has no height.
+  const lane = workspaceLanes(ab.segs, ab.start, ab.end)[0];
+  assert.deepEqual(lane.spans.find((sp) => sp.point), { top: 90 / 140, height: 0, point: true });
+});
+
+test('absorbPoints: Merge none keeps every dot standalone; untouched items keep their ids', () => {
+  const items = clusterDay([seg('a', 60, 120)], 'none');
+  const { items: out, points } = absorbPoints(items, [dot('d', 90)], 'none');
+  assert.equal(out[0].id, 'a');
+  assert.equal(out[0], items[0]);
+  assert.equal(points.length, 1);
+});
