@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import { claudeSlug, findClaudeProjectDirs } from './claude-project-dirs.mjs'
 import { locationOf } from './registry/identity.mjs'
 import { dataFile, ledgerFile } from './state-dir.mjs'
+import { withLedgerLock } from './ledger-lock.mjs'
 import { appendPathMove, removePathMove, resolveMovedPath, loadPathMoves, PATH_MOVES_FILE } from './path-moves.mjs'
 
 // Claude Code shortens longer slugs with a hash we can't reproduce.
@@ -244,8 +245,14 @@ const STEPS = {
     },
   },
 
+  // Under the ledger lock: the quick refresh must not write back a copy read before this.
   ledger: {
-    async run({ from, to }, { fs, stateOpts }) {
+    run: (detail, ctx) => withLedgerLock(() => ledgerRun(detail, ctx)),
+    undo: (rec, ctx) => withLedgerLock(() => ledgerUndo(rec, ctx)),
+  },
+}
+
+async function ledgerRun({ from, to }, { fs, stateOpts }) {
       const file = ledgerFile(stateOpts)
       const moves = [{ from, to }]
       const text = await fs.readFile(file, 'utf8')
@@ -264,16 +271,15 @@ const STEPS = {
       })
       if (restore.length) await atomicWrite(fs, file, lines.join('\n'))
       return { file, restore }
-    },
-    async undo({ file, restore }, { fs }) {
+}
+
+async function ledgerUndo({ file, restore }, { fs }) {
       if (!restore.length) return
       const back = new Map(restore)
       const text = await fs.readFile(file, 'utf8')
       await atomicWrite(fs, file, text.split('\n').map((line) => {
         try { const d = JSON.parse(line)?.directory; return back.has(d) ? back.get(d) : line } catch { return line }
       }).join('\n'))
-    },
-  },
 }
 
 function contextOf(deps, extra = {}) {

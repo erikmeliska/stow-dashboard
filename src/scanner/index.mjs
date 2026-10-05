@@ -13,6 +13,7 @@ import { resolveLocations, LOCATION_CONCURRENCY } from '../lib/checkout-location
 import { ensureStowFile } from '../lib/stow-project-file.mjs'
 import { stowRoots, assignIdentities, carryForwardMoved } from '../lib/checkout-merge.mjs'
 import { stowHomeOf } from '../lib/registry/identity.mjs'
+import { withLedgerLock, writeFileAtomic } from '../lib/ledger-lock.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
     '.git', '.stow', 'node_modules', 'venv', '.venv',
@@ -803,7 +804,9 @@ export class ProjectScanner {
         await fs.mkdir(parentDir, { recursive: true })
 
         const lines = projects.map(p => JSON.stringify(p))
-        await fs.writeFile(this.syncFile, lines.join('\n') + '\n')
+        // Atomic and under the ledger lock (#11): a reorg/relocation rewrite in
+        // this process must not interleave, and a reader never sees half a file.
+        await withLedgerLock(() => writeFileAtomic(this.syncFile, lines.join('\n') + '\n'))
 
         this.onProgress({ type: 'synced', file: this.syncFile })
     }

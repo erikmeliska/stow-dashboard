@@ -418,30 +418,38 @@ async function atomicWriteJson(file, value) {
 // Incremental ledger update: stat every store file, skip unchanged, tail-parse
 // grown files (re-parse shrunk/rebuilt ones from zero), keep deleted files as
 // `missing` ghosts, then aggregate and atomically write cache + usage.json.
-let usageExclusive = null
+// On globalThis: Next may bundle this module into several route chunks.
+const U = globalThis.__stowUsageLock ??= { exclusive: 0, runs: new Set(), chain: Promise.resolve() }
 
 /**
  * Run `fn` while no updateUsage runs in this process (#11 relocation re-keys
- * usage-cache.json): waits for running updates; updateUsage meanwhile returns
- * `{deferred: true}` without reading or writing the cache.
+ * usage-cache.json): callers queue on a promise chain, each waits for running
+ * updates; updateUsage meanwhile returns `{deferred: true}` without reading or
+ * writing the cache.
  */
 export async function runUsageExclusive(fn) {
-  while (usageExclusive) await usageExclusive.catch(() => {})
-  while (usageRuns.size) await Promise.allSettled([...usageRuns])
-  const run = (async () => fn())()
-  usageExclusive = run
-  try { return await run } finally { if (usageExclusive === run) usageExclusive = null }
+  U.exclusive++ // counted at once: a queued move already defers new updates
+  const prev = U.chain
+  let release
+  U.chain = new Promise((r) => { release = r })
+  try {
+    await prev
+    while (U.runs.size) await Promise.allSettled([...U.runs])
+    return await fn()
+  } finally {
+    U.exclusive--
+    release()
+  }
 }
 
-const usageRuns = new Set()
 
 // `moves` defaults to the path-moves.json next to `cacheFile` (both live in the
 // state dir's data/); a malformed one throws rather than mis-attributing cost.
 export async function updateUsage(opts) {
-  if (usageExclusive) return { filesParsed: 0, filesSkipped: 0, filesMissing: 0, durationMs: 0, deferred: true }
+  if (U.exclusive) return { filesParsed: 0, filesSkipped: 0, filesMissing: 0, durationMs: 0, deferred: true }
   const run = updateUsageNow(opts)
-  usageRuns.add(run)
-  try { return await run } finally { usageRuns.delete(run) }
+  U.runs.add(run)
+  try { return await run } finally { U.runs.delete(run) }
 }
 
 async function updateUsageNow({ claudeDir, codexDir, geminiDir, geminiCliDir, cacheFile, outFile, projectDirs, rebuild = false, moves }) {

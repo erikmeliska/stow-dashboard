@@ -351,35 +351,44 @@ export async function ingestAll({
   return { sessions, changed, skipped, linked, placed, ...(placement_error ? { placement_error } : {}), ms: Date.now() - t0 };
 }
 
-let inFlight = null;
+// Module state on globalThis: Next may bundle this module into several route
+// chunks, and the refresh route and a relocation must share one lock.
+const S = globalThis.__stowIngestRun ??= { inFlight: null, exclusive: 0, chain: Promise.resolve() };
 
 /**
  * Run an ingest against the real store with the default paths, serialised:
  * concurrent callers (refresh cycle + page reload) share one run.
  */
 export function runIngest({ full = false } = {}) {
-  if (exclusive) return Promise.resolve({ ...DEFERRED });
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+  if (S.exclusive) return Promise.resolve({ ...DEFERRED });
+  if (S.inFlight) return S.inFlight;
+  S.inFlight = (async () => {
     const db = openStore();
     try { return await ingestAll({ ...defaultIngestPaths(), db, full, placement: await loadPlacementContext(), moves: await loadPathMoves() }); }
-    finally { db.close(); inFlight = null; }
+    finally { db.close(); S.inFlight = null; }
   })();
-  return inFlight;
+  return S.inFlight;
 }
 
 const DEFERRED = { sessions: 0, changed: 0, skipped: 0, linked: 0, placed: null, deferred: true, ms: 0 };
-let exclusive = null;
 
 /**
- * Run `fn` while no ingest runs in this process (#11 relocation): waits for an
- * in-flight ingest, then holds the store, so a runIngest() call meanwhile
- * returns a no-op `{deferred: true}` at once instead of racing the DB rewrite.
+ * Run `fn` while no ingest runs in this process (#11 relocation): callers queue
+ * on a promise chain (never two at once), each waits for an in-flight ingest,
+ * and a runIngest() call meanwhile returns a no-op `{deferred: true}` at once
+ * instead of racing the DB rewrite.
  */
 export async function runExclusive(fn) {
-  while (exclusive) await exclusive.catch(() => {});
-  while (inFlight) await inFlight.catch(() => {});
-  const run = (async () => fn())();
-  exclusive = run;
-  try { return await run; } finally { if (exclusive === run) exclusive = null; }
+  S.exclusive++; // counted at once: a queued move already defers new ingests
+  const prev = S.chain;
+  let release;
+  S.chain = new Promise((r) => { release = r; });
+  try {
+    await prev;
+    while (S.inFlight) await S.inFlight.catch(() => {});
+    return await fn();
+  } finally {
+    S.exclusive--;
+    release();
+  }
 }

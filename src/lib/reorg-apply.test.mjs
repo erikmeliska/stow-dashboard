@@ -50,3 +50,20 @@ test('removeLedgerRows drops the rows of the given checkouts and keeps every oth
     assert.equal(await readFile(file, 'utf8'), [keep, 'not json', '{"directory":"/P/gonex"}'].join('\n') + '\n')
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('removeLedgerRows waits for the ledger lock (#11 review I-2)', async () => {
+  const { acquireLedgerLock } = await import('./ledger-lock.mjs')
+  const dir = await mkdtemp(path.join(tmpdir(), 'reorg-apply-'))
+  const file = path.join(dir, 'projects_metadata.jsonl')
+  try {
+    await writeFile(file, '{"directory":"/P/gone"}\n{"directory":"/P/keep"}\n')
+    const release = await acquireLedgerLock()
+    const p = removeLedgerRows(['/P/gone'], { file })
+    await new Promise((r) => setTimeout(r, 20))
+    // a holder (e.g. the quick refresh) rewrites the ledger meanwhile; the removal must see it
+    await writeFile(file, '{"directory":"/P/gone"}\n{"directory":"/P/keep"}\n{"directory":"/P/new"}\n')
+    release()
+    assert.equal(await p, 1)
+    assert.equal(await readFile(file, 'utf8'), '{"directory":"/P/keep"}\n{"directory":"/P/new"}\n')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

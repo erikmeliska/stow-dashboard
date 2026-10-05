@@ -591,3 +591,17 @@ test('aggregateUsage: a session started after the move at the old path is not al
   assert.equal(agg.projects['/P/new'].sessions, 1)
   assert.equal(agg.projects['/P/old'].sessions, 1)
 })
+
+test('runUsageExclusive callers never overlap (#11 review I-5)', async () => {
+  const { runUsageExclusive } = await import('./usage.mjs')
+  const log = []
+  let release
+  const gate = new Promise((r) => { release = r })
+  const a = runUsageExclusive(async () => { log.push('a:start'); await gate; log.push('a:end') })
+  const b = runUsageExclusive(async () => { log.push('b') })
+  const c = runUsageExclusive(async () => { log.push('c') })
+  await new Promise((r) => setTimeout(r, 10))
+  release()
+  await Promise.all([a, b, c])
+  assert.deepEqual(log, ['a:start', 'a:end', 'b', 'c'])
+})

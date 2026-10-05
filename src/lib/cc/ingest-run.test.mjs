@@ -368,3 +368,17 @@ test('path moves are time-scoped on ingest: a session newer than the move keeps 
     moves: [{ id: 'm', from: '/p/a', to: '/p/new', at: '2026-01-01T00:00:00Z' }] });
   assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
 });
+
+test('runExclusive callers never overlap (#11 review I-5)', async () => {
+  const { runExclusive } = await import('./ingest-run.mjs');
+  const log = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const a = runExclusive(async () => { log.push('a:start'); await gate; log.push('a:end'); });
+  const b = runExclusive(async () => { log.push('b:start'); log.push('b:end'); });
+  const c = runExclusive(async () => { log.push('c'); });
+  await new Promise((r) => setTimeout(r, 10));
+  release();
+  await Promise.all([a, b, c]);
+  assert.deepEqual(log, ['a:start', 'a:end', 'b:start', 'b:end', 'c']);
+});

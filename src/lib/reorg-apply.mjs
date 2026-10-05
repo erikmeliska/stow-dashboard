@@ -5,18 +5,20 @@
  * client / role, via writeStowMeta) and, for orphans only, the ledger rows.
  * Nothing on disk moves (that is relocate.mjs, the exception).
  */
-import { readFile, writeFile, rename } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { writeStowMeta } from './registry/stow-meta.mjs'
 import { locationOf } from './registry/identity.mjs'
 import { ledgerFile } from './state-dir.mjs'
+import { withLedgerLock, writeFileAtomic } from './ledger-lock.mjs'
 
 /**
  * Drop every ledger row whose checkout root is one of `dirs`; other lines are
- * kept byte for byte. Atomic tmp+rename. → number of rows removed.
+ * kept byte for byte. Atomic, under the ledger lock. → number of rows removed.
  */
 export async function removeLedgerRows(dirs, opts = {}) {
   const file = opts.file ?? ledgerFile(opts)
+  return withLedgerLock(async () => {
   const drop = new Set(dirs)
   const text = await readFile(file, 'utf8')
   let removed = 0
@@ -27,10 +29,9 @@ export async function removeLedgerRows(dirs, opts = {}) {
     if (typeof row?.directory === 'string' && drop.has(locationOf(row))) { removed++; return false }
     return true
   })
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  await writeFile(tmp, kept.length ? kept.join('\n') + '\n' : '')
-  await rename(tmp, file)
+  await writeFileAtomic(file, kept.length ? kept.join('\n') + '\n' : '')
   return removed
+  })
 }
 
 export const defaultWriters = {
