@@ -57,7 +57,7 @@ export function filterSessions(sessions, { search = '', ticket = '', quality = '
   return sessions.filter((s) => {
     if (needle) {
       const matchTicket = (s.ticket_id || '').toLowerCase().includes(needle)
-      const matchProject = (s.project_dir || '').toLowerCase().includes(needle)
+      const matchProject = [s.project_dir, s.base_dir, s.workspace, s.project_name].some((v) => (v || '').toLowerCase().includes(needle))
       const matchBranch = (s.git_branch || '').toLowerCase().includes(needle)
       const matchTitle = (displayTitle(s) || '').toLowerCase().includes(needle)
       if (!matchTicket && !matchProject && !matchBranch && !matchTitle) return false

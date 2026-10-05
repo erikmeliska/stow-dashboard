@@ -12,7 +12,9 @@ import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } fro
 import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
 import { colorBy, COLOR_MODES, loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
+import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
 import { CalendarView } from './calendar-view'
+import { WorkspaceBadge } from './workspace-badge'
 import { ColorLegend, ColorSelect, useColorMode } from './color-controls'
 
 function fmtTokens(n) {
@@ -38,7 +40,6 @@ function fmtStart(iso) {
 const ACTIVE_MS = 10 * 60 * 1000
 /** A session is "active" while its transcript is still being written (last activity < 10 min ago). */
 function isActive(s) { return s.ended_at ? Date.now() - Date.parse(s.ended_at) < ACTIVE_MS : false }
-function projectName(dir) { return dir ? dir.split('/').filter(Boolean).slice(-1)[0] : '—' }
 function kindLabel(kind) { return CHILD_KINDS[kind]?.label || kind || 'main' }
 const SCHEDULED_BADGE = <span className="text-xs px-1 py-0.5 rounded bg-secondary text-secondary-foreground">scheduled</span>
 function fmtAgent(a) { return [a.agent_type, a.description].filter(Boolean).join(' — ') || a.agent_id }
@@ -69,26 +70,27 @@ function DetailPanel({ detail, project, onFilterProject, onOpen, onSummarize, su
       <div>
         <div className="font-mono text-xs text-muted-foreground break-all">{s.session_id}</div>
         <div className="font-medium mt-1 flex items-center gap-2 flex-wrap">
-          {projectName(s.project_dir)}
+          {sessionProjectLabel(s)}
+          <WorkspaceBadge workspace={s.workspace} />
           {s.kind === 'scheduled' && SCHEDULED_BADGE}
           {isChild && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1"><ShieldCheck className="h-3 w-3" />{kindLabel(s.kind)}</span>}
           {s.entrypoint && <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-muted text-muted-foreground" title="Entrypoint (how the session was started)">{s.entrypoint}</span>}
         </div>
         <div className="text-xs text-muted-foreground break-all">{s.project_dir}</div>
-        {s.project_dir && (
-          project === s.project_dir ? (
+        {(s.base_dir || s.project_dir) && (
+          project === (s.base_dir || s.project_dir) ? (
             <button onClick={() => onFilterProject(null)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
               <X className="h-3 w-3" /> Clear directory filter
             </button>
           ) : (
-            <button onClick={() => onFilterProject(s.project_dir)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
+            <button onClick={() => onFilterProject(s.base_dir || s.project_dir)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline">
               <Filter className="h-3 w-3" /> Only sessions from this directory
             </button>
           )
         )}
         {detail.parent && (
           <button onClick={() => onOpen(detail.parent.session_id)} className="mt-1 text-xs inline-flex items-center gap-1 text-primary hover:underline" title={detail.parent.session_id}>
-            <CornerDownRight className="h-3 w-3" /> part of {projectName(detail.parent.project_dir)} · {fmtStart(detail.parent.started_at)}
+            <CornerDownRight className="h-3 w-3" /> part of {sessionProjectLabel(detail.parent)} · {fmtStart(detail.parent.started_at)}
           </button>
         )}
       </div>
@@ -355,7 +357,8 @@ function FamilyRows({ fam, selected, expanded, onToggle, onOpen, colorMode }) {
           </span>
         </td>
         <td className={`${CELL} truncate max-w-[16rem]`} title={s.project_dir || ''}>
-          {projectName(s.project_dir)}
+          {sessionProjectLabel(s)}
+          <WorkspaceBadge workspace={s.workspace} className="ml-1" />
           {s.kind === 'scheduled' && <span className="ml-1">{SCHEDULED_BADGE}</span>}
           {isChildHead && <span className="ml-1 text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-400">{kindLabel(s.kind)}</span>}
         </td>
@@ -421,6 +424,7 @@ function SessionsView() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const project = searchParams.get('project') || null
+  const projectKey = searchParams.get('project_key') || null
   const [sessions, setSessions] = useState([])
   const [agents, setAgents] = useState([])
   const [expanded, setExpanded] = useState(() => new Set())
@@ -457,7 +461,7 @@ function SessionsView() {
 
   // What the current view/period/project needs vs. what `sessions` actually holds:
   // until they match, the calendar must not count or batch the rows on hand.
-  const wantKey = loadKey({ view, project, range })
+  const wantKey = loadKey({ view, project: projectKey ? `key:${projectKey}` : project, range })
   const [loadedKey, setLoadedKey] = useState(null)
 
   const loadSeq = useRef(0)
@@ -469,6 +473,7 @@ function SessionsView() {
       // Bring the store up to date first (incremental: ~0.1 s when nothing changed).
       if (ingest) await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
       const qs = new URLSearchParams(project ? { project } : {})
+      if (projectKey) qs.set('project_key', projectKey)
       if (view === 'calendar') { qs.set('since', range.since.toISOString()); qs.set('until', range.until.toISOString()) }
       else qs.set('limit', '1000')
       const r = await fetch(`/api/sessions?${qs}`)
@@ -481,7 +486,7 @@ function SessionsView() {
       if (myId === loadSeq.current) setLoading(false)
     }
   }
-  useEffect(() => { load() }, [project, view, rangeKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [project, projectKey, view, rangeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function open(id) {
     setSelected(id); setSummaryError(null)
@@ -548,7 +553,16 @@ function SessionsView() {
                 className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground hover:bg-muted"
                 title={`${project} — click to clear`}
               >
-                {projectName(project)} <X className="h-3 w-3" />
+                {project.split('/').filter(Boolean).at(-1) || project} <X className="h-3 w-3" />
+              </button>
+            )}
+            {projectKey && (
+              <button
+                onClick={() => setParams({ project_key: null })}
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground hover:bg-muted"
+                title={`${projectKey} — click to clear`}
+              >
+                {sessions.find((x) => x.project_key === projectKey)?.project_name || projectKey.split(/[/:]/).at(-1)} <X className="h-3 w-3" />
               </button>
             )}
             <input
@@ -616,7 +630,7 @@ function SessionsView() {
         <div className="flex-1 overflow-auto px-4">
           {view === 'table' && (<>
           {!loading && sessions.length === 0 && (
-            <p className="text-sm text-muted-foreground py-6">{project ? 'No sessions recorded for this project yet.' : <>No sessions yet — run <code>npm run cc:ingest</code>.</>}</p>
+            <p className="text-sm text-muted-foreground py-6">{project || projectKey ? 'No sessions recorded for this project yet.' : <>No sessions yet — run <code>npm run cc:ingest</code>.</>}</p>
           )}
           {!loading && sessions.length > 0 && filtered.length === 0 && (
             <p className="text-sm text-muted-foreground py-6">No sessions match the current filters.</p>

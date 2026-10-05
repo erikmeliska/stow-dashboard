@@ -11,9 +11,11 @@ import {
 import { SummaryBanner } from './summary-banner'
 import { ColorLegend, ColorSelect } from './color-controls'
 import { displayTitle, OUTCOME_ICON, parseSummary } from '@/lib/cc/summary-view.mjs'
+import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
+import { formatWorkspace } from '@/lib/cc/workspace.mjs'
+import { WorkspaceBadge } from './workspace-badge'
 
 const HOUR_PX = 44
-const projectName = (dir) => (dir ? dir.split('/').filter(Boolean).at(-1) : '—')
 const fmtCost = (c) => `$${(c || 0).toFixed(2)}`
 const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
 
@@ -192,7 +194,7 @@ export function EventBlock({ e, style, selected, onOpen, compact = false, colorM
   const color = bucket.color
   const r = e.rollup || e
   const mins = Math.round((r.active_s || 0) / 60)
-  const tip = `${title}\n${projectName(e.project_dir)} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
+  const tip = `${title}\n${sessionProjectLabel(e)}${e.workspace ? ` · ${formatWorkspace(e.workspace)}` : ''} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
   return (
     <button onClick={() => onOpen(e.session_id)} title={tip}
       className={`${compact ? 'relative w-full' : 'absolute'} overflow-hidden rounded-sm border-l-4 px-1 py-0.5 text-left text-[11px] leading-tight hover:z-10 hover:shadow ${e.muted ? 'opacity-50' : ''} ${selected ? 'ring-2 ring-ring' : ''}`}
@@ -202,7 +204,7 @@ export function EventBlock({ e, style, selected, onOpen, compact = false, colorM
         <span className="truncate">{title}</span>
         <OutcomeMark e={e} />
       </div>
-      {!compact && <div className="truncate text-muted-foreground">{projectName(e.project_dir)} · {mins} min · {fmtCost(r.cost_usd)}</div>}
+      {!compact && <div className="truncate text-muted-foreground">{sessionProjectLabel(e)} <WorkspaceBadge workspace={e.workspace} className="ml-1" /> · {mins} min · {fmtCost(r.cost_usd)}</div>}
     </button>
   )
 }

@@ -7,7 +7,7 @@
  * is a *new* store for session-centric data, not a migration.
  *
  * Session rows also carry nullable columns reserved for later phases
- * (machine/user/project_key, git_*, jira_ticket, quality_score, summary) so
+ * (machine/user, git_*, jira_ticket, quality_score, summary) so
  * those can be filled without a schema migration.
  */
 import { DatabaseSync } from 'node:sqlite';
@@ -71,6 +71,8 @@ const MIGRATION_COLS = {
   quality_detail: 'TEXT', summary_model: 'TEXT', summarized_at: 'TEXT',
   parent_session_id: 'TEXT', kind: 'TEXT', entrypoint: 'TEXT',
   title: 'TEXT', title_source: 'TEXT', user_prompts: 'INTEGER',
+  // Placement (#12): filled by the placement pass, no re-parse needed.
+  project_key: 'TEXT', workspace: 'TEXT', base_dir: 'TEXT',
 };
 
 export function ensureColumns(db) {
@@ -92,6 +94,7 @@ export function ensureColumns(db) {
   if (!have.has('title') && have.size > 0) db.exec('DELETE FROM ingest_state');
   // Indexes on migrated columns can only be created once the column exists.
   db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions (parent_session_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project_key ON sessions (project_key)');
 }
 
 /**
@@ -159,6 +162,26 @@ export function setSummary(db, sessionId, { summary, model, at }) {
     .run(summary ?? null, model ?? null, at ?? new Date().toISOString(), sessionId);
 }
 
+/**
+ * Placement columns (#12: project_key, workspace, base_dir) are written only
+ * here, never by upsertSession — one transaction, returns the rows written.
+ */
+export function setPlacements(db, rows) {
+  if (!rows.length) return 0;
+  const st = db.prepare('UPDATE sessions SET project_key = ?, workspace = ?, base_dir = ? WHERE session_id = ?');
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) st.run(r.project_key ?? null, r.workspace ?? null, r.base_dir ?? null, r.session_id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return rows.length;
+}
+
+/** What the placement pass needs per row, for every session. */
+export function listPlacementInputs(db) {
+  return db.prepare('SELECT session_id, cwd, project_dir, raw_ref, project_key, workspace, base_dir FROM sessions').all();
+}
+
 export function replaceTools(db, sessionId, counts) {
   db.prepare('DELETE FROM tool_usage WHERE session_id = ?').run(sessionId);
   const ins = db.prepare('INSERT INTO tool_usage (session_id, tool, count) VALUES (?, ?, ?)');
@@ -183,13 +206,25 @@ export function replaceGuardHits(db, sessionId, hits) {
  * caller can always build complete families (see session-tree.mjs).
  * `since`/`until` (ISO, `[since, until)`) bound the top-level start time — the
  * calendar asks for exactly the period it shows.
+ * `project` (a dir) matches the session's main-checkout dir (`base_dir`,
+ * falling back to `project_dir`) or anything under it, so worktree sessions are
+ * included; `projectKey` matches the register project id (#12). Pass the
+ * dir's own register key as `projectDirKey` (null = not in the register) so
+ * sub-dirs that belong to *another* project (a monorepo member scanned on its
+ * own) stay out; left undefined, the whole subtree matches.
  */
-export function listSessions(db, { project, limit = 200, since = null, until = null } = {}) {
+export function listSessions(db, { project, projectDirKey, projectKey, limit = 200, since = null, until = null } = {}) {
   // `guard_hits` (a count) rides along so the list can filter on it without a second query.
   const select = 'SELECT s.*, (SELECT count(*) FROM guard_hits g WHERE g.session_id = s.session_id) guard_hits FROM sessions s';
   const conds = ['s.parent_session_id IS NULL'];
   const args = [];
-  if (project) { conds.push('s.project_dir = ?'); args.push(project); }
+  if (project) {
+    const own = projectDirKey === undefined ? '' : ' AND (s.project_key IS NULL OR s.project_key IS ?)';
+    conds.push(`(coalesce(s.base_dir, s.project_dir) = ? OR (coalesce(s.base_dir, s.project_dir) LIKE ? ESCAPE '\\'${own}))`);
+    args.push(project, project.replace(/[\\%_]/g, '\\$&') + '/%');
+    if (own) args.push(projectDirKey);
+  }
+  if (projectKey) { conds.push('s.project_key = ?'); args.push(projectKey); }
   if (since) { conds.push('s.started_at >= ?'); args.push(since); }
   if (until) { conds.push('s.started_at < ?'); args.push(until); }
   const parents = db.prepare(`${select} WHERE ${conds.join(' AND ')} ORDER BY s.started_at DESC LIMIT ?`).all(...args, limit);

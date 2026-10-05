@@ -253,7 +253,7 @@ export function parseGeminiDb(dbOrPath, state) {
             const argsStr = Buffer.isBuffer(f4[3]) || f4[3] instanceof Uint8Array
               ? Buffer.from(f4[3]).toString('utf8')
               : String(f4[3])
-            const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-\.\/]+)/g)
+            const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-./]+)/g)
             if (pathMatches) {
               state.geminiPaths ??= []
               for (const p of pathMatches) {

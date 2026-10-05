@@ -103,8 +103,8 @@ export function parseGeminiSession(dbOrPath, { projectDirs = [], rawRef = null }
     let stepCount = 0;
     const timestamps = [];
 
-    const SKILL_READ_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-\.]+)\/SKILL\.md$/i;
-    const SKILL_EDIT_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-\.]+)\//i;
+    const SKILL_READ_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-.]+)\/SKILL\.md$/i;
+    const SKILL_EDIT_RE = /(?:^|\/)skills\/([a-zA-Z0-9_\-.]+)\//i;
 
     try {
       const rows = db.prepare('SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx ASC').all();
@@ -134,7 +134,7 @@ export function parseGeminiSession(dbOrPath, { projectDirs = [], rawRef = null }
                 ? Buffer.from(f4[3]).toString('utf8')
                 : String(f4[3]);
               // Find file paths in tool arguments
-              const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-\.\/]+)/g);
+              const pathMatches = argsStr.match(/(\/[a-zA-Z0-9_\-./]+)/g);
               if (pathMatches) {
                 for (const p of pathMatches) accessedPaths.add(p);
               }

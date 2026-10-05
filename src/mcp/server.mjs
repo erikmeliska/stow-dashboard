@@ -27,6 +27,9 @@ import { openStore, DB_NAME, listSessions, listSubagents } from '../lib/cc/store
 import { buildSessionTree } from '../lib/cc/session-tree.mjs'
 import { effectiveKind } from '../lib/cc/session-link.mjs'
 import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
+import { sessionProjectLabel } from '../lib/cc/session-project.mjs'
+import { buildProjectIndex } from '../lib/cc/project-key.mjs'
+import { loadRegistry } from '../lib/registry/registry.mjs'
 import { batchModel, rangeBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
@@ -553,7 +556,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         since: { type: 'string', description: 'Start (YYYY-MM-DD local, or ISO)' },
                         until: { type: 'string', description: 'End, exclusive (YYYY-MM-DD local, or ISO)' },
-                        project: { type: 'string', description: 'Exact project directory (optional)' },
+                        project: { type: 'string', description: 'Project directory (optional; also matches sessions in its worktrees and sub-dirs)' },
                         kind: { type: 'string', enum: ['work', 'scheduled', 'agent-spawn', 'trivial', 'all'], description: 'Default work' },
                         limit: { type: 'number', description: 'Maximum sessions (default 500)' },
                     },
@@ -1076,7 +1079,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'list_sessions': {
             const db = openSessionStore()
             try {
-                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, limit: 5000 })
+                // Sub-dirs owned by another register project stay out of a ?project= list.
+                let projectDirKey
+                if (args.project) {
+                    try { projectDirKey = buildProjectIndex({ register: await loadRegistry(STATE) }).lookup(args.project) } catch { /* no register: whole subtree */ }
+                }
+                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, projectDirKey, limit: 5000 })
                 const fams = buildSessionTree(rows, listSubagents(db, rows.map((r) => r.session_id)))
                 const want = args.kind || 'work'
                 const out = fams
@@ -1086,7 +1094,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         const s = parseSummary(f)
                         return {
                             session_id: f.session_id, started_at: f.started_at, ended_at: f.ended_at,
-                            project: f.project_dir ? path.basename(f.project_dir) : null, project_dir: f.project_dir,
+                            project: sessionProjectLabel(f), project_dir: f.project_dir, project_key: f.project_key || null, workspace: f.workspace || null,
                             harness: f.entrypoint, model: f.model,
                             active_min: Math.round((f.rollup.active_s || 0) / 60), turns: f.rollup.turns,
                             cost_usd: Number((f.rollup.cost_usd || 0).toFixed(2)), sub_sessions: f.sub_count,

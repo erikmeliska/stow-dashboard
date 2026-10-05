@@ -38,6 +38,7 @@ import { parseGuardAudit } from './guard-ingest.mjs';
 import { extractContext, ticketRegex } from './context.mjs';
 import { scoreSession, verifyRegex } from './quality.mjs';
 import { ledgerFile } from '../state-dir.mjs';
+import { assignPlacements, loadPlacementContext } from './project-key.mjs';
 import { listGeminiDbs, parseGeminiSession } from './gemini-ingest.mjs';
 import { listCodexFiles } from '../usage.mjs';
 import { parseCodexSession } from './codex-ingest.mjs';
@@ -181,9 +182,11 @@ export async function linkChildren(db, { readText = (f) => readFile(f, 'utf8'), 
 }
 
 /**
- * `codexDir` (optional) is the Codex sessions root.
- * @param {{claudeDir: string, codexDir?: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean}} opts
- * @returns {Promise<{sessions: number, changed: number, skipped: number, linked: number, ms: number}>}
+ * `codexDir` (optional) is the Codex sessions root. `placement` (optional) is a
+ * project-key.mjs context; without one the placement pass is skipped (runIngest
+ * always passes the real one, tests inject theirs).
+ * @param {{claudeDir: string, codexDir?: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean, placement?: object}} opts
+ * @returns {Promise<{sessions: number, changed: number, skipped: number, linked: number, placed: {checked: number, updated: number}|null, placement_error?: string, ms: number}>}
  */
 export async function ingestAll({
   claudeDir,
@@ -195,6 +198,7 @@ export async function ingestAll({
   env = process.env,
   full = false,
   projectDirs = null,
+  placement = null,
 }) {
   const t0 = Date.now();
   const ticketPattern = ticketRegex(env);
@@ -322,8 +326,21 @@ export async function ingestAll({
     }
   }
 
+  // Placement after every source is in, before linking (#12). Recomputes all
+  // rows, so it is also the backfill and follows register changes.
+  let placed = null, placement_error = null;
+  if (placement) {
+    try {
+      const { checked, updated } = await assignPlacements(db, placement);
+      placed = { checked, updated };
+    } catch (e) {
+      placement_error = String(e?.message || e);
+      console.warn('[cc] placement failed:', placement_error);
+    }
+  }
+
   const linked = await linkChildren(db, { full: linkAll });
-  return { sessions, changed, skipped, linked, ms: Date.now() - t0 };
+  return { sessions, changed, skipped, linked, placed, ...(placement_error ? { placement_error } : {}), ms: Date.now() - t0 };
 }
 
 let inFlight = null;
@@ -336,7 +353,7 @@ export function runIngest({ full = false } = {}) {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const db = openStore();
-    try { return await ingestAll({ ...defaultIngestPaths(), db, full }); }
+    try { return await ingestAll({ ...defaultIngestPaths(), db, full, placement: await loadPlacementContext() }); }
     finally { db.close(); inFlight = null; }
   })();
   return inFlight;

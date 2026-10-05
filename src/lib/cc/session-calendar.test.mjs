@@ -142,3 +142,9 @@ test('colorLegend lists buckets in fixed order with counts; project legend by co
   assert.equal(capped.at(-1).label, '+4 more');
   assert.ok(COLOR_MODES.outcome && COLOR_MODES.harness && COLOR_MODES.cost);
 });
+
+test('Color by project: main and worktree session share one bucket', () => {
+  const a = colorBy({ project_key: 'P', base_dir: '/p', project_dir: '/p' }, 'project');
+  const b = colorBy({ project_key: 'P', base_dir: '/p', project_dir: '/p/.agent-office/worktrees/x' }, 'project');
+  assert.equal(a.key, b.key); assert.equal(a.color, b.color); assert.equal(b.label, 'p');
+});

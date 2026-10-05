@@ -291,3 +291,44 @@ test('ingestAll ingests Codex rollouts and links subagents to their root thread'
   assert.equal(again.skipped, 2);
   assert.equal(getSession(db, 'sub').session.parent_session_id, 'root', 'link survives the incremental run');
 });
+
+test('ingest places sessions (worktree → main project) and reports it', async () => {
+  const { root, guard } = await fixture();
+  const wt = join(root, 'projects', '-p-a--agent-office-worktrees-pixel-1');
+  await mkdir(wt, { recursive: true });
+  await writeFile(join(wt, 'sess-2.jsonl'), [
+    { type: 'user', cwd: '/p/a/.agent-office/worktrees/pixel-1', sessionId: 'sess-2', timestamp: '2026-08-21T11:00:00Z' },
+    { type: 'assistant', sessionId: 'sess-2', timestamp: '2026-08-21T11:00:05Z', message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [] } },
+  ].map((l) => JSON.stringify(l)).join('\n'), 'utf8');
+  const { buildProjectIndex } = await import('./project-key.mjs');
+  const placement = { index: buildProjectIndex({ register: { projects: [{ key: 'P-a', locations: [{ directory: '/p/a' }] }] } }), exists: () => false, exec: async () => { throw new Error(); } };
+  const db = openStore(':memory:');
+  const res = await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: guard, db, placement });
+  assert.deepEqual(res.placed, { checked: 2, updated: 2 });
+  const s = getSession(db, 'sess-2').session;
+  assert.equal(s.project_key, 'P-a');
+  assert.equal(s.workspace, 'agent-office:pixel-1');
+  assert.equal(s.base_dir, '/p/a');
+  assert.equal(s.project_dir, '/p/a/.agent-office/worktrees/pixel-1'); // unchanged
+});
+
+test('a placement failure does not fail the ingest', async () => {
+  const { root, guard } = await fixture();
+  const db = openStore(':memory:');
+  const placement = { index: { lookup() { throw new Error('boom'); }, knownDirs: [], covers: () => true }, exists: () => false, exec: async () => ({}) };
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const res = await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: guard, db, placement });
+    assert.equal(res.sessions, 1);
+    assert.equal(res.placed, null);
+    assert.match(res.placement_error, /boom/);
+  } finally { console.warn = warn; }
+});
+
+test('ingestAll without a placement context skips placement', async () => {
+  const { root, guard } = await fixture();
+  const db = openStore(':memory:');
+  const res = await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: guard, db });
+  assert.equal(res.placed, null);
+  assert.equal(getSession(db, 'sess-1').session.workspace, null);
+});
