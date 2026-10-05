@@ -1,4 +1,5 @@
-import { dismissSuggestion, guardRequest } from '@/lib/reorg-service.mjs'
+import { dismissSuggestion } from '@/lib/reorg-service.mjs'
+import { guardRequest } from '@/lib/request-guard.mjs'
 
 async function handle(request, undo) {
     const refused = guardRequest(request.headers)

@@ -126,7 +126,7 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/app/project-table.js` - Main interactive table with filtering/sorting/group filter/quick filters; Projects | Directories view (virtual projects, see below)
 - `src/lib/virtual-projects.mjs` - Pure, client-safe virtual-project view (#10): `annotateRecords` (register → `record.vp`), `locationMeta` (the only reader of `vp`), `buildVirtualProjects`, client/role/multi-copy filters + stats, `compareClients`, `withClientHeaders`, `validateMetaPatch`
 - `src/lib/project-meta-write.mjs` - Manual client / role / primary edits written to `.stow/project.json` over the register (injectable deps; never recreates a vanished checkout)
-- `src/app/api/projects/meta/route.js` - `PATCH` `{projectId, client}` or `{directory, role}` (null = automatic for both)
+- `src/app/api/projects/meta/route.js` - `PATCH` `{projectId, client}` or `{directory, role}` (null = automatic for both); `guardRequest` first (403), and only a `projectId` / checkout root the register already knows is written (else 400)
 - `src/components/ProjectLocations.js` - Locations section of the details sheet (client, checkouts, role, primary, Show)
 - `src/components/CountedMultiSelect.js` - Toolbar multi-select with counts (Groups, Client, Role)
 - `src/components/ProjectDetailsSheet.js` - Project details side panel with live git status and process info
@@ -210,7 +210,8 @@ TanStack React Table (sorting, filtering, pagination)
 - `src/lib/reorg.mjs` - Pure `buildReorgReport` (client-placement / stale-copy / abandoned / orphan) + `fingerprintOf`
 - `src/lib/reorg-apply.mjs` - Virtual reorg actions → `writeStowMeta` (client/role) or `removeLedgerRows` (orphans)
 - `src/lib/reorg-dismissed.mjs` - Dismissals in `data/reorg-dismissed.json` (id → evidence fingerprint)
-- `src/lib/reorg-service.mjs` - What the `/api/reorg*` routes call (`getReport`, `applySuggestion`, `dismissSuggestion`, `relocate`, `guardRequest`)
+- `src/lib/reorg-service.mjs` - What the `/api/reorg*` routes call (`getReport`, `applySuggestion`, `dismissSuggestion`, `relocate`)
+- `src/lib/request-guard.mjs` - `guardRequest(headers)`: same-origin JSON on a loopback Host only (CSRF / DNS rebinding); every register/`.stow` write route (`/api/reorg/*`, `PATCH /api/projects/meta`) calls it before reading the body → 403
 - `src/app/api/reorg/route.js` + `apply/` + `dismiss/` + `relocate/` - Reorg report, virtual action, dismiss/undismiss, move dry-run/execute
 - `src/lib/path-moves.mjs` - Append-only `data/path-moves.json` alias table + `resolveMovedPath` (applied by cc ingest, usage aggregation, Claude-folder discovery)
 - `src/lib/claude-project-dirs.mjs` - `claudeSlug`, `findClaudeProjectDirs` (`~/.claude/projects/<slug>` matched by transcript cwd, alias-resolved)
