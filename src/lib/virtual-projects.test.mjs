@@ -260,3 +260,69 @@ test('withClientHeaders passes expanded sub-rows through under their parent', ()
   const out = withClientHeaders(page, all)
   assert.deepEqual(out.map(x => x.type === 'header' ? `h:${x.client}` : x.row.depth), ['h:A', 0, 1, 'h:B', 0])
 })
+
+// --- final-review fixes ---
+import { createTable, getCoreRowModel, getSortedRowModel, getExpandedRowModel } from '@tanstack/table-core'
+import { clientSortingFn, virtualRowId } from './virtual-projects.mjs'
+
+test('a checkout represented by a member row still carries its checkout root (edits target the root)', () => {
+  const [p] = buildVirtualProjects([rec('/p/r/b', { project_id: 'g', location: '/p/r' })])
+  assert.equal(p.locations[0].directory, '/p/r/b')
+  assert.equal(p.locations[0].locationRoot, '/p/r')
+})
+
+function sortTable(data, sorting) {
+  const table = createTable({
+    data,
+    columns: [
+      { id: 'client', accessorFn: r => r.client, sortingFn: clientSortingFn(sorting.find(s => s.id === 'client')?.desc) },
+      { id: 'n', accessorFn: r => r.n },
+    ],
+    state: { sorting, columnPinning: { left: [], right: [] } },
+    onStateChange: () => {},
+    renderFallbackValue: null,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  })
+  return table.getSortedRowModel().rows.map(r => `${r.original.client}:${r.original.n}`)
+}
+
+test('client sort keeps Unassigned last both ways and still applies the secondary sort inside it', () => {
+  const data = [
+    { client: null, n: 5 }, { client: 'A', n: 1 }, { client: null, n: 9 }, { client: 'b', n: 3 },
+    { client: null, n: 1 }, { client: 'A', n: 7 },
+  ]
+  assert.deepEqual(sortTable(data, [{ id: 'client', desc: false }, { id: 'n', desc: true }]),
+    ['A:7', 'A:1', 'b:3', 'null:9', 'null:5', 'null:1'])
+  assert.deepEqual(sortTable(data, [{ id: 'client', desc: true }, { id: 'n', desc: false }]),
+    ['b:3', 'A:1', 'A:7', 'null:1', 'null:5', 'null:9'])
+})
+
+test('virtualRowId keys project rows by project and records by directory, so expansion survives filtering', () => {
+  const P2 = buildVirtualProjects([
+    rec('/p/a', { project_id: 'g:a', location: '/p/a' }), rec('/p/a2', { project_id: 'g:a', location: '/p/a2' }),
+    rec('/p/b', { project_id: 'g:b', location: '/p/b' }), rec('/p/b2', { project_id: 'g:b', location: '/p/b2' }),
+  ])
+  const expandedOf = data => {
+    const table = createTable({
+      data,
+      columns: [{ id: 'x', accessorFn: r => r.directory }],
+      getRowId: virtualRowId,
+      getSubRows: r => (r.copyCount > 1 ? r.locations : undefined),
+      state: { expanded: { 'g:b': true }, columnPinning: { left: [], right: [] } },
+      onStateChange: () => {},
+      renderFallbackValue: null,
+      getCoreRowModel: getCoreRowModel(),
+      getExpandedRowModel: getExpandedRowModel(),
+    })
+    return table.getExpandedRowModel().rows.map(r => r.id)
+  }
+  assert.deepEqual(expandedOf(P2), ['g:a', 'g:b', '/p/b', '/p/b2'])
+  assert.deepEqual(expandedOf(P2.filter(p => p.vpId === 'g:b')), ['g:b', '/p/b', '/p/b2'])
+  assert.equal(virtualRowId(rec('/p/z')), '/p/z')
+})
+
+test('validateMetaPatch accepts role null = back to automatic', () => {
+  assert.deepEqual(validateMetaPatch({ directory: '/p/a', role: null }),
+    { ok: true, op: { kind: 'role', directory: '/p/a', role: null } })
+})

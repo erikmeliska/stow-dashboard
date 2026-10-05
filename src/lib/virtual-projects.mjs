@@ -112,7 +112,8 @@ export function buildVirtualProjects(records) {
       if (!byRoot.has(root)) byRoot.set(root, [])
       byRoot.get(root).push(r)
     }
-    const reps = [...byRoot].map(([root, members]) => ({ ...representative(members, root), locationMembers: members.length }))
+    // locationRoot: the checkout root edits target — a weak-only root's representative is a member row
+    const reps = [...byRoot].map(([root, members]) => ({ ...representative(members, root), locationRoot: root, locationMembers: members.length }))
     const { primary, conflict } = pickPrimary(reps)
     const meta = locationMeta(primary)
     const newest = [...rows].sort((a, b) => time(b) - time(a))[0]
@@ -189,6 +190,25 @@ export function compareClients(a, b, desc = false) {
 }
 
 /**
+ * TanStack `sortingFn` for the client column. TanStack negates a sortingFn
+ * for a descending sort, so this one is pre-inverted to keep Unassigned
+ * (null) last in both directions. Not `sortUndefined: 'last'`: that returns
+ * 1 for two undefined values, so rows inside Unassigned never reach the
+ * secondary sort key.
+ */
+export function clientSortingFn(desc = false) {
+  return (rowA, rowB, columnId) => {
+    const c = compareClients(rowA.getValue(columnId), rowB.getValue(columnId), !!desc)
+    return desc ? -c : c
+  }
+}
+
+/** Stable TanStack row id: project rows by project, records/checkouts by directory. */
+export function virtualRowId(row) {
+  return row.vpId ?? row.directory
+}
+
+/**
  * Interleave a header before the first row of each client run on the page.
  * Totals cover every filtered row of the client (`allRows`), not just the
  * page. `pageRows` are TanStack rows (`row.original` is the data); expanded
@@ -224,7 +244,7 @@ const CLIENT_MAX = 80
 /**
  * Body of PATCH /api/projects/meta: `{projectId, client}` (client: 1–80 chars
  * after trim, or null = back to automatic) or `{directory, role}` (absolute
- * checkout root, role in ROLES). Exactly one shape.
+ * checkout root, role in ROLES or null = automatic). Exactly one shape.
  */
 export function validateMetaPatch(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'body must be an object' }
@@ -240,6 +260,6 @@ export function validateMetaPatch(body) {
     return { ok: true, op: { kind: 'client', projectId: body.projectId, client } }
   }
   if (typeof body.directory !== 'string' || !body.directory.startsWith('/')) return { ok: false, error: 'directory must be an absolute path' }
-  if (!ROLES.includes(body.role)) return { ok: false, error: `role must be one of ${ROLES.join(', ')}` }
+  if (body.role !== null && !ROLES.includes(body.role)) return { ok: false, error: `role must be one of ${ROLES.join(', ')} (null = automatic)` }
   return { ok: true, op: { kind: 'role', directory: body.directory, role: body.role } }
 }

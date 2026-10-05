@@ -23,6 +23,7 @@ const withDefaults = (deps = {}) => ({
 /**
  * Role of one checkout. Making it `primary` first demotes every other manual
  * primary of the project back to a derived role, keeping one primary.
+ * `null` (= automatic) removes the manual role only where a `.stow` file has one.
  */
 export async function setLocationRole({ directory, role }, deps) {
   const d = withDefaults(deps)
@@ -36,6 +37,11 @@ export async function setLocationRole({ directory, role }, deps) {
       const { meta } = await d.readStowMeta(l.directory)
       if (meta?.role === 'primary' && await d.exists(l.directory)) await d.writeStowMeta(l.directory, { role: null })
     }
+  }
+  if (role === null) {
+    const { meta } = await d.readStowMeta(directory)
+    if (meta?.role) await d.writeStowMeta(directory, { role: null })
+    return
   }
   await d.writeStowMeta(directory, { role })
 }

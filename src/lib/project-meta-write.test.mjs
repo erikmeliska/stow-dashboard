@@ -87,3 +87,10 @@ test('default writer: real .stow files, primary handover and automatic client', 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('setLocationRole null removes a manual role without creating a file', async () => {
+  const d = fakeDeps({ metas: { '/p/blog': { id: 'a', role: 'stale' } } })
+  await setLocationRole({ directory: '/p/blog', role: null }, d)
+  await setLocationRole({ directory: '/p/blog-test', role: null }, d)
+  assert.deepEqual(d.writes, [['/p/blog', { role: null }]])
+})

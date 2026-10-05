@@ -47,7 +47,7 @@ import { useProcesses } from "@/hooks/useProcesses"
 import { CountedMultiSelect } from "@/components/CountedMultiSelect"
 import {
     buildVirtualProjects, clientStats, roleStats, filterVirtual, anyLocation, pruneSelection,
-    withClientHeaders, compareClients, locationMeta, clientOf, UNASSIGNED,
+    withClientHeaders, clientSortingFn, virtualRowId, locationMeta, clientOf, UNASSIGNED,
 } from "@/lib/virtual-projects.mjs"
 
 const STORAGE_KEY = 'stow-dashboard-table-settings'
@@ -563,6 +563,7 @@ export function ProjectTable({ projects, ownRepos }) {
         })
     }, [sorting, columnVisibility, pagination.pageSize, filters, globalFilter, selectedGroups, aiFacets, view, groupByClient, selectedClients, selectedRoles, isHydrated])
     
+    const clientSortDesc = sorting.find(s => s.id === 'client')?.desc ?? false
     const columns = [
         {
             accessorKey: "project_name",
@@ -619,10 +620,9 @@ export function ProjectTable({ projects, ownRepos }) {
         },
         {
             id: "client",
-            // null → undefined so sortUndefined keeps Unassigned last in both directions
-            accessorFn: row => clientOf(row) ?? undefined,
-            sortingFn: (a, b) => compareClients(a.getValue("client"), b.getValue("client")),
-            sortUndefined: 'last',
+            accessorFn: row => clientOf(row) ?? null,
+            // Direction-aware so Unassigned stays last both ways (columns are rebuilt every render)
+            sortingFn: clientSortingFn(clientSortDesc),
             header: ({ column }) => (
                 <Button
                     variant="ghost"
@@ -1201,6 +1201,8 @@ export function ProjectTable({ projects, ownRepos }) {
         data: filteredProjects,
         columns,
         onSortingChange,
+        // Stable ids, so expanded rows stay with their project when filters change
+        getRowId: virtualRowId,
         getSubRows: row => (view === 'projects' && row.copyCount > 1 ? row.locations : undefined),
         getExpandedRowModel: getExpandedRowModel(),
         onExpandedChange: setExpanded,

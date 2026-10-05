@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { ROLES, locationMeta } from "@/lib/virtual-projects.mjs"
 import { formatTimeAgo, cn } from "@/lib/utils"
 
+const AUTO = '__auto__'
 const CLIENT_SOURCE_LABEL = { manual: 'manual', ai: 'AI', owner: 'remote owner', path: 'path' }
 
 async function patchMeta(body) {
@@ -91,10 +92,12 @@ export function ProjectLocations({ virtualProject: vp, clients, activeDirectory,
             <ul className="divide-y rounded-md border">
                 {vp.locations.map(loc => {
                     const meta = locationMeta(loc)
-                    const key = `role:${loc.directory}`
-                    const auto = loc.vp?.role_source === 'derived'
+                    // Edits target the checkout root; a weak-only root is shown through a member row
+                    const root = loc.locationRoot ?? loc.directory
+                    const key = `role:${root}`
+                    const manualRole = loc.vp?.role_source === 'manual'
                     // The tail tells checkouts apart (blog vs blog-test); the full path is the tooltip
-                    const path = loc.directory.split('/').filter(Boolean).slice(-2).join('/')
+                    const path = root.split('/').filter(Boolean).slice(-2).join('/')
                     return (
                         <li
                             key={loc.directory}
@@ -107,9 +110,9 @@ export function ProjectLocations({ virtualProject: vp, clients, activeDirectory,
                                 title="Primary checkout"
                                 checked={meta.role === 'primary'}
                                 disabled={busy !== null}
-                                onChange={() => run(key, { directory: loc.directory, role: 'primary' })}
+                                onChange={() => run(key, { directory: root, role: 'primary' })}
                             />
-                            <span className="flex-1 min-w-[8rem] truncate font-mono text-xs" title={loc.directory}>{path}</span>
+                            <span className="flex-1 min-w-[8rem] truncate font-mono text-xs" title={root}>{path}</span>
                             {loc.locationMembers > 1 && (
                                 <span className="text-xs text-muted-foreground" title="Indexed directories inside this checkout">
                                     {loc.locationMembers} dirs
@@ -129,13 +132,13 @@ export function ProjectLocations({ virtualProject: vp, clients, activeDirectory,
                             <select
                                 className="h-7 rounded-md border border-input bg-background px-1 text-xs"
                                 aria-label={`Role of ${path}`}
-                                title={auto ? 'Derived automatically — pick one to set it manually' : 'Set manually'}
-                                value={meta.role ?? ''}
+                                title={manualRole ? 'Set manually' : 'Derived automatically — pick a role to set it manually'}
+                                value={manualRole ? meta.role : AUTO}
                                 disabled={busy !== null}
-                                onChange={e => run(key, { directory: loc.directory, role: e.target.value })}
+                                onChange={e => run(key, { directory: root, role: e.target.value === AUTO ? null : e.target.value })}
                             >
-                                {meta.role === null && <option value="">no role</option>}
-                                {ROLES.map(r => <option key={r} value={r}>{r}{auto && r === meta.role ? ' (auto)' : ''}</option>)}
+                                <option value={AUTO}>{meta.role && !manualRole ? `auto (${meta.role})` : 'auto'}</option>
+                                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                             </select>
                             <Button
                                 variant="ghost"
