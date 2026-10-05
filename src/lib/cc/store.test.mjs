@@ -213,3 +213,54 @@ test('ensureColumns tolerates a column another process added after it read table
   assert.doesNotThrow(() => ensureColumns(stale));
   assert.ok(db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'title'));
 });
+
+import { setPlacements, listPlacementInputs } from './store.mjs';
+
+const prow = (id, dir, t) => ({ session_id: id, project_dir: dir, cwd: dir, model: 'x', started_at: t, ended_at: t, duration_s: 0, active_s: 0, input_tokens: 0, output_tokens: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, cost_usd: 0, turns: 1, status: 'done', raw_ref: `/t/${id}`, ingested_at: 'now' });
+
+test('migration adds workspace/base_dir (+ project_key index) to an old DB', () => {
+  const raw = new DatabaseSync(':memory:');
+  raw.exec('CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_dir TEXT, project_key TEXT, cwd TEXT)');
+  raw.exec('CREATE TABLE ingest_state (path TEXT PRIMARY KEY, session_id TEXT, signature TEXT, ingested_at TEXT)');
+  ensureColumns(raw);
+  const cols = raw.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+  assert.ok(cols.includes('workspace') && cols.includes('base_dir'));
+  assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_sessions_project_key'").get());
+});
+
+test('upsert never touches placement columns', () => {
+  const db = seed();
+  setPlacements(db, [{ session_id: 's1', project_key: 'P1', workspace: 'agent-office:x', base_dir: '/p' }]);
+  upsertSession(db, prow('s1', '/p/a', '2026-08-21T10:00:00Z'));
+  const s = getSession(db, 's1').session;
+  assert.equal(s.project_key, 'P1');
+  assert.equal(s.workspace, 'agent-office:x');
+  assert.equal(s.base_dir, '/p');
+});
+
+test('listPlacementInputs returns every row', () => {
+  const db = seed();
+  assert.deepEqual(Object.keys(listPlacementInputs(db)[0]).sort(),
+    ['base_dir', 'cwd', 'project_dir', 'project_key', 'raw_ref', 'session_id', 'workspace']);
+});
+
+test('setPlacements with no rows is a no-op', () => {
+  assert.equal(setPlacements(seed(), []), 0);
+});
+
+test('project filter matches base_dir subtree, not sibling prefixes', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, prow('main', '/p/blog', '2026-08-21T10:00:00Z'));
+  upsertSession(db, prow('wt', '/p/blog/.agent-office/worktrees/x', '2026-08-21T11:00:00Z'));
+  upsertSession(db, prow('sib', '/p/blog-huha', '2026-08-21T12:00:00Z'));
+  upsertSession(db, prow('unplaced', '/p/blog/sub', '2026-08-21T13:00:00Z'));
+  upsertSession(db, prow('pct', '/p/blog%', '2026-08-21T14:00:00Z'));
+  setPlacements(db, [
+    { session_id: 'main', project_key: 'P', workspace: null, base_dir: '/p/blog' },
+    { session_id: 'wt', project_key: 'P', workspace: 'agent-office:x', base_dir: '/p/blog' },
+    { session_id: 'sib', project_key: 'P', workspace: null, base_dir: '/p/blog-huha' },
+  ]);
+  assert.deepEqual(listSessions(db, { project: '/p/blog' }).map((s) => s.session_id).sort(), ['main', 'unplaced', 'wt']);
+  assert.deepEqual(listSessions(db, { projectKey: 'P' }).map((s) => s.session_id).sort(), ['main', 'sib', 'wt']);
+  assert.deepEqual(listSessions(db, { project: '/p/blog%' }).map((s) => s.session_id), ['pct']);
+});
