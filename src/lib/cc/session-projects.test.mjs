@@ -78,3 +78,21 @@ test('facetCounts: an unplaced family is its own project bucket keyed like the t
   assert.deepEqual(f.projects.map((p) => [p.key, p.name, p.count]), [['/p/loose', 'loose', 1]])
   assert.deepEqual(f.clients.map((c) => [c.id, c.name]), [[UNASSIGNED, 'Unassigned']])
 })
+
+import { annotateDetail } from './session-projects.mjs'
+
+test('annotateDetail annotates session, children and parent of a detail payload (summarize route reuses it)', () => {
+  const idx = projectIndex(REGISTRY)
+  const d = annotateDetail({
+    session: { session_id: 's', project_key: 'git:gitlab.com/intelimail/blog' },
+    children: [{ session_id: 'c', project_key: null, project_dir: '/p/x' }],
+    parent: { session_id: 'p', project_key: 'git:gitlab.com/intelimail/blog' },
+    tools: [1],
+  }, idx)
+  assert.equal(d.session.client_name, 'Intelimail')
+  assert.equal(d.children[0].client_id, null)
+  assert.equal(d.parent.client_id, 'intelimail')
+  assert.deepEqual(d.tools, [1])
+  assert.equal(annotateDetail({ session: null }, idx).session, null)
+  assert.equal(annotateDetail({ session: { session_id: 'z' } }, idx).parent, undefined)
+})

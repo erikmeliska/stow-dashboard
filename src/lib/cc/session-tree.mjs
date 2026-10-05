@@ -152,7 +152,7 @@ export const SORT_KEYS = {
   sub_count: (f) => f.sub_count || 0,
   // null = unassigned / unknown: sorts last in both directions.
   client: (f) => f.client_name || null,
-  project: (f) => f.project_name || (sessionProjectKey(f) ? sessionProjectLabel(f) : null),
+  project: (f) => { const n = f.project_name || (sessionProjectKey(f) ? sessionProjectLabel(f) : null); return n && n !== '—' ? n : null; },
 };
 
 /** Stable sort by one of SORT_KEYS; `dir` 'asc' | 'desc'; null values last either way. Unknown key → input order. */

@@ -28,10 +28,10 @@ import { buildSessionTree } from '../lib/cc/session-tree.mjs'
 import { effectiveKind } from '../lib/cc/session-link.mjs'
 import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '../lib/cc/session-project.mjs'
-import { loadProjectIndex, resolveClient } from '../lib/cc/project-index.mjs'
+import { loadProjectIndex } from '../lib/cc/project-index.mjs'
 import { annotateSessions, UNASSIGNED } from '../lib/cc/session-projects.mjs'
 import { filterSessions } from '../lib/cc/session-filters.mjs'
-import { clientsSummary, clientProjects } from './sessions-by-client.mjs'
+import { clientsSummary, clientProjects, clientArg } from './sessions-by-client.mjs'
 import { batchModel, rangeBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
@@ -1116,8 +1116,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const { registry, index, projectKeyOf } = await loadProjectIndex(STATE)
                 let client = null
                 if (args.client) {
-                    client = resolveClient(registry, args.client)
-                    if (!client) return unknownClient(registry, args.client)
+                    const r = clientArg(registry, args.client)
+                    if (r.error) return r.error === 'unavailable' ? registerUnavailable() : unknownClient(registry, args.client)
+                    client = r.client
                 }
                 const projectDirKey = args.project && projectKeyOf ? projectKeyOf(args.project) : undefined
                 const rows = annotateSessions(listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, projectDirKey, limit: 5000 }), index)
@@ -1174,8 +1175,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'list_client_projects': {
             const { registry } = await loadProjectIndex(STATE)
             if (!registry) return registerUnavailable()
-            const client = resolveClient(registry, args.client)
-            if (!client) return unknownClient(registry, args.client)
+            const { client, error } = clientArg(registry, args.client)
+            if (error) return unknownClient(registry, args.client)
             return { content: [{ type: 'text', text: JSON.stringify(clientProjects(registry, client), null, 2) }] }
         }
 

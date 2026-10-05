@@ -30,3 +30,12 @@ test('clientProjects lists a client’s projects with locations; unassigned work
   assert.deepEqual(p[1].locations[0], { directory: '/p/blog', role: 'primary' })
   assert.deepEqual(clientProjects(REG, 'unassigned').map((x) => x.name), ['sandbox'])
 })
+
+import { clientArg } from './sessions-by-client.mjs'
+
+test('clientArg: resolves, flags an unknown client, and blames a missing register instead of the client', () => {
+  assert.deepEqual(clientArg(REG, 'InteliMail'), { client: { id: 'intelimail', name: 'Intelimail' } })
+  assert.deepEqual(clientArg(REG, 'nobody'), { error: 'unknown' })
+  assert.deepEqual(clientArg(null, 'Intelimail'), { error: 'unavailable' })
+  assert.deepEqual(clientArg(null, 'unassigned'), { client: 'unassigned' }, 'unassigned still works without a register')
+})

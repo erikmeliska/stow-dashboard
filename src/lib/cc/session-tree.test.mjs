@@ -123,3 +123,9 @@ test('group by client: buckets by cost, Unassigned last regardless of cost', () 
   const g = groupFamilies(VFAMS, 'client');
   assert.deepEqual(g.map((x) => [x.key, x.label, x.count]), [['acme', 'Acme', 2], ['zeta', 'Zeta', 1], [UNASSIGNED, 'Unassigned', 1]]);
 });
+
+test('sort by project: a row with no project at all (label —) stays last in both directions', () => {
+  const rows = [{ session_id: 'x', project_name: '—', rollup: {} }, vfam('a', 'A', 'api', 1), vfam('b', 'B', 'web', 1)];
+  assert.deepEqual(vsid(sortFamilies(rows, { key: 'project', dir: 'asc' })), ['a', 'b', 'x']);
+  assert.deepEqual(vsid(sortFamilies(rows, { key: 'project', dir: 'desc' })), ['b', 'a', 'x']);
+});

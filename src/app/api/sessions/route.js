@@ -1,5 +1,5 @@
 import { openStore, listSessions, listSubagents, getSession } from '../../../lib/cc/store.mjs'
-import { annotateSessions } from '../../../lib/cc/session-projects.mjs'
+import { annotateDetail, annotateSessions } from '../../../lib/cc/session-projects.mjs'
 import { loadProjectIndex } from '../../../lib/cc/project-index.mjs'
 
 /**
@@ -24,8 +24,7 @@ export function handle(searchParams, db, { index = null, projectNames = new Map(
   const id = searchParams.get('id')
   if (id) {
     const r = getSession(db, id)
-    if (!r) return { session: null }
-    return { ...r, session: named([r.session])[0], children: named(r.children || []), parent: r.parent ? named([r.parent])[0] : r.parent }
+    return r ? annotateDetail(r, idx) : { session: null }
   }
   const project = searchParams.get('project') || undefined
   const projectKey = searchParams.get('project_key') || undefined

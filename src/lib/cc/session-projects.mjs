@@ -41,6 +41,13 @@ export function annotateSessions(rows, index = new Map()) {
   })
 }
 
+/** A `getSession`-shaped detail (`session`, `children`, `parent`) with every row annotated; other keys untouched. */
+export function annotateDetail(detail, index = new Map()) {
+  if (!detail?.session) return detail
+  const one = (r) => (r ? annotateSessions([r], index)[0] : r)
+  return { ...detail, session: one(detail.session), children: annotateSessions(detail.children || [], index), parent: one(detail.parent) }
+}
+
 /** `null` = main checkout; else `{ kind, name, label, raw }`. Unknown kinds or shapes → kind 'other', shown verbatim. */
 export function parseWorkspace(ws) {
   if (!ws) return null

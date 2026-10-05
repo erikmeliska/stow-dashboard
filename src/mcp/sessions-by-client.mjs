@@ -4,6 +4,8 @@
  * Unassigned projects are reported as client id 'unassigned'.
  */
 
+import { resolveClient } from '../lib/cc/project-index.mjs'
+
 const UNASSIGNED_ID = 'unassigned'
 const round2 = (n) => Number(n.toFixed(2))
 
@@ -41,4 +43,14 @@ export function clientProjects(registry, client) {
     .filter((p) => (p.client?.id ?? null) === want)
     .map(pick)
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * A tool's `client` argument → `{ client }` (`{ id, name }` or 'unassigned'), or `{ error }`:
+ * 'unavailable' when the register couldn't be loaded (so the client isn't blamed), 'unknown' otherwise.
+ */
+export function clientArg(registry, q) {
+  const client = resolveClient(registry, q)
+  if (client) return { client }
+  return { error: registry ? 'unknown' : 'unavailable' }
 }
