@@ -7,6 +7,9 @@
 import path from 'node:path'
 import { identityOf, remoteOwner } from './identity.mjs'
 import { buildClientCatalog, bizzClient, cleanClientName } from './client.mjs'
+import fs from 'node:fs/promises'
+import { dataFile, ledgerFile } from '../state-dir.mjs'
+import { readStowMeta } from './stow-meta.mjs'
 
 export const STALE_DAYS = 180
 const DAY_MS = 86400000
@@ -123,4 +126,57 @@ export function buildRegistry(records, { metas = new Map(), config = { clients: 
     count(stats.by_kind, p.kind)
   }
   return { clients, projects, stats }
+}
+
+export const REGISTRY_FILE = 'registry.json'
+const META_CONCURRENCY = 32
+
+export function parseRegistryConfig(text) {
+  let raw
+  try { raw = JSON.parse(text) } catch (e) { throw new Error(`invalid ${REGISTRY_FILE}: ${e.message}`) }
+  const list = raw?.clients ?? []
+  if (!Array.isArray(list)) throw new Error(`invalid ${REGISTRY_FILE}: clients must be an array`)
+  const clients = list.map((c, i) => {
+    if (!c || typeof c.name !== 'string' || !c.name.trim()) throw new Error(`invalid ${REGISTRY_FILE}: clients[${i}].name`)
+    const aliases = c.aliases ?? []
+    if (!Array.isArray(aliases) || aliases.some(a => typeof a !== 'string')) throw new Error(`invalid ${REGISTRY_FILE}: clients[${i}].aliases`)
+    return { name: c.name.trim(), aliases }
+  })
+  return { version: 1, clients }
+}
+
+export async function readRegistryConfig(opts = {}) {
+  let text
+  try { text = await fs.readFile(dataFile(REGISTRY_FILE, opts), 'utf8') } catch (e) {
+    if (e.code === 'ENOENT') return { version: 1, clients: [] }
+    throw e
+  }
+  return parseRegistryConfig(text)
+}
+
+async function readLedger(opts) {
+  let text
+  try { text = await fs.readFile(ledgerFile(opts), 'utf8') } catch (e) {
+    if (e.code === 'ENOENT') return []
+    throw e
+  }
+  const rows = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try { rows.push(JSON.parse(line)) } catch { /* skip malformed line */ }
+  }
+  return rows
+}
+
+export async function loadRegistry({ base, readMeta = readStowMeta, now = Date.now() } = {}) {
+  const opts = base ? { base } : {}
+  const [records, config] = await Promise.all([readLedger(opts), readRegistryConfig(opts)])
+  const metas = new Map()
+  const dirs = [...new Set(records.map(r => r?.directory).filter(d => typeof d === 'string'))]
+  for (let i = 0; i < dirs.length; i += META_CONCURRENCY) {
+    const chunk = dirs.slice(i, i + META_CONCURRENCY)
+    const got = await Promise.all(chunk.map(d => readMeta(d)))
+    chunk.forEach((d, j) => metas.set(d, got[j]))
+  }
+  return buildRegistry(records, { metas, config, now })
 }

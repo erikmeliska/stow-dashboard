@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRegistry, deriveRole } from './registry.mjs'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { parseRegistryConfig, readRegistryConfig, loadRegistry } from './registry.mjs'
 
 const NOW = Date.parse('2026-10-05T00:00:00Z')
 const day = n => new Date(NOW - n * 86400000).toISOString()
@@ -100,4 +104,34 @@ test('sorting and stats: unassigned last, by_kind / by_client_source counts', ()
   assert.deepEqual(r.projects.map(p => p.name), ['alpha', 'beta', 'zeta'])
   assert.deepEqual(r.stats, { records: 3, projects: 3, multi_location: 0, locations_in_multi: 0, unassigned: 1,
     by_kind: { git: 1, path: 2 }, by_client_source: { path: 2 } })
+})
+
+test('parseRegistryConfig validates shape', () => {
+  assert.deepEqual(parseRegistryConfig('{"clients":[{"name":"TriSoft","aliases":["tri-soft"]},{"name":"Acme"}]}'),
+    { version: 1, clients: [{ name: 'TriSoft', aliases: ['tri-soft'] }, { name: 'Acme', aliases: [] }] })
+  assert.throws(() => parseRegistryConfig('{nope'), /registry.json/)
+  assert.throws(() => parseRegistryConfig('{"clients":[{"aliases":[]}]}'), /name/)
+  assert.throws(() => parseRegistryConfig('{"clients":[{"name":"A","aliases":"x"}]}'), /aliases/)
+})
+
+test('loadRegistry reads ledger + config from the state dir and metas per directory', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-reg-'))
+  const saved = process.env.STOW_STATE_DIR
+  process.env.STOW_STATE_DIR = base
+  try {
+    await fs.mkdir(path.join(base, 'data'))
+    assert.deepEqual(await readRegistryConfig(), { version: 1, clients: [] })
+    await fs.writeFile(path.join(base, 'data', 'projects_metadata.jsonl'),
+      JSON.stringify(rec('a', '/P/one')) + '\nnot json\n' + JSON.stringify(rec('b', '/P/two')) + '\n')
+    await fs.writeFile(path.join(base, 'data', 'registry.json'), '{"clients":[{"name":"Acme"}]}')
+    const readMeta = async dir => dir === '/P/one'
+      ? { meta: { id: 'p_oneoneoneone', client: 'acme' }, warnings: [] } : { meta: null, warnings: [] }
+    const r = await loadRegistry({ readMeta, now: NOW })
+    assert.equal(r.stats.records, 2)
+    assert.deepEqual(r.projects.map(p => [p.key, p.client?.name ?? null]),
+      [['stow:p_oneoneoneone', 'Acme'], ['path:/P/two', null]])
+  } finally {
+    if (saved === undefined) delete process.env.STOW_STATE_DIR; else process.env.STOW_STATE_DIR = saved
+    await fs.rm(base, { recursive: true, force: true })
+  }
 })
