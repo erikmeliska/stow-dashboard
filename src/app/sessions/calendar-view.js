@@ -6,7 +6,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   bannerIds, calendarFamilies, calendarSlot, colorBy, COLOR_MODES, DEFAULT_COLOR_MODE, daySegment,
-  harnessBadge, layoutDay, periodLabel, periodStats, shiftPeriod,
+  harnessBadge, layoutDay, layoutPoints, periodLabel, periodStats, shiftPeriod,
 } from '@/lib/cc/session-calendar.mjs'
 import { SummaryBanner } from './summary-banner'
 import { ColorLegend, ColorSelect } from './color-controls'
@@ -16,6 +16,7 @@ import { formatWorkspace } from '@/lib/cc/workspace.mjs'
 import { WorkspaceBadge } from './workspace-badge'
 
 const HOUR_PX = 44
+const DOT_PX = 9
 const fmtCost = (c) => `$${(c || 0).toFixed(2)}`
 const fmtHours = (s) => `${(s / 3600).toFixed(1)} h`
 
@@ -137,14 +138,19 @@ function WeekGrid({ days, events, selected, onOpen, colorMode }) {
   const scroller = useRef(null)
   useEffect(() => { if (scroller.current) scroller.current.scrollTop = 7 * HOUR_PX }, [])
   const perDay = useMemo(() => days.map((day) => {
-    const segs = []
+    const segs = [], points = []
     for (const e of events) {
       const slot = calendarSlot(e)
       const seg = slot && daySegment(slot, day)
-      if (seg) segs.push({ ...seg, e })
+      if (seg) (seg.point ? points : segs).push({ ...seg, e })
     }
+    // Dots take no height and stay out of the column layout; they only dodge each other.
     const lay = layoutDay(segs.map((s) => ({ id: s.e.session_id, start: s.top, end: s.top + s.height })))
-    return segs.map((s) => ({ ...s, ...lay.get(s.e.session_id) }))
+    const dots = layoutPoints(points.map((p) => ({ id: p.e.session_id, top: p.top })), (DOT_PX / HOUR_PX) * 60)
+    return {
+      segs: segs.map((s) => ({ ...s, ...lay.get(s.e.session_id) })),
+      points: points.map((p) => ({ ...p, slot: dots.get(p.e.session_id) })),
+    }
   }), [days, events])
 
   return (
@@ -162,12 +168,16 @@ function WeekGrid({ days, events, selected, onOpen, colorMode }) {
               <div key={h} className="absolute right-1 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums" style={{ top: h * HOUR_PX }}>{h ? `${h}:00` : ''}</div>
             ))}
           </div>
-          {perDay.map((segs, i) => (
+          {perDay.map(({ segs, points }, i) => (
             <div key={+days[i]} className={`relative border-l ${isToday(days[i]) ? 'bg-muted/30' : ''}`}>
               {Array.from({ length: 24 }, (_, h) => <div key={h} className="absolute inset-x-0 border-t border-border/50" style={{ top: h * HOUR_PX }} />)}
               {segs.map((s) => (
                 <EventBlock key={s.e.session_id} e={s.e} colorMode={colorMode} selected={selected === s.e.session_id} onOpen={onOpen}
                   style={{ top: (s.top / 60) * HOUR_PX, height: Math.max((s.height / 60) * HOUR_PX - 1, 14), left: `calc(${(s.col / s.cols) * 100}% + 1px)`, width: `calc(${100 / s.cols}% - 2px)` }} />
+              ))}
+              {points.map((p) => (
+                <EventDot key={p.e.session_id} e={p.e} colorMode={colorMode} selected={selected === p.e.session_id} onOpen={onOpen}
+                  style={{ top: (p.top / 60) * HOUR_PX - DOT_PX / 2, right: 2 + p.slot * (DOT_PX + 2) }} />
               ))}
             </div>
           ))}
@@ -188,13 +198,30 @@ function OutcomeMark({ e }) {
   return <span title={sum.outcome} className="flex-none">{OUTCOME_ICON[sum.outcome] || ''}</span>
 }
 
+function eventTip(e, title, bucket, colorMode) {
+  const r = e.rollup || e
+  const mins = Math.round((r.active_s || 0) / 60)
+  return `${title}\n${sessionProjectLabel(e)}${e.workspace ? ` · ${formatWorkspace(e.workspace)}` : ''} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
+}
+
+/** A session with ~no active time: a dot at its start time instead of a 15-min block. */
+function EventDot({ e, style, selected, onOpen, colorMode }) {
+  const title = displayTitle(e) || 'Untitled session'
+  const bucket = colorBy(e, colorMode)
+  return (
+    <button onClick={() => onOpen(e.session_id)} title={eventTip(e, title, bucket, colorMode)} aria-label={title}
+      className={`absolute z-[5] rounded-full ring-1 ring-background hover:z-10 hover:scale-150 ${e.muted ? 'opacity-50' : ''} ${selected ? 'outline outline-2 outline-ring' : ''}`}
+      style={{ ...style, width: DOT_PX, height: DOT_PX, background: bucket.color }} />
+  )
+}
+
 export function EventBlock({ e, style, selected, onOpen, compact = false, colorMode = DEFAULT_COLOR_MODE }) {
   const title = displayTitle(e) || 'Untitled session'
   const bucket = colorBy(e, colorMode)
   const color = bucket.color
   const r = e.rollup || e
   const mins = Math.round((r.active_s || 0) / 60)
-  const tip = `${title}\n${sessionProjectLabel(e)}${e.workspace ? ` · ${formatWorkspace(e.workspace)}` : ''} · ${format(new Date(e.started_at), 'HH:mm')} · ${mins} min active · ${fmtCost(r.cost_usd)}${e.sub_count ? ` · +${e.sub_count} sub` : ''}\n${COLOR_MODES[colorMode]?.label}: ${bucket.label}`
+  const tip = eventTip(e, title, bucket, colorMode)
   return (
     <button onClick={() => onOpen(e.session_id)} title={tip}
       className={`${compact ? 'relative w-full' : 'absolute'} overflow-hidden rounded-sm border-l-4 px-1 py-0.5 text-left text-[11px] leading-tight hover:z-10 hover:shadow ${e.muted ? 'opacity-50' : ''} ${selected ? 'ring-2 ring-ring' : ''}`}

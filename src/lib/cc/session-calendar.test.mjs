@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   periodRange, shiftPeriod, calendarSlot, daySegment, layoutDay, projectColor, harnessBadge,
   calendarFamilies, missingSummaryIds, periodStats, formatEta, loadKey, bannerIds, colorBy, colorLegend, COLOR_MODES,
+  layoutPoints, defaultColorMode,
 } from './session-calendar.mjs';
 
 const L = (d, h = 0, m = 0) => new Date(2026, 8, d, h, m); // September 2026, local
@@ -29,8 +30,9 @@ test('calendarSlot: real end up to 5 h, else max(active, 30 min); at least 15 mi
   assert.equal(+overnight.end, +L(9, 19));
   const idle = calendarSlot({ started_at: iso(L(9, 18)), ended_at: iso(L(10, 9)), active_s: 60 });
   assert.equal(+idle.end, +L(9, 18, 30));
-  const tiny = calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 2)) });
+  const tiny = calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 2)), active_s: 90 });
   assert.equal(+tiny.end, +L(9, 10, 15));
+  assert.equal(tiny.point, undefined);
   const open = calendarSlot({ started_at: iso(L(9, 10)), ended_at: null, active_s: 0 });
   assert.equal(+open.end, +L(9, 10, 30));
   assert.equal(calendarSlot({ started_at: null }), null);
@@ -43,6 +45,34 @@ test('daySegment clips a session that crosses midnight onto both days', () => {
   assert.equal(daySegment(slot, L(11)), null);
   const edge = daySegment({ start: L(9, 23, 55), end: L(10, 0, 0) }, L(9));
   assert.equal(edge.top + edge.height, 1440, 'min height never spills past midnight');
+});
+
+test('calendarSlot: ~0 active time and a short real span is a point, not a 15-min block', () => {
+  const zero = calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 0)), active_s: 0 });
+  assert.deepEqual(zero, { start: L(9, 10), end: L(9, 10), point: true });
+  const blip = calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 4)), active_s: 22 });
+  assert.equal(blip.point, true);
+  // Rollup (children included) decides for a family.
+  assert.equal(calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 1)), active_s: 0, rollup: { active_s: 600 } }).point, undefined);
+  // A long real span stays a block even when idle; so does an open session.
+  assert.equal(calendarSlot({ started_at: iso(L(9, 10)), ended_at: iso(L(9, 10, 6)), active_s: 0 }).point, undefined);
+  assert.equal(calendarSlot({ started_at: iso(L(9, 10)), ended_at: null, active_s: 0 }).point, undefined);
+});
+
+test('daySegment: a point has no height and lands only on its start day', () => {
+  const slot = calendarSlot({ started_at: iso(L(9, 23, 59)), ended_at: iso(L(9, 23, 59)), active_s: 0 });
+  assert.deepEqual(daySegment(slot, L(9)), { top: 23 * 60 + 59, height: 0, point: true, continued: false, continues: false });
+  assert.equal(daySegment(slot, L(10)), null);
+  const midnight = calendarSlot({ started_at: iso(L(10)), ended_at: iso(L(10)), active_s: 0 });
+  assert.equal(daySegment(midnight, L(9)), null);
+  assert.equal(daySegment(midnight, L(10)).top, 0);
+});
+
+test('layoutPoints moves a dot that would overlap an earlier one into the next slot', () => {
+  const lay = layoutPoints([
+    { id: 'c', top: 605 }, { id: 'a', top: 600 }, { id: 'b', top: 602 }, { id: 'd', top: 630 },
+  ]);
+  assert.deepEqual(['a', 'b', 'c', 'd'].map((id) => lay.get(id)), [0, 1, 2, 0]);
 });
 
 test('layoutDay puts overlapping events side by side, separate clusters full width', () => {
@@ -172,4 +202,13 @@ test('colorLegend client: most frequent first, Unassigned last, capped with +N m
   assert.equal(legend.at(-1).count, 5);
   assert.equal(legend.at(-2).key, 'more');
   assert.equal(legend.length, 10);
+});
+
+test('defaultColorMode: project when most shown sessions have no summary, else outcome', () => {
+  const sum = { summary: JSON.stringify({ v: 2, outcome: 'done' }) };
+  assert.equal(defaultColorMode([{}, {}, sum]), 'project');
+  assert.equal(defaultColorMode([{}, sum]), 'outcome');
+  assert.equal(defaultColorMode([sum, sum, {}]), 'outcome');
+  assert.equal(defaultColorMode([]), 'outcome');
+  assert.equal(defaultColorMode(null), 'outcome');
 });

@@ -10,7 +10,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { filterSessions, QUALITY_FILTERS, QUICK_FILTERS, SOURCE_FILTERS } from '@/lib/cc/session-filters.mjs'
 import { buildSessionTree, familyOf, groupFamilies, GROUP_BY, sortFamilies } from '@/lib/cc/session-tree.mjs'
 import { CHILD_KINDS, effectiveKind } from '@/lib/cc/session-link.mjs'
-import { colorBy, COLOR_MODES, loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
+import { colorBy, COLOR_MODES, defaultColorMode, loadKey, periodRange } from '@/lib/cc/session-calendar.mjs'
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
 import { facetCounts, UNASSIGNED } from '@/lib/cc/session-projects.mjs'
@@ -464,7 +464,7 @@ function SessionsView() {
   const [workspaceFilter, setWorkspaceFilter] = useState('any')
   const [groupBy, setGroupBy] = useState('none')
   const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
-  const [colorMode, setColorMode] = useColorMode()
+  const [pickedColorMode, setColorMode] = useColorMode()
   const view = searchParams.get('view') === 'calendar' ? 'calendar' : 'table'
   const span = searchParams.get('span') === 'month' ? 'month' : 'week'
   const dateParam = searchParams.get('date') || ''
@@ -549,6 +549,8 @@ function SessionsView() {
   const availableModels = Array.from(new Set(sessions.map((s) => s.model).filter(Boolean))).sort()
   // Filters apply to the family head; its subagents and linked sessions ride along.
   const filtered = filterSessions(families, { search: searchQuery, model: modelFilter, quality: qualityFilter, source: sourceFilter, quick: [...quick], clients: clientFilter, projects: projectFilter, workspace: workspaceFilter })
+  // No stored pick: outcome, or project while most shown sessions have no summary (all-grey otherwise).
+  const colorMode = pickedColorMode ?? defaultColorMode(filtered)
   const filtering = searchQuery.trim() !== '' || modelFilter !== 'any' || qualityFilter !== 'any' || sourceFilter !== 'any' || quick.size > 0 ||
     clientFilter.length > 0 || projectFilter.length > 0 || workspaceFilter !== 'any'
   const groups = useMemo(() => groupFamilies(sortFamilies(filtered, sort), groupBy), [filtered, sort, groupBy])
