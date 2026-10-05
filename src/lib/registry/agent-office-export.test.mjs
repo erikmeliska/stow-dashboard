@@ -138,7 +138,7 @@ test('last_activity accepts ms numbers', () => {
 test('linked git worktrees (from the ledger) are dropped like worktree paths', () => {
   const linked = `${B}/app-feature`
   const p = project({ ...app, primary: linked, locations: [loc(linked, 'primary', '2026-10-05T10:00:00Z'), loc(`${B}/app`, 'experiment', '2026-10-01T00:00:00Z')] })
-  const [f] = buildAgentOfficeExport(reg(p), { now: NOW, exists: all, worktrees: new Set([linked]) }).buildings[0].floors
+  const [f] = buildAgentOfficeExport(reg(p), { now: NOW, exists: all, worktrees: new Map([[linked, `${B}/app`]]) }).buildings[0].floors
   assert.equal(f.dir, `${B}/app`)
   assert.deepEqual(f.locations.map(l => l.dir), [`${B}/app`])
 })
@@ -178,7 +178,7 @@ test('linkedWorktreeRoots: roots whose checkout.main is another work tree', () =
     { directory: '/x' },
     null,
   ]
-  assert.deepEqual([...linkedWorktreeRoots(rows)], ['/r-feat'])
+  assert.deepEqual([...linkedWorktreeRoots(rows)], [['/r-feat', '/r']])
 })
 
 test('exportAgentOffice drops linked worktrees found in the ledger', async (t) => {
@@ -190,4 +190,20 @@ test('exportAgentOffice drops linked worktrees found in the ledger', async (t) =
   const p = project({ ...app, primary: linked, locations: [loc(linked, 'primary', '2026-10-05T10:00:00Z'), loc(`${B}/app`, 'experiment')] })
   const { doc } = await exportAgentOffice({ base, write: false, now: NOW, load: async () => reg(p), exists: all })
   assert.equal(doc.buildings[0].floors[0].dir, `${B}/app`)
+})
+
+test('worktree primary → its main checkout, even when a clone is more active', () => {
+  const wt = `${B}/app/.agent-office/worktrees/bolt-1`
+  const linked = `${B}/app-linked`
+  const locs = primary => [loc(primary, 'primary', 30), loc(`${B}/app-clone`, 'experiment', 20), loc(`${B}/app`, 'stale', 10)]
+  const byPath = buildAgentOfficeExport(reg(project({ ...app, primary: wt, locations: locs(wt) })), { now: NOW, exists: all })
+  assert.equal(byPath.buildings[0].floors[0].dir, `${B}/app`)
+  const byLedger = buildAgentOfficeExport(reg(project({ ...app, primary: linked, locations: locs(linked) })),
+    { now: NOW, exists: all, worktrees: new Map([[linked, `${B}/app`]]) })
+  assert.equal(byLedger.buildings[0].floors[0].dir, `${B}/app`)
+})
+
+test('the document records its filter', () => {
+  assert.deepEqual(buildAgentOfficeExport(reg(blog), { now: NOW, exists: all }).filter, { client: null, unassigned: false })
+  assert.deepEqual(buildAgentOfficeExport(reg(blog), { now: NOW, exists: all, client: 'InteliMail', includeUnassigned: true }).filter, { client: 'intelimail', unassigned: true })
 })

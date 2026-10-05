@@ -17,6 +17,7 @@ export const UNASSIGNED_ID = 'unassigned'
 
 // Worker worktrees are short-lived checkouts of a project, never its floor.
 const WORKTREE_RE = /\/\.(?:agent-office|claude)\/worktrees\//
+const WORKTREE_MAIN_RE = /^(.*)\/\.(?:agent-office|claude)\/worktrees\//
 
 export function isWorktreePath(dir) {
   return WORKTREE_RE.test(dir + '/')
@@ -44,12 +45,18 @@ const toMs = v => {
 }
 const newestFirst = (a, b) => (toMs(b.last_activity) ?? -1) - (toMs(a.last_activity) ?? -1)
 
+// The main work tree a worktree belongs to: the ledger's `checkout.main`, or
+// the path in front of `.agent-office/worktrees` / `.claude/worktrees`.
+const mainOf = (dir, worktrees) => worktrees.get(dir) ?? WORKTREE_MAIN_RE.exec(dir + '/')?.[1] ?? null
+
 function toFloor(p, exists, worktrees) {
   const live = p.locations.filter(l => !isWorktreePath(l.directory) && !worktrees.has(l.directory) && exists(l.directory))
   if (!live.length) return null
-  // Keep the register's order (primary first); a dropped primary falls back
-  // to the most recently active remaining checkout.
-  const main = live.find(l => l.directory === p.primary) ?? [...live].sort(newestFirst)[0]
+  // Keep the register's order (primary first). A dropped primary falls back
+  // to its own main checkout — the busy-worker case, where the main sits idle
+  // — then to the most recently active remaining checkout.
+  const owner = mainOf(p.primary, worktrees)
+  const main = live.find(l => l.directory === p.primary) ?? live.find(l => l.directory === owner) ?? [...live].sort(newestFirst)[0]
   const times = live.map(l => toMs(l.last_activity)).filter(t => t != null)
   return {
     id: floorId(p.name, p.key),
@@ -67,11 +74,12 @@ const byActivityThenName = (a, b) =>
   (b.last_activity ?? '').localeCompare(a.last_activity ?? '') || a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
 
 /**
- * `worktrees` = checkout roots known to be linked git worktrees (the ledger's
- * `checkout.main`, #9); they are dropped like the two worktree path patterns.
+ * `worktrees` = Map<checkout root, main work tree> of linked git worktrees
+ * (the ledger's `checkout.main`, #9); they are dropped like the two worktree
+ * path patterns. `filter` in the result says which subset was exported.
  * Throws `code: 'UNKNOWN_CLIENT'` when `client` names no exported building.
  */
-export function buildAgentOfficeExport(registry, { now = Date.now(), includeUnassigned = false, client, exists = existsSync, worktrees = new Set() } = {}) {
+export function buildAgentOfficeExport(registry, { now = Date.now(), includeUnassigned = false, client, exists = existsSync, worktrees = new Map() } = {}) {
   const buildings = registry.clients.map(c => ({ id: c.id, name: c.name, keys: new Set(c.projects), floors: [] }))
   if (includeUnassigned) buildings.push({ id: UNASSIGNED_ID, name: 'Unassigned', keys: null, floors: [] })
 
@@ -97,6 +105,7 @@ export function buildAgentOfficeExport(registry, { now = Date.now(), includeUnas
     format: EXPORT_FORMAT,
     version: EXPORT_VERSION,
     generated_at: new Date(now).toISOString(),
+    filter: { client: client != null ? wanted[0].id : null, unassigned: includeUnassigned },
     buildings: out,
     skipped,
     stats: { buildings: out.length, floors: out.reduce((n, b) => n + b.floors.length, 0), skipped: skipped.length },
@@ -105,12 +114,12 @@ export function buildAgentOfficeExport(registry, { now = Date.now(), includeUnas
 
 export const EXPORT_FILE = 'agent-office.json'
 
-/** Checkout roots the scanner (#9) recorded as linked git worktrees. */
+/** Map<root, main> of checkouts the scanner (#9) recorded as linked git worktrees. */
 export function linkedWorktreeRoots(records) {
-  const roots = new Set()
+  const roots = new Map()
   for (const r of records) {
     const c = r?.checkout
-    if (c?.root && c.main && c.main !== c.root) roots.add(c.root)
+    if (c?.root && c.main && c.main !== c.root) roots.set(c.root, c.main)
   }
   return roots
 }
@@ -118,7 +127,7 @@ export function linkedWorktreeRoots(records) {
 async function readLinkedWorktrees(opts) {
   let text
   try { text = await readFile(ledgerFile(opts), 'utf8') } catch (e) {
-    if (e.code === 'ENOENT') return new Set()
+    if (e.code === 'ENOENT') return new Map()
     throw e
   }
   const rows = []
