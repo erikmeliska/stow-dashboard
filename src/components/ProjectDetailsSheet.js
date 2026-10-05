@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/tooltip"
 import { SplitOpenButton } from "@/components/SplitOpenButton"
 import { CopyButton } from "@/components/CopyButton"
+import { usageTokenTotals, claudeInput, codexInput, geminiInput, fmtTokens, fmtInputBreakdown } from "@/lib/usage-tokens.mjs"
 
 const DOC_SCORE_BAR_CLASS = {
     green: 'bg-green-500',
@@ -845,7 +846,6 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                     {project.usage && (() => {
                         const usage = project.usage
                         const t = usage.tokens || {}
-                        const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n ?? 0}`
 
                         const claudeModels = Object.entries(usage.byModel || {})
                         const codexModels = Object.entries(usage.byCodexModel || {})
@@ -858,10 +858,16 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                         const hasUnpriced = unpriced.size > 0
                         const activeHours = ((usage.activeMinutes ?? 0) / 60).toFixed(1)
 
-                        const inTokens = (t.input ?? 0) + (t.codexInput ?? 0) + (t.geminiInput ?? 0)
-                        const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0) + (t.geminiOutput ?? 0)
-                        const cacheRead = (t.cacheRead ?? 0) + (t.geminiCachedInput ?? 0)
-                        const cacheWrite = (t.cacheWrite5m ?? 0) + (t.cacheWrite1h ?? 0)
+                        // Total input = uncached + cache read + cache write, normalised per provider.
+                        const { input: inTotals, output: outTokens } = usageTokenTotals(t)
+                        const modelTokens = (inb, out) => (
+                            <span
+                                className="text-muted-foreground tabular-nums whitespace-nowrap"
+                                title={`in ${fmtInputBreakdown(inb)} · out ${fmtTokens(out)}`}
+                            >
+                                in {fmtTokens(inb.total)} · out {fmtTokens(out)}
+                            </span>
+                        )
 
                         const sessions = usage.sessionList || []
                         const visibleSessions = showAllSessions ? sessions : sessions.slice(0, 5)
@@ -889,14 +895,11 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-violet-500/20 text-violet-600 dark:text-violet-400">claude</span>
                                                         {claudeModels.map(([id, m]) => {
                                                             const name = id.replace(/^claude-/, '')
-                                                            const modelCacheW = (m.cacheWrite5m ?? 0) + (m.cacheWrite1h ?? 0)
                                                             const isUnpriced = unpriced.has(id)
                                                             return (
                                                                 <div key={id} className="flex items-center justify-between gap-2 text-xs">
                                                                     <span className="font-mono truncate">{name}</span>
-                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cacheRead ?? 0)}/{fmtTokens(modelCacheW)}
-                                                                    </span>
+                                                                    {modelTokens(claudeInput(m), m.output)}
                                                                     <span className="tabular-nums w-16 text-right">
                                                                         {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
                                                                     </span>
@@ -913,9 +916,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                             return (
                                                                 <div key={id} className="flex items-center justify-between gap-2 text-xs">
                                                                     <span className="font-mono truncate">{id}</span>
-                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cachedInput ?? 0)}
-                                                                    </span>
+                                                                    {modelTokens(codexInput(m), m.output)}
                                                                     <span className="tabular-nums w-16 text-right">
                                                                         {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
                                                                     </span>
@@ -932,9 +933,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                                             return (
                                                                 <div key={id} className="flex items-center justify-between gap-2 text-xs">
                                                                     <span className="font-mono truncate">{id}</span>
-                                                                    <span className="text-muted-foreground tabular-nums whitespace-nowrap">
-                                                                        {fmtTokens(m.input ?? 0)}/{fmtTokens(m.output ?? 0)}/{fmtTokens(m.cachedInput ?? 0)}
-                                                                    </span>
+                                                                    {modelTokens(geminiInput(m), m.output)}
                                                                     <span className="tabular-nums w-16 text-right">
                                                                         {isUnpriced ? 'unpriced' : formatUsd(m.costUsd ?? 0)}
                                                                     </span>
@@ -950,7 +949,7 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                                         <div className="flex items-start justify-between gap-2 text-xs bg-muted/50 rounded-lg p-3">
                                             <span className="text-muted-foreground">Tokens</span>
                                             <span className="tabular-nums text-right">
-                                                in {fmtTokens(inTokens)} · out {fmtTokens(outTokens)} · cacheR {fmtTokens(cacheRead)} · cacheW {fmtTokens(cacheWrite)}
+                                                in {fmtInputBreakdown(inTotals)} · out {fmtTokens(outTokens)}
                                             </span>
                                         </div>
 

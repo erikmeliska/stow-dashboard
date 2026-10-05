@@ -520,3 +520,23 @@ test('codexBuckets copies per-model buckets and puts the uncovered remainder in 
   assert.deepEqual(codexBuckets({ codex: null }), {})
 })
 
+
+test('aggregateUsage: sessionList tokensIn = uncached + cache read + cache write for every provider (#1)', () => {
+  const claude = { tool: 'claude', state: { ...newFileState('claude'), cwd: '/p/a', lastTs: '2026-07-10T10:03:00Z',
+    models: { 'claude-opus-4-8': { input: 10, output: 5, cacheRead: 1000, cacheWrite5m: 100, cacheWrite1h: 50 } } } }
+  const codex = codexEntry({ lastTs: '2026-07-10T10:02:00Z', codex: { input: 500, cachedInput: 400, output: 7 },
+    codexByModel: { 'gpt-5.3-codex': { input: 500, cachedInput: 400, output: 7 } } })
+  const gemini = { tool: 'gemini', state: { ...newFileState('gemini'), cwd: '/p/a', lastTs: '2026-07-10T10:01:00Z',
+    gemini: { input: 30, cachedInput: 300, output: 3, thinking: 0 },
+    geminiByModel: { 'gemini-3.8-flash': { input: 30, cachedInput: 300, output: 3, thinking: 0 } } } }
+  const p = aggregateUsage({ files: { '/f/c.jsonl': claude, '/f/x.jsonl': codex, '/f/g.db': gemini } }, ['/p/a']).projects['/p/a']
+  const byTool = Object.fromEntries(p.sessionList.map(s => [s.tool, s]))
+  assert.equal(byTool.claude.tokensIn, 10 + 1000 + 150) // cache read/write included, not just the uncached 10
+  assert.equal(byTool.codex.tokensIn, 500)              // cached already inside input — not 900
+  assert.equal(byTool.gemini.tokensIn, 330)
+  assert.deepEqual([byTool.claude.tokensOut, byTool.codex.tokensOut, byTool.gemini.tokensOut], [5, 7, 3])
+  // Ledger format unchanged: raw per-provider fields are still stored as-is.
+  assert.equal(p.tokens.input, 10)
+  assert.equal(p.tokens.codexInput, 500)
+  assert.equal(p.tokens.codexCachedInput, 400)
+})

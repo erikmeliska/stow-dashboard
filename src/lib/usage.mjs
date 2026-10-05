@@ -9,6 +9,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { costForClaude, costForCodex, costForGemini } from './usage-pricing.mjs'
+import { claudeInput, codexInput, geminiInput } from './usage-tokens.mjs'
 import { dataDir } from './state-dir.mjs'
 
 const ACTIVE_GAP_S = 300
@@ -546,7 +547,7 @@ function addSession(acc, absPath, entry) {
       const c = costForClaude(id, t)
       if (c === null) acc.unpricedModels.add(id)
       else { bm.costUsd += c; acc.costUsd += c; fileCostUsd += c }
-      tokensIn += t.input; tokensOut += t.output
+      tokensIn += claudeInput(t).total; tokensOut += t.output
       if (t.output > bestOut) { bestOut = t.output; model = id }
     }
   } else if (st.codex) {
@@ -567,7 +568,7 @@ function addSession(acc, absPath, entry) {
       else { bm.costUsd += c; acc.costUsd += c; fileCostUsd += c }
       if (b.output > bestOut) { bestOut = b.output; model = id }
     }
-    tokensIn += t.input; tokensOut += t.output
+    tokensIn += codexInput(t).total; tokensOut += t.output
   } else if (st.gemini) {
     const t = {
       input: st.gemini.input || 0,
@@ -592,7 +593,7 @@ function addSession(acc, absPath, entry) {
       else { bm.costUsd += c; acc.costUsd += c; fileCostUsd += c }
       if ((b.output || 0) > bestOut) { bestOut = b.output; model = id }
     }
-    tokensIn += t.input + t.cachedInput
+    tokensIn += geminiInput(t).total
     tokensOut += t.output
   }
 

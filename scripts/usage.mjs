@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { updateUsage, defaultUsagePaths } from '../src/lib/usage.mjs'
 import { priceSource } from '../src/lib/usage-pricing.mjs'
+import { usageTokenTotals } from '../src/lib/usage-tokens.mjs'
 import { ledgerFile } from '../src/lib/state-dir.mjs'
 
 // Run against the live state dir, not cwd: the desktop app writes its ledger
@@ -69,8 +70,9 @@ async function main() {
   const t = out.totals
   const hasUnpriced = Object.values(out.projects).some(p => (p.unpricedModels || []).length > 0)
     || (out.unmatched.unpricedModels || []).length > 0
-  const inTok = t.tokens.input + t.tokens.codexInput + (t.tokens.geminiInput || 0) + (t.tokens.geminiCachedInput || 0)
-  const outTok = t.tokens.output + t.tokens.codexOutput + (t.tokens.geminiOutput || 0)
+  // Total input = uncached + cache read + cache write (usage-tokens.mjs).
+  const { input: inTotals, output: outTok } = usageTokenTotals(t.tokens)
+  const inTok = inTotals.total
   console.log('\nTotals (list-price value of consumption, NOT an invoice):')
   console.log(`  Total   ${hasUnpriced ? '~' : ''}${fmtUsd(t.costUsd)}   (in ${fmtInt(inTok)} / out ${fmtInt(outTok)} tok)   ·  ${t.sessions} sessions  ·  ${(t.activeMinutes / 60).toFixed(1)} h`)
   console.log(`  Unmatched: ${out.unmatched.sessions} sessions · ${(out.unmatched.unpricedModels || []).length > 0 ? '~' : ''}${fmtUsd(out.unmatched.costUsd)}`)
