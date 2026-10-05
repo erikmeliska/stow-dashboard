@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/tooltip"
 import { SplitOpenButton } from "@/components/SplitOpenButton"
 import { CopyButton } from "@/components/CopyButton"
+import { ProjectLocations } from "@/components/ProjectLocations"
 import { usageTokenTotals, claudeInput, codexInput, geminiInput, fmtTokens, fmtInputBreakdown } from "@/lib/usage-tokens.mjs"
 
 const DOC_SCORE_BAR_CLASS = {
@@ -79,7 +80,13 @@ function StatItem({ label, value, className = "" }) {
     )
 }
 
-export function ProjectDetailsSheet({ open, onOpenChange, project }) {
+export function ProjectDetailsSheet({ open, onOpenChange, project: openedProject, virtualProject = null, clients = [] }) {
+    // Opened from a project row (#10): "Show" in Locations switches the whole
+    // sheet — git status, processes, scripts, actions — to another checkout.
+    // The choice belongs to the opened record, so opening another one resets it.
+    const [shown, setShown] = React.useState(null) // { from: opened directory, directory }
+    const activeDirectory = shown && shown.from === openedProject?.directory ? shown.directory : openedProject?.directory
+    const project = virtualProject?.locations.find(l => l.directory === activeDirectory) ?? openedProject
     const [gitDetails, setGitDetails] = React.useState(null)
     const [loading, setLoading] = React.useState(false)
     const [error, setError] = React.useState(null)
@@ -291,6 +298,16 @@ export function ProjectDetailsSheet({ open, onOpenChange, project }) {
                         {project.directory}
                     </SheetDescription>
                 </SheetHeader>
+
+                {virtualProject && (
+                    <ProjectLocations
+                        virtualProject={virtualProject}
+                        clients={clients}
+                        activeDirectory={project.directory}
+                        onShowLocation={directory => setShown({ from: openedProject.directory, directory })}
+                        onSaved={() => router.refresh()}
+                    />
+                )}
 
                 {/* Quick Actions - right under header */}
                 <TooltipProvider>
