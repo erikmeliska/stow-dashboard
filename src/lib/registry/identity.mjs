@@ -1,8 +1,17 @@
 /**
  * Project identity for the virtual-project register (#8): a hosted remote
  * URL normalised to host/path, else the stable id from .stow/project.json,
- * else the directory itself (unstable until #9 writes an id).
+ * else the checkout root itself (unstable; #9 writes an id for those).
  */
+
+/**
+ * The location a ledger row belongs to: its checkout root (#9 — git toplevel,
+ * or the row's own directory outside git). Rows without `checkout` (ledgers
+ * not yet rescanned) stand for themselves.
+ */
+export function locationOf(record) {
+  return record?.checkout?.root || record?.directory
+}
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i
 // scp-like `user@host:path`; the lookahead keeps `C:\` and `x://` out.
@@ -48,5 +57,5 @@ export function identityOf(record, meta) {
     if (remote) return { key: `git:${remote}`, kind: 'git', remote }
   }
   if (meta?.id) return { key: `stow:${meta.id}`, kind: 'stow', remote: null }
-  return { key: `path:${record.directory}`, kind: 'path', remote: null }
+  return { key: `path:${locationOf(record)}`, kind: 'path', remote: null }
 }

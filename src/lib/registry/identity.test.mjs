@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeRemote, remoteOwner, identityOf } from './identity.mjs'
+import { normalizeRemote, remoteOwner, identityOf, locationOf } from './identity.mjs'
 
 test('normalizeRemote: scp, https, ssh with port, credentials, proxy, local', () => {
   assert.equal(normalizeRemote('git@gitlab.com:intelimail/llm/sentiment.git'), 'gitlab.com/intelimail/llm/sentiment')
@@ -30,4 +30,11 @@ test('identityOf: remote wins, then stow id, then path', () => {
   assert.deepEqual(identityOf(git, { id: 'p_aaaaaaaaaaaa' }), { key: 'git:gitlab.com/intelimail/blog', kind: 'git', remote: 'gitlab.com/intelimail/blog' })
   assert.deepEqual(identityOf({ directory: '/p/x', git_info: { remotes: [] } }, { id: 'p_bbbbbbbbbbbb' }), { key: 'stow:p_bbbbbbbbbbbb', kind: 'stow', remote: null })
   assert.deepEqual(identityOf({ directory: '/p/y' }, null), { key: 'path:/p/y', kind: 'path', remote: null })
+})
+
+test('locationOf / identityOf: a row inside a checkout is located (and path-keyed) at its root (#9)', () => {
+  const sub = { directory: '/p/repo/web', checkout: { root: '/p/repo', subpath: 'web', git: true } }
+  assert.equal(locationOf(sub), '/p/repo')
+  assert.equal(locationOf({ directory: '/p/plain' }), '/p/plain')
+  assert.deepEqual(identityOf(sub, null), { key: 'path:/p/repo', kind: 'path', remote: null })
 })

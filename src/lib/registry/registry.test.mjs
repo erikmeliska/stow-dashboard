@@ -135,3 +135,73 @@ test('loadRegistry reads ledger + config from the state dir and metas per direct
     await fs.rm(base, { recursive: true, force: true })
   }
 })
+// --- #9: locations are checkout roots, not ledger rows ----------------------
+const inCheckout = (id, directory, root, extra = {}) =>
+  rec(id, directory, { checkout: { root, subpath: path.relative(root, directory), git: true }, ...extra })
+
+test('btstack: 49 rows in one checkout → one project, one location', () => {
+  const r = remote('https://github.com/bluekitchen/btstack.git')
+  const records = [inCheckout('root', '/e/btstack', '/e/btstack', r)]
+  for (let i = 0; i < 48; i++) records.push(inCheckout(`s${i}`, `/e/btstack/sub${i}`, '/e/btstack', { ...r, last_code_modified: day(i === 7 ? 0 : 3) }))
+  const { projects, stats } = buildRegistry(records, { now: NOW })
+  assert.equal(projects.length, 1)
+  assert.deepEqual(projects[0].locations.map(l => [l.directory, l.record_id, l.members]), [['/e/btstack', 'root', 49]])
+  assert.equal(projects[0].locations[0].last_activity, Date.parse(day(0)))
+  assert.equal(stats.multi_location, 0)
+})
+
+test('eranet: checkout root is not itself a row → still one location', () => {
+  const r = remote('git@bitbucket.org:eranetproject/eranet3-analyza.git')
+  const records = ['eranet2/ZFK', 'eranet2/security', 'prechod-do-vyvoja'].map((s, i) => inCheckout(String(i), `/b/era/${s}`, '/b/era', r))
+  const [p] = buildRegistry(records, { now: NOW }).projects
+  assert.deepEqual(p.locations.map(l => [l.directory, l.record_id, l.members, l.role]), [['/b/era', null, 3, 'primary']])
+  assert.equal(p.primary, '/b/era')
+})
+
+test('no-remote repo: the .stow id at the checkout root covers its sub-folder rows', () => {
+  const metas = new Map([['/n/tool', { meta: { id: 'p_toolllllllll', client: 'Acme' }, warnings: [] }]])
+  const records = [inCheckout('a', '/n/tool', '/n/tool'), inCheckout('b', '/n/tool/cli', '/n/tool')]
+  const { projects } = buildRegistry(records, { metas, now: NOW })
+  assert.equal(projects.length, 1)
+  assert.equal(projects[0].key, 'stow:p_toolllllllll')
+  assert.equal(projects[0].name, 'tool')
+  assert.equal(projects[0].client.name, 'Acme')
+  assert.deepEqual(projects[0].locations.map(l => [l.directory, l.stow_id]), [['/n/tool', 'p_toolllllllll']])
+})
+
+test('copied no-remote folder (same stow id) → two locations of one project', () => {
+  const meta = { meta: { id: 'p_sameeeeeeeee' }, warnings: [] }
+  const metas = new Map([['/x/a', meta], ['/x/a-copy', meta]])
+  const { projects } = buildRegistry([rec('1', '/x/a'), rec('2', '/x/a-copy')], { metas, now: NOW })
+  assert.equal(projects.length, 1)
+  assert.equal(projects[0].locations.length, 2)
+})
+
+test('moved no-remote folder: same key, manual role and client follow the .stow file', () => {
+  const meta = { meta: { id: 'p_movedddddddd', client: 'Acme', role: 'deploy' }, warnings: [] }
+  const before = buildRegistry([rec('1', '/old/x')], { metas: new Map([['/old/x', meta]]), now: NOW }).projects[0]
+  const after = buildRegistry([rec('2', '/new/y')], { metas: new Map([['/new/y', meta]]), now: NOW }).projects[0]
+  assert.equal(after.key, before.key)
+  assert.deepEqual(after.locations.map(l => [l.directory, l.role, l.role_source]), [['/new/y', 'deploy', 'manual']])
+  assert.equal(after.client.name, 'Acme')
+})
+
+test('loadRegistry reads each .stow meta at the checkout root, once', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-reg-'))
+  const saved = process.env.STOW_STATE_DIR
+  process.env.STOW_STATE_DIR = base
+  try {
+    await fs.mkdir(path.join(base, 'data'))
+    await fs.writeFile(path.join(base, 'data', 'projects_metadata.jsonl'),
+      [inCheckout('a', '/P/r', '/P/r'), inCheckout('b', '/P/r/web', '/P/r'), inCheckout('c', '/P/r/api', '/P/r')]
+        .map(r => JSON.stringify(r)).join('\n') + '\n')
+    const asked = []
+    const readMeta = async dir => { asked.push(dir); return { meta: { id: 'p_rootrootroot' }, warnings: [] } }
+    const r = await loadRegistry({ readMeta, now: NOW })
+    assert.deepEqual(asked, ['/P/r'])
+    assert.deepEqual(r.projects.map(p => [p.key, p.locations.length]), [['stow:p_rootrootroot', 1]])
+  } finally {
+    if (saved === undefined) delete process.env.STOW_STATE_DIR; else process.env.STOW_STATE_DIR = saved
+    await fs.rm(base, { recursive: true, force: true })
+  }
+})
