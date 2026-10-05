@@ -218,6 +218,21 @@ export async function POST() {
                     progress(project.directory)
                 })))
 
+                // Virtual projects (#9): a discovered row needs its checkout,
+                // identity and project_id. Rows that already have a checkout cost
+                // no git spawn, so this stays cheap; skipped when nothing was found.
+                if (discovered.length > 0) {
+                    try {
+                        const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS, onProgress: (e) => {
+                            if (e.type === 'stow_file_error' || e.type === 'moved') sendEvent(e)
+                        } })
+                        const priorRows = projects.filter(p => !discovered.includes(p.directory))
+                        await scanner.assignProjects([...projectMap.values()], { priorRows })
+                    } catch (err) {
+                        sendEvent({ type: 'assign_error', message: err.message })
+                    }
+                }
+
                 // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
                 const lines = Array.from(projectMap.values()).map(p => JSON.stringify(p))

@@ -8,6 +8,9 @@ import dotenv from 'dotenv'
 import ignore from 'ignore'
 import { isMetaDocPath } from '../lib/distill.mjs'
 import { Semaphore } from '../lib/semaphore.mjs'
+import { resolveLocations, LOCATION_CONCURRENCY } from '../lib/checkout-location.mjs'
+import { ensureStowFile } from '../lib/stow-project-file.mjs'
+import { stowRoots, assignIdentities, carryForwardMoved } from '../lib/checkout-merge.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
     '.git', '.stow', 'node_modules', 'venv', '.venv',
@@ -89,6 +92,7 @@ export class ProjectScanner {
         this.forceUpdate = options.forceUpdate || false
         this.onProgress = options.onProgress || (() => {})
         this.existingProjectsCache = new Map()
+        this.exec = options.exec // undefined → each module's execFile default
     }
 
     isIgnored(filePath) {
@@ -508,6 +512,8 @@ export class ProjectScanner {
             }
         }
 
+        await this.assignProjects(scannedProjects)
+
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1)
         this.onProgress({ type: 'complete', totalTime, count: scannedProjects.length })
 
@@ -547,6 +553,32 @@ export class ProjectScanner {
             // from the dataset — fall back to the last known record.
             return this.existingProjectsCache.get(directory) ?? null
         }
+    }
+
+    // Virtual projects (#9): checkout root + identity + project_id on every
+    // row — cached ones too, so an existing ledger is backfilled on the first
+    // scan after upgrade. Only rows without `checkout` cost git spawns (a
+    // re-extracted row is a fresh object, so it is re-resolved). Checkout roots
+    // with no remote get a `.stow/project.json` id; AI data follows a move.
+    async assignProjects(rows, { priorRows = [...this.existingProjectsCache.values()] } = {}) {
+        await resolveLocations(rows, { exec: this.exec })
+
+        const ids = new Map()
+        let created = 0
+        const limiter = new Semaphore(LOCATION_CONCURRENCY)
+        await Promise.all([...stowRoots(rows)].map(([root, { git }]) => limiter.run(async () => {
+            const res = await ensureStowFile(root, { git, ...(this.exec && { exec: this.exec }) })
+            if (res.error) this.onProgress({ type: 'stow_file_error', directory: root, error: res.error })
+            if (res.created) created++
+            ids.set(root, res.id)
+        })))
+        assignIdentities(rows, ids)
+
+        const moved = carryForwardMoved(rows, priorRows)
+        for (const m of moved) this.onProgress({ type: 'moved', ...m })
+        const projects = new Set(rows.map(r => r.project_id)).size
+        this.onProgress({ type: 'projects_assigned', projects, stow_created: created, moved: moved.length })
+        return { projects, stowCreated: created, moved }
     }
 
     // Check if a directory name should be skipped during discovery

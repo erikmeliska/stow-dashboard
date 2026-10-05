@@ -133,6 +133,12 @@ async function main() {
                 console.log(`Synced to: ${event.file}`)
             } else if (event.type === 'deleted') {
                 console.log(`Deleted: ${event.file}`)
+            } else if (event.type === 'projects_assigned') {
+                console.log(`Projects: ${event.projects} (.stow ids created: ${event.stow_created}, moved: ${event.moved})`)
+            } else if (event.type === 'moved') {
+                console.log(`Moved: ${event.from} → ${event.to}`)
+            } else if (event.type === 'stow_file_error') {
+                console.error(`.stow: ${event.directory} - ${event.error}`)
             }
         }
     })
