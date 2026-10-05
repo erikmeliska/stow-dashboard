@@ -56,9 +56,15 @@ const httpError = (status, message) => Object.assign(new Error(message), { statu
  * register writes, so only same-origin JSON is accepted. A cross-site form or
  * `text/plain` fetch can't set application/json without a CORS preflight
  * (which this server never answers), and a browser always sends Origin /
- * Sec-Fetch-Site on cross-site requests. → an error message, or null if ok.
+ * Sec-Fetch-Site on cross-site requests. The Host must be loopback, or a
+ * DNS-rebound name (evil.example → 127.0.0.1) would make Origin and Host agree.
+ * → an error message, or null if ok.
  */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
+
 export function guardRequest(headers) {
+  const hostname = (headers.get('host') || '').replace(/:\d+$/, '').toLowerCase()
+  if (!LOOPBACK.has(hostname)) return 'reorg changes are only accepted on a loopback host (localhost)'
   const type = headers.get('content-type') || ''
   if (!/^application\/json\b/i.test(type)) return 'expected an application/json request'
   if (headers.get('sec-fetch-site') === 'cross-site') return 'cross-origin request refused'

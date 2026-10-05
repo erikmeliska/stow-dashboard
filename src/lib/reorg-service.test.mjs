@@ -79,6 +79,12 @@ test('guardRequest: JSON from the same origin only (CSRF)', async () => {
   assert.match(guardRequest(h({ 'content-type': 'text/plain' })), /json/i)
   assert.match(guardRequest(h({ 'content-type': 'application/json', origin: 'https://evil.example' })), /origin/i)
   assert.match(guardRequest(h({ 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' })), /origin/i)
+  // DNS rebinding: evil.example resolving to 127.0.0.1 makes Origin and Host agree.
+  const rebound = new Map(Object.entries({ host: 'evil.example:3088', origin: 'http://evil.example:3088', 'content-type': 'application/json' }))
+  assert.match(guardRequest(rebound), /host/i)
+  for (const host of ['127.0.0.1:3087', '[::1]:3088', 'localhost']) {
+    assert.equal(guardRequest(new Map(Object.entries({ host, 'content-type': 'application/json' }))), null, host)
+  }
 })
 
 test('relocate: the target must lie inside a scan root', async () => {
