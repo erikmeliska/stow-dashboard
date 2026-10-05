@@ -225,3 +225,27 @@ test('withClientHeaders emits one header per client run with totals over all fil
   assert.deepEqual(out[2], { type: 'header', client: 'B', count: 1, costUsd: 0, unpriced: false })
   assert.deepEqual(out[4], { type: 'header', client: null, count: 1, costUsd: 4, unpriced: true })
 })
+
+import { validateMetaPatch } from './virtual-projects.mjs'
+
+test('validateMetaPatch accepts a client change and a reset to automatic', () => {
+  assert.deepEqual(validateMetaPatch({ projectId: 'git:x', client: '  Acme ' }),
+    { ok: true, op: { kind: 'client', projectId: 'git:x', client: 'Acme' } })
+  assert.deepEqual(validateMetaPatch({ projectId: 'git:x', client: null }),
+    { ok: true, op: { kind: 'client', projectId: 'git:x', client: null } })
+})
+
+test('validateMetaPatch accepts a role change on an absolute directory', () => {
+  assert.deepEqual(validateMetaPatch({ directory: '/p/a', role: 'primary' }),
+    { ok: true, op: { kind: 'role', directory: '/p/a', role: 'primary' } })
+})
+
+test('validateMetaPatch rejects bad input', () => {
+  for (const body of [
+    null, {}, [], { projectId: 'x' }, { projectId: 'x', client: '   ' }, { projectId: 'x', client: 'a'.repeat(81) },
+    { projectId: 'x', client: 5 }, { directory: 'rel/path', role: 'deploy' }, { directory: '/p/a', role: 'boss' },
+    { projectId: 'x', client: 'A', directory: '/p/a', role: 'deploy' },
+  ]) {
+    assert.equal(validateMetaPatch(body).ok, false, JSON.stringify(body))
+  }
+})

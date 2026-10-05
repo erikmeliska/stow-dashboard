@@ -216,3 +216,28 @@ export function withClientHeaders(pageRows, allRows) {
   }
   return out
 }
+
+const CLIENT_MAX = 80
+
+/**
+ * Body of PATCH /api/projects/meta: `{projectId, client}` (client: 1–80 chars
+ * after trim, or null = back to automatic) or `{directory, role}` (absolute
+ * checkout root, role in ROLES). Exactly one shape.
+ */
+export function validateMetaPatch(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'body must be an object' }
+  const isClient = 'projectId' in body || 'client' in body
+  const isRole = 'directory' in body || 'role' in body
+  if (isClient === isRole) return { ok: false, error: 'send either {projectId, client} or {directory, role}' }
+  if (isClient) {
+    if (typeof body.projectId !== 'string' || !body.projectId) return { ok: false, error: 'projectId required' }
+    if (!('client' in body)) return { ok: false, error: 'client required (null = automatic)' }
+    if (body.client === null) return { ok: true, op: { kind: 'client', projectId: body.projectId, client: null } }
+    const client = typeof body.client === 'string' ? body.client.trim() : ''
+    if (!client || client.length > CLIENT_MAX) return { ok: false, error: `client must be 1–${CLIENT_MAX} characters` }
+    return { ok: true, op: { kind: 'client', projectId: body.projectId, client } }
+  }
+  if (typeof body.directory !== 'string' || !body.directory.startsWith('/')) return { ok: false, error: 'directory must be an absolute path' }
+  if (!ROLES.includes(body.role)) return { ok: false, error: `role must be one of ${ROLES.join(', ')}` }
+  return { ok: true, op: { kind: 'role', directory: body.directory, role: body.role } }
+}
