@@ -153,3 +153,17 @@ test('formatDistillate strips control characters from binary-ish inputs', () => 
   assert.match(text, /tab kept/)
   assert.match(text, /line kept/)
 })
+
+test('gatherFacts: a .stow/ written by the scanner (#9) does not change the distillate', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'distill-stow-'))
+  try {
+    await writeFile(path.join(dir, 'README.md'), '# x\n')
+    const project = { directory: dir, project_name: 'x' }
+    const before = (await gatherFacts(project)).topLevel
+    await mkdir(path.join(dir, '.stow'))
+    await writeFile(path.join(dir, '.stow', 'project.json'), '{"version":1,"id":"p_aaaaaaaaaaaa"}\n')
+    assert.deepEqual((await gatherFacts(project)).topLevel, before)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

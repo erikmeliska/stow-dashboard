@@ -218,6 +218,21 @@ export async function POST() {
                     progress(project.directory)
                 })))
 
+                // Virtual projects (#9): checkout, identity and project_id for every
+                // row, every cycle — a discovered row needs them, and a remote added
+                // or changed since the last full scan must reach project_id (the
+                // register view already follows git_info). Rows that have a checkout
+                // cost no git spawn; .stow reads are cheap. A row still listed but
+                // gone from disk donates its AI data to its moved successor.
+                try {
+                    const scanner = new ProjectScanner({ scanRoots: SCAN_ROOTS, onProgress: (e) => {
+                        if (e.type === 'stow_file_error' || e.type === 'moved') sendEvent(e)
+                    } })
+                    await scanner.assignProjects([...projectMap.values()], { priorRows: projects, recheckExclude: false })
+                } catch (err) {
+                    sendEvent({ type: 'assign_error', message: err.message })
+                }
+
                 // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
                 const lines = Array.from(projectMap.values()).map(p => JSON.stringify(p))

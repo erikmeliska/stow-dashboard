@@ -1,4 +1,5 @@
 import fs from 'fs/promises'
+import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { setTimeout } from 'node:timers'
@@ -7,9 +8,14 @@ import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
 import ignore from 'ignore'
 import { isMetaDocPath } from '../lib/distill.mjs'
+import { Semaphore } from '../lib/semaphore.mjs'
+import { resolveLocations, LOCATION_CONCURRENCY } from '../lib/checkout-location.mjs'
+import { ensureStowFile } from '../lib/stow-project-file.mjs'
+import { stowRoots, assignIdentities, carryForwardMoved } from '../lib/checkout-merge.mjs'
+import { stowHomeOf } from '../lib/registry/identity.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
-    '.git', 'node_modules', 'venv', '.venv',
+    '.git', '.stow', 'node_modules', 'venv', '.venv',
     '__pycache__', '.pytest_cache', 'build', 'dist',
     'python3.7', 'python3.8', 'python3.9', 'python3.10',
     'python3.11', 'python3.12', '.next', 'vendor'
@@ -50,27 +56,7 @@ const CONCURRENCY = 8
 // descriptor, so they add no FD pressure while waiting.
 export const FS_CONCURRENCY = 48
 
-export class Semaphore {
-    constructor(max) {
-        this.max = max
-        this.active = 0
-        this.queue = []
-    }
-
-    async run(fn) {
-        if (this.active >= this.max) {
-            await new Promise(resolve => this.queue.push(resolve))
-        }
-        this.active++
-        try {
-            return await fn()
-        } finally {
-            this.active--
-            const next = this.queue.shift()
-            if (next) next()
-        }
-    }
-}
+export { Semaphore }
 
 const fsLimiter = new Semaphore(FS_CONCURRENCY)
 const limitedReaddir = (dir, options) => fsLimiter.run(() => fs.readdir(dir, options))
@@ -108,6 +94,7 @@ export class ProjectScanner {
         this.forceUpdate = options.forceUpdate || false
         this.onProgress = options.onProgress || (() => {})
         this.existingProjectsCache = new Map()
+        this.exec = options.exec // undefined → each module's execFile default
     }
 
     isIgnored(filePath) {
@@ -527,6 +514,8 @@ export class ProjectScanner {
             }
         }
 
+        await this.assignProjects(scannedProjects)
+
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(1)
         this.onProgress({ type: 'complete', totalTime, count: scannedProjects.length })
 
@@ -566,6 +555,50 @@ export class ProjectScanner {
             // from the dataset — fall back to the last known record.
             return this.existingProjectsCache.get(directory) ?? null
         }
+    }
+
+    // Virtual projects (#9): checkout root + identity + project_id on every
+    // row — cached ones too, so an existing ledger is backfilled on the first
+    // scan after upgrade. Only rows without `checkout` cost git spawns (a
+    // re-extracted row is a fresh object, so it is re-resolved). Checkouts
+    // with no remote get a `.stow/project.json` id (a linked worktree uses its
+    // main work tree's); AI data follows a move. `recheckExclude` re-asserts
+    // `.stow/` in info/exclude for dirty no-remote repos (full scan only —
+    // it's a git spawn each). `exists` lets a row still listed but gone from
+    // disk donate its AI data (the quick refresh never drops rows).
+    async assignProjects(rows, {
+        priorRows = [...this.existingProjectsCache.values()],
+        recheckExclude = true,
+        exists = existsSync,
+    } = {}) {
+        await resolveLocations(rows, { exec: this.exec })
+
+        const ids = new Map()
+        let created = 0
+        const limiter = new Semaphore(LOCATION_CONCURRENCY)
+        const homes = [...stowRoots(rows)]
+        // A row still listed but gone from disk (quick refresh): never write
+        // there (that would recreate the folder) — keep the id it last had.
+        for (const [home] of homes) {
+            if (exists(home)) continue
+            const stored = rows.find(r => stowHomeOf(r) === home && r.identity?.kind === 'stow')
+            ids.set(home, stored ? stored.identity.key.slice('stow:'.length) : null)
+        }
+        await Promise.all(homes.filter(([home]) => !ids.has(home)).map(([home, { git, dirty }]) => limiter.run(async () => {
+            const res = await ensureStowFile(home, {
+                git, recheckExclude: recheckExclude && dirty, ...(this.exec && { exec: this.exec }),
+            })
+            if (res.error) this.onProgress({ type: 'stow_file_error', directory: home, error: res.error })
+            if (res.created) created++
+            ids.set(home, res.id)
+        })))
+        assignIdentities(rows, ids)
+
+        const moved = carryForwardMoved(rows, priorRows, { exists })
+        for (const m of moved) this.onProgress({ type: 'moved', ...m })
+        const projects = new Set(rows.map(r => r.project_id)).size
+        this.onProgress({ type: 'projects_assigned', projects, stow_created: created, moved: moved.length })
+        return { projects, stowCreated: created, moved }
     }
 
     // Check if a directory name should be skipped during discovery

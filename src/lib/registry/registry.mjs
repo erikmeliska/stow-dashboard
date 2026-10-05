@@ -1,11 +1,12 @@
 /**
  * The virtual-project register (#8): Client → Project → Location over the
  * scanned ledger. buildRegistry is pure — callers pass the ledger rows, the
- * per-directory .stow metas and the data/registry.json config. Nothing on
- * disk moves; this is a view.
+ * .stow metas (keyed by checkout root) and the data/registry.json config.
+ * Nothing on disk moves; this is a view. A location is a checkout root (#9):
+ * the ledger rows inside one checkout are its members, not separate copies.
  */
 import path from 'node:path'
-import { identityOf, remoteOwner } from './identity.mjs'
+import { checkoutIdentities, locationOf, remoteOwner, stowHomeOf } from './identity.mjs'
 import { buildClientCatalog, bizzClient, cleanClientName } from './client.mjs'
 import fs from 'node:fs/promises'
 import { dataFile, ledgerFile } from '../state-dir.mjs'
@@ -38,11 +39,11 @@ const byActivity = (a, b) =>
 export function buildRegistry(records, { metas = new Map(), config = { clients: [] }, now = Date.now() } = {}) {
   const metaOf = dir => metas.get(dir) || { meta: null, warnings: [] }
 
+  const identities = checkoutIdentities(records, home => metaOf(home).meta)
   const groups = new Map()
   for (const record of records) {
     if (!record || typeof record.directory !== 'string') continue
-    const { meta } = metaOf(record.directory)
-    const id = identityOf(record, meta)
+    const id = identities.get(locationOf(record))
     let g = groups.get(id.key)
     if (!g) groups.set(id.key, g = { ...id, rows: [] })
     g.rows.push(record)
@@ -52,7 +53,7 @@ export function buildRegistry(records, { metas = new Map(), config = { clients: 
   for (const r of records) {
     if (!r || typeof r.directory !== 'string') continue
     const b = bizzClient(r.directory); if (b) bizz.push(b)
-    const m = metaOf(r.directory).meta; if (m?.client) seen.push(m.client)
+    const m = metaOf(locationOf(r)).meta; if (m?.client) seen.push(m.client)
     const ai = cleanClientName(r.ai_analysis?.client); if (ai) seen.push(ai)
   }
   const catalog = buildClientCatalog({ config, names: { bizz, seen } })
@@ -60,10 +61,24 @@ export function buildRegistry(records, { metas = new Map(), config = { clients: 
   const projects = []
   for (const g of groups.values()) {
     const warnings = []
-    const locs = g.rows.map(r => {
-      const { meta, warnings: w } = metaOf(r.directory)
-      for (const x of w) warnings.push(`${r.directory}: ${x}`)
-      return { record: r, meta, directory: r.directory, record_id: r.id ?? null, stow_id: meta?.id ?? null, last_activity: activityOf(r) }
+    const byRoot = new Map()
+    for (const r of g.rows) {
+      const root = locationOf(r)
+      if (!byRoot.has(root)) byRoot.set(root, [])
+      byRoot.get(root).push(r)
+    }
+    const locs = [...byRoot].map(([directory, members]) => {
+      const { meta, warnings: w } = metaOf(directory)
+      for (const x of w) warnings.push(`${directory}: ${x}`)
+      // The root's own row speaks for the checkout; a weak-only root (no row)
+      // borrows its shallowest member's. Activity is the newest of any member.
+      const own = members.find(r => r.directory === directory)
+      const record = own || [...members].sort((a, b) => a.directory.length - b.directory.length)[0]
+      const times = members.map(activityOf).filter(t => t != null)
+      return {
+        record, meta, directory, record_id: own?.id ?? null, stow_id: meta?.id ?? null,
+        last_activity: times.length ? Math.max(...times) : null, members: members.length,
+      }
     })
 
     const manualPrimaries = locs.filter(l => l.meta?.role === 'primary').sort(byActivity)
@@ -91,13 +106,13 @@ export function buildRegistry(records, { metas = new Map(), config = { clients: 
 
     const name = g.kind === 'git'
       ? g.remote.split('/').pop()
-      : primary.record.project_name || path.basename(primary.directory)
+      : (primary.record.directory === primary.directory && primary.record.project_name) || path.basename(primary.directory)
 
     projects.push({
       key: g.key, kind: g.kind, name, remote: g.remote, client,
       primary: primary.directory,
-      locations: ordered.map(({ directory, record_id, stow_id, role, role_source, last_activity }) =>
-        ({ directory, record_id, stow_id, role, role_source, last_activity })),
+      locations: ordered.map(({ directory, record_id, stow_id, role, role_source, last_activity, members }) =>
+        ({ directory, record_id, stow_id, role, role_source, last_activity, members })),
       warnings,
     })
   }
@@ -172,7 +187,8 @@ export async function loadRegistry({ base, readMeta = readStowMeta, now = Date.n
   const opts = base ? { base } : {}
   const [records, config] = await Promise.all([readLedger(opts), readRegistryConfig(opts)])
   const metas = new Map()
-  const dirs = [...new Set(records.map(r => r?.directory).filter(d => typeof d === 'string'))]
+  const rows = records.filter(r => typeof r?.directory === 'string')
+  const dirs = [...new Set([...rows.map(locationOf), ...rows.map(stowHomeOf)])]
   for (let i = 0; i < dirs.length; i += META_CONCURRENCY) {
     const chunk = dirs.slice(i, i + META_CONCURRENCY)
     const got = await Promise.all(chunk.map(d => readMeta(d)))

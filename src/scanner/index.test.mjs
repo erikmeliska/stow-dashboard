@@ -345,3 +345,208 @@ test('discoverProjects still finds nested projects (semaphore wrapping is result
         assert.ok(results.includes(path.join(root, 'app-b')), 'found app-b')
     } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
+
+test('getLatestMtime ignores .stow/ so writing the project file does not trigger a rescan', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'stow-mtime-'))
+    await fs.writeFile(path.join(dir, 'a.js'), 'x')
+    const old = new Date('2020-01-01T00:00:00Z')
+    await fs.utimes(path.join(dir, 'a.js'), old, old)
+    await fs.mkdir(path.join(dir, '.stow'))
+    await fs.writeFile(path.join(dir, '.stow', 'project.json'), '{"id":"p_test"}')
+    assert.equal(await getLatestMtime(dir), old.toISOString())
+    await fs.rm(dir, { recursive: true })
+})
+
+// --- Virtual projects (#9): checkout + identity on every row ---------------
+import { execFileSync } from 'node:child_process'
+import { buildRegistry } from '../lib/registry/registry.mjs'
+
+const gitIn = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' }).toString()
+
+test('scan merges two clones of one remote, sub-folders are members, no-remote dirs get a .stow id', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-merge-')))
+    // A seed with one commit: getGitInfo reports no remotes for an empty clone.
+    const origin = path.join(base, 'origin')
+    await fs.mkdir(origin)
+    gitIn(origin, 'init', '-q')
+    await fs.writeFile(path.join(origin, 'index.js'), '1\n')
+    gitIn(origin, 'add', '.')
+    gitIn(origin, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed')
+    const root = path.join(base, 'root')
+    await fs.mkdir(root)
+    for (const name of ['blog', 'blog-test']) {
+        gitIn(root, 'clone', '-q', origin, name)
+        gitIn(path.join(root, name), 'remote', 'set-url', 'origin', 'git@example.com:Acme/blog.git')
+        await fs.writeFile(path.join(root, name, 'README.md'), '# blog\n')
+        await fs.mkdir(path.join(root, name, 'docs'))
+        await fs.writeFile(path.join(root, name, 'docs', 'README.md'), '# docs\n')
+    }
+    await fs.mkdir(path.join(root, 'notes'))
+    await fs.writeFile(path.join(root, 'notes', 'README.md'), '# notes\n')
+    const local = path.join(root, 'local')
+    await fs.mkdir(local)
+    gitIn(local, 'init', '-q')
+    await fs.writeFile(path.join(local, 'README.md'), '# local\n')
+    const ledger = path.join(base, 'ledger.jsonl')
+
+    try {
+        const events = []
+        const scanner = new ProjectScanner({ scanRoots: [root], syncFile: ledger, onProgress: e => events.push(e) })
+        const rows = await scanner.scanProjects()
+        await scanner.syncMetadata(rows)
+
+        const blogKey = 'git:example.com/acme/blog'
+        assert.equal(rows.filter(r => r.project_id === blogKey).length, 4) // 2 clones + their docs/
+        const docs = rows.find(r => r.directory === path.join(root, 'blog', 'docs'))
+        assert.deepEqual(docs.checkout, { root: path.join(root, 'blog'), subpath: 'docs', git: true })
+        const blog = buildRegistry(rows).projects.find(p => p.key === blogKey)
+        assert.deepEqual(blog.locations.map(l => l.directory).sort(), [path.join(root, 'blog'), path.join(root, 'blog-test')])
+        assert.ok(blog.locations.every(l => l.members === 2))
+
+        const notes = rows.find(r => r.directory === path.join(root, 'notes'))
+        assert.equal(notes.identity.kind, 'stow')
+        const notesFile = JSON.parse(await fs.readFile(path.join(root, 'notes', '.stow', 'project.json'), 'utf8'))
+        assert.equal(notes.project_id, `stow:${notesFile.id}`)
+        // A remote-backed checkout never gets a file.
+        await assert.rejects(fs.access(path.join(root, 'blog', '.stow')))
+        // The no-remote repo's file is invisible to git status.
+        assert.equal(rows.find(r => r.directory === local).identity.kind, 'stow')
+        assert.equal(gitIn(local, 'status', '--porcelain'), '?? README.md\n')
+        assert.ok(events.some(e => e.type === 'projects_assigned' && e.stow_created === 2))
+
+        // Second scan: same ids, nothing re-created, rows came from the cache.
+        const again = new ProjectScanner({ scanRoots: [root], syncFile: ledger })
+        const rows2 = await again.scanProjects()
+        assert.deepEqual(rows2.map(r => [r.directory, r.project_id]).sort(), rows.map(r => [r.directory, r.project_id]).sort())
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('cached rows without checkout are backfilled on the next incremental scan', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-backfill-')))
+    const dir = path.join(base, 'p')
+    await fs.mkdir(dir)
+    await fs.writeFile(path.join(dir, 'README.md'), '# p\n')
+    const ledger = path.join(base, 'ledger.jsonl')
+    // last_modified in the future → processProject returns the cached row untouched.
+    await fs.writeFile(ledger, JSON.stringify({ directory: dir, last_modified: '2999-01-01T00:00:00.000Z', project_name: 'p', marker: 'cached' }) + '\n')
+    try {
+        const scanner = new ProjectScanner({ scanRoots: [base], syncFile: ledger })
+        const [row] = await scanner.scanProjects()
+        assert.equal(row.marker, 'cached') // really the cached row, not a re-extraction
+        assert.deepEqual(row.checkout, { root: dir, subpath: '', git: false })
+        assert.equal(row.identity.kind, 'stow')
+        assert.match(row.project_id, /^stow:p_/)
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('a moved no-remote folder keeps its identity and its AI analysis', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-moved-')))
+    const oldDir = path.join(base, 'old-name')
+    const newDir = path.join(base, 'new-name')
+    await fs.mkdir(path.join(newDir, '.stow'), { recursive: true })
+    await fs.writeFile(path.join(newDir, 'README.md'), '# x\n')
+    await fs.writeFile(path.join(newDir, '.stow', 'project.json'), '{"version":1,"id":"p_movedmovedm"}\n')
+    const ledger = path.join(base, 'ledger.jsonl')
+    await fs.writeFile(ledger, JSON.stringify({
+        directory: oldDir, last_modified: '2026-01-01T00:00:00.000Z',
+        checkout: { root: oldDir, subpath: '', git: false },
+        identity: { key: 'stow:p_movedmovedm', kind: 'stow' }, project_id: 'stow:p_movedmovedm',
+        ai_analysis: { category: '_Tools' }, ai_derived: { status: 'active' },
+    }) + '\n')
+    try {
+        const events = []
+        const scanner = new ProjectScanner({ scanRoots: [base], syncFile: ledger, onProgress: e => events.push(e) })
+        const [row] = await scanner.scanProjects()
+        assert.equal(row.directory, newDir)
+        assert.equal(row.project_id, 'stow:p_movedmovedm')
+        assert.deepEqual(row.ai_analysis, { category: '_Tools' })
+        assert.deepEqual(row.ai_derived, { status: 'active' })
+        assert.ok(events.some(e => e.type === 'moved' && e.from === oldDir && e.to === newDir))
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('refreshProjectGit keeps checkout/identity/project_id (they live outside git_info)', async () => {
+    const { refreshProjectGit } = await import('../lib/git-status.mjs')
+    const project = { directory: '/x', git_info: { git_detected: true, head_sha: 'a' },
+        checkout: { root: '/x', subpath: '', git: true }, identity: { key: 'git:x/y', kind: 'git' }, project_id: 'git:x/y' }
+    await refreshProjectGit(project, { readStatus: async () => ({ head_sha: 'b' }), fullGitInfo: async () => ({ git_detected: true, head_sha: 'b' }) })
+    assert.deepEqual(project.checkout, { root: '/x', subpath: '', git: true })
+    assert.deepEqual(project.identity, { key: 'git:x/y', kind: 'git' })
+    assert.equal(project.project_id, 'git:x/y')
+})
+
+test('a no-remote folder that became a git repo after its .stow was written: the next scan excludes .stow/', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-gitinit-')))
+    const dir = path.join(base, 'notes')
+    await fs.mkdir(path.join(dir, '.stow'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'README.md'), '# n\n')
+    await fs.writeFile(path.join(dir, '.stow', 'project.json'), '{"version":1,"id":"p_notesnotesn"}\n')
+    gitIn(dir, 'init', '-q')
+    gitIn(dir, 'add', 'README.md')
+    gitIn(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed')
+    try {
+        const [row] = await new ProjectScanner({ scanRoots: [base] }).scanProjects()
+        assert.equal(row.project_id, 'stow:p_notesnotesn')
+        assert.equal(gitIn(dir, 'status', '--porcelain', '-u'), '')
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('a no-remote repo and its linked worktree share one .stow id (kept in the main work tree)', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-wt-')))
+    const main = path.join(base, 'app')
+    await fs.mkdir(main)
+    gitIn(main, 'init', '-q')
+    await fs.writeFile(path.join(main, 'README.md'), '# app\n')
+    gitIn(main, 'add', '.')
+    gitIn(main, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'seed')
+    gitIn(main, 'worktree', 'add', '-q', path.join(base, 'app-wt'))
+    try {
+        const rows = await new ProjectScanner({ scanRoots: [base] }).scanProjects()
+        assert.equal(rows.length, 2)
+        assert.equal(new Set(rows.map(r => r.project_id)).size, 1)
+        assert.match(rows[0].project_id, /^stow:p_/)
+        await assert.rejects(fs.access(path.join(base, 'app-wt', '.stow')))
+        const id = rows[0].project_id.slice('stow:'.length)
+        const metas = new Map([[main, { meta: { id }, warnings: [] }]])
+        assert.deepEqual(buildRegistry(rows, { metas }).projects[0].locations.map(l => l.directory).sort(), [main, path.join(base, 'app-wt')])
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('assignProjects (quick refresh): a moved folder found before any full scan inherits from the stale row still listed', async () => {
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'stow-quickmove-')))
+    const newDir = path.join(base, 'new')
+    await fs.mkdir(path.join(newDir, '.stow'), { recursive: true })
+    await fs.writeFile(path.join(newDir, '.stow', 'project.json'), '{"version":1,"id":"p_quickquickq"}\n')
+    const stale = { directory: path.join(base, 'old'), checkout: { root: path.join(base, 'old'), subpath: '', git: false },
+        identity: { key: 'stow:p_quickquickq', kind: 'stow' }, project_id: 'stow:p_quickquickq', ai_analysis: { category: '_Tools' } }
+    const found = { directory: newDir, project_name: 'new' }
+    try {
+        const rows = [stale, found]
+        await new ProjectScanner({ scanRoots: [base] }).assignProjects(rows, { priorRows: [stale] })
+        assert.equal(found.project_id, 'stow:p_quickquickq')
+        assert.equal(stale.project_id, 'stow:p_quickquickq') // stored id kept, nothing recreated
+        await assert.rejects(fs.access(path.join(base, 'old')))
+        assert.deepEqual(found.ai_analysis, { category: '_Tools' })
+    } finally {
+        await fs.rm(base, { recursive: true, force: true })
+    }
+})
+
+test('assignProjects on rows that already have a checkout: no git spawn, project_id follows git_info.remotes', async () => {
+    const exec = async () => assert.fail('no git spawn expected')
+    const row = { directory: '/nowhere/app', checkout: { root: '/nowhere/app', subpath: '', git: true },
+        identity: { key: 'stow:p_oldoldoldol', kind: 'stow' }, project_id: 'stow:p_oldoldoldol',
+        git_info: { remotes: ['git@github.com:o/app.git'] } }
+    await new ProjectScanner({ scanRoots: [], exec }).assignProjects([row], { priorRows: [], recheckExclude: false })
+    assert.equal(row.project_id, 'git:github.com/o/app')
+})
