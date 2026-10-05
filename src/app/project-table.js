@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table"
 import { formatTimeAgo, getGitProvider, docScoreColor, formatUsdWithUnpriced } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { usageTokenTotals, fmtTokens, fmtInputBreakdown } from "@/lib/usage-tokens.mjs"
 import {
     Tooltip,
     TooltipContent,
@@ -970,10 +971,8 @@ export function ProjectTable({ projects, ownRepos }) {
                 const usage = row.original.usage
                 const hasUnpriced = (usage.unpricedModels || []).length > 0
                 const t = usage.tokens || {}
-                const inTokens = (t.input ?? 0) + (t.codexInput ?? 0) + (t.geminiInput ?? 0)
-                const outTokens = (t.output ?? 0) + (t.codexOutput ?? 0) + (t.geminiOutput ?? 0)
-                const fmtTokens = n => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`
-                const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtTokens(inTokens)} out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
+                const { input: inTotals, output: outTokens } = usageTokenTotals(t)
+                const title = `${usage.sessions} sessions · ${((usage.activeMinutes ?? 0) / 60).toFixed(1)} h · in ${fmtInputBreakdown(inTotals)} · out ${fmtTokens(outTokens)} tokens · list-price value, not an invoice`
                 return (
                     <span className="text-sm whitespace-nowrap tabular-nums" title={title}>
                         {formatUsdWithUnpriced(total, hasUnpriced)}
