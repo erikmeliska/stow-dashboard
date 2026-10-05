@@ -178,3 +178,41 @@ export function pruneSelection(selected, stats) {
   const kept = selected.filter(v => present.has(v))
   return kept.length === selected.length ? selected : kept
 }
+
+/** Case-insensitive; null (Unassigned) sorts last regardless of `desc`. */
+export function compareClients(a, b, desc = false) {
+  if (a === b) return 0
+  if (a == null) return 1
+  if (b == null) return -1
+  const c = a.localeCompare(b, undefined, { sensitivity: 'base' })
+  return desc ? -c : c
+}
+
+/**
+ * Interleave a header before the first row of each client run on the page.
+ * Totals cover every filtered row of the client (`allRows`), not just the
+ * page. `pageRows` are TanStack rows (`row.original` is the data).
+ */
+export function withClientHeaders(pageRows, allRows) {
+  const totals = new Map()
+  for (const r of allRows) {
+    const k = clientOf(r) ?? UNASSIGNED
+    const t = totals.get(k) || { count: 0, costUsd: 0, unpriced: false }
+    t.count++
+    t.costUsd += r.usage?.costUsd || 0
+    if ((r.usage?.unpricedModels || []).length) t.unpriced = true
+    totals.set(k, t)
+  }
+  const out = []
+  let prev
+  for (const row of pageRows) {
+    const client = clientOf(row.original) ?? null
+    const key = client ?? UNASSIGNED
+    if (key !== prev) {
+      out.push({ type: 'header', client, ...(totals.get(key) || { count: 0, costUsd: 0, unpriced: false }) })
+      prev = key
+    }
+    out.push({ type: 'row', row })
+  }
+  return out
+}

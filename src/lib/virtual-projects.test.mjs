@@ -206,3 +206,22 @@ test('pruneSelection drops vanished values and keeps identity when unchanged', (
   const ok = ['acme']
   assert.equal(pruneSelection(ok, stats), ok)
 })
+
+import { compareClients, withClientHeaders } from './virtual-projects.mjs'
+
+test('compareClients is case-insensitive and keeps Unassigned last in both directions', () => {
+  const names = ['beta', null, 'Alpha']
+  assert.deepEqual([...names].sort((a, b) => compareClients(a, b)), ['Alpha', 'beta', null])
+  assert.deepEqual([...names].sort((a, b) => compareClients(a, b, true)), ['beta', 'Alpha', null])
+})
+
+test('withClientHeaders emits one header per client run with totals over all filtered rows', () => {
+  const mk = (vpId, client, costUsd, unpriced = []) => ({ vpId, client, usage: costUsd === undefined ? undefined : { costUsd, unpricedModels: unpriced } })
+  const all = [mk('a', 'A', 1), mk('b', 'A', 2), mk('c', 'B', undefined), mk('d', null, 4, ['x'])]
+  const page = [all[1], all[2], all[3]].map(original => ({ original })) // 'a' sits on the previous page
+  const out = withClientHeaders(page, all)
+  assert.deepEqual(out.map(x => x.type), ['header', 'row', 'header', 'row', 'header', 'row'])
+  assert.deepEqual(out[0], { type: 'header', client: 'A', count: 2, costUsd: 3, unpriced: false })
+  assert.deepEqual(out[2], { type: 'header', client: 'B', count: 1, costUsd: 0, unpriced: false })
+  assert.deepEqual(out[4], { type: 'header', client: null, count: 1, costUsd: 4, unpriced: true })
+})
