@@ -1,16 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { colorLegend, COLOR_MODES, DEFAULT_COLOR_MODE } from '@/lib/cc/session-calendar.mjs'
+import { colorLegend, COLOR_MODES } from '@/lib/cc/session-calendar.mjs'
 
 const COLOR_KEY = 'stow.calendar.colorBy'
 
 /**
  * "Color by" choice shared by the table and the calendar. Per-viewer
  * preference in localStorage, read after mount so the server render stays stable.
+ * The mode is null while the viewer has never picked one — the caller then
+ * falls back to `defaultColorMode(shown events)`; a stored pick always wins.
  */
 export function useColorMode() {
-  const [mode, setMode] = useState(DEFAULT_COLOR_MODE)
+  const [mode, setMode] = useState(null)
   useEffect(() => {
     try { const v = localStorage.getItem(COLOR_KEY); if (v && COLOR_MODES[v]) setMode(v) } catch { /* storage blocked */ }
   }, [])

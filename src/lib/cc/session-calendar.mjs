@@ -5,6 +5,8 @@
  * Placement (spec F4): a session is drawn from `started_at` to `ended_at` when
  * that span is at most 5 h; longer spans are desktop sessions left open (often
  * overnight), drawn as start + max(active time, 30 min). Minimum height 15 min.
+ * A session with (almost) no active time and a short real span is a *point*:
+ * drawn as a dot at its start, taking no height (issue #32).
  */
 import {
   addDays, addMonths, addWeeks, eachDayOfInterval, endOfMonth, endOfWeek, format,
@@ -22,6 +24,8 @@ export const FALLBACK_MS = 30 * 60_000;
 export const MIN_MS = 15 * 60_000;
 const DAY_MIN = 24 * 60;
 const MIN_HEIGHT = 15;
+export const POINT_ACTIVE_S = 60;
+export const POINT_SPAN_MS = 5 * 60_000;
 
 export function periodRange(date, span = 'week') {
   if (span === 'month') {
@@ -46,6 +50,11 @@ export function calendarSlot(s) {
   const start = Date.parse(s?.started_at || '');
   if (!Number.isFinite(start)) return null;
   const endRaw = Date.parse(s.ended_at || '');
+  // An open session (no end yet) may still be running, so it is never a point.
+  const active = (s.rollup || s).active_s || 0;
+  if (Number.isFinite(endRaw) && endRaw - start < POINT_SPAN_MS && active < POINT_ACTIVE_S) {
+    return { start: new Date(start), end: new Date(start), point: true };
+  }
   let end = Number.isFinite(endRaw) && endRaw > start && endRaw - start <= MAX_SPAN_MS
     ? endRaw
     : start + Math.max((s.active_s || 0) * 1000, FALLBACK_MS);
@@ -53,16 +62,40 @@ export function calendarSlot(s) {
   return { start: new Date(start), end: new Date(end) };
 }
 
-/** The part of `slot` on local `day`, in minutes from midnight; null when they don't meet. */
+/**
+ * The part of `slot` on local `day`, in minutes from midnight; null when they
+ * don't meet. A point slot gives `{top, height: 0, point: true}` on its start day.
+ */
 export function daySegment(slot, day) {
   const d0 = startOfDay(day).getTime();
   const d1 = addDays(startOfDay(day), 1).getTime();
+  if (slot.point) {
+    const t = slot.start.getTime();
+    return t >= d0 && t < d1 ? { top: (t - d0) / 60000, height: 0, point: true, continued: false, continues: false } : null;
+  }
   const a = Math.max(slot.start.getTime(), d0);
   const b = Math.min(slot.end.getTime(), d1);
   if (b <= a) return null;
   const height = Math.min(Math.max((b - a) / 60000, MIN_HEIGHT), DAY_MIN);
   const top = Math.min((a - d0) / 60000, DAY_MIN - height);
   return { top, height, continued: slot.start.getTime() < d0, continues: slot.end.getTime() > d1 };
+}
+
+/**
+ * Horizontal slots for the dots of one day: a dot that would overlap an
+ * earlier one (closer than `gap` minutes) moves one slot over, so every dot
+ * stays clickable. `items` are `{id, top}`; returns id → slot index.
+ */
+export function layoutPoints(items, gap = 12) {
+  const sorted = [...items].sort((x, y) => x.top - y.top);
+  const out = new Map();
+  const last = []; // per slot: top of its latest dot
+  for (const it of sorted) {
+    let i = last.findIndex((t) => it.top - t >= gap);
+    if (i === -1) { i = last.length; last.push(it.top); } else last[i] = it.top;
+    out.set(it.id, i);
+  }
+  return out;
 }
 
 /** Greedy column layout for overlapping items of one day; `cols` is the width of the item's overlap cluster. */
@@ -183,6 +216,16 @@ export const COLOR_MODES = {
 };
 
 export const DEFAULT_COLOR_MODE = 'outcome';
+
+/**
+ * Colour mode to use when the viewer has not picked one: outcome, unless most
+ * shown sessions have no summary yet — then outcome would be all grey, so project.
+ */
+export function defaultColorMode(events) {
+  const list = events || [];
+  const bare = list.filter((e) => summaryVersion(e) === 0).length;
+  return bare * 2 > list.length ? 'project' : DEFAULT_COLOR_MODE;
+}
 const PROJECT_LEGEND_MAX = 8;
 
 // Open-ended modes: one hashed hue per value (6 hues, so values can share; the legend disambiguates).
