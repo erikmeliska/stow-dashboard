@@ -208,16 +208,21 @@ export function replaceGuardHits(db, sessionId, hits) {
  * calendar asks for exactly the period it shows.
  * `project` (a dir) matches the session's main-checkout dir (`base_dir`,
  * falling back to `project_dir`) or anything under it, so worktree sessions are
- * included; `projectKey` matches the register project id (#12).
+ * included; `projectKey` matches the register project id (#12). Pass the
+ * dir's own register key as `projectDirKey` (null = not in the register) so
+ * sub-dirs that belong to *another* project (a monorepo member scanned on its
+ * own) stay out; left undefined, the whole subtree matches.
  */
-export function listSessions(db, { project, projectKey, limit = 200, since = null, until = null } = {}) {
+export function listSessions(db, { project, projectDirKey, projectKey, limit = 200, since = null, until = null } = {}) {
   // `guard_hits` (a count) rides along so the list can filter on it without a second query.
   const select = 'SELECT s.*, (SELECT count(*) FROM guard_hits g WHERE g.session_id = s.session_id) guard_hits FROM sessions s';
   const conds = ['s.parent_session_id IS NULL'];
   const args = [];
   if (project) {
-    conds.push("(coalesce(s.base_dir, s.project_dir) = ? OR coalesce(s.base_dir, s.project_dir) LIKE ? ESCAPE '\\')");
+    const own = projectDirKey === undefined ? '' : ' AND (s.project_key IS NULL OR s.project_key IS ?)';
+    conds.push(`(coalesce(s.base_dir, s.project_dir) = ? OR (coalesce(s.base_dir, s.project_dir) LIKE ? ESCAPE '\\'${own}))`);
     args.push(project, project.replace(/[\\%_]/g, '\\$&') + '/%');
+    if (own) args.push(projectDirKey);
   }
   if (projectKey) { conds.push('s.project_key = ?'); args.push(projectKey); }
   if (since) { conds.push('s.started_at >= ?'); args.push(since); }

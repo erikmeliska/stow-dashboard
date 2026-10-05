@@ -264,3 +264,19 @@ test('project filter matches base_dir subtree, not sibling prefixes', () => {
   assert.deepEqual(listSessions(db, { projectKey: 'P' }).map((s) => s.session_id).sort(), ['main', 'sib', 'wt']);
   assert.deepEqual(listSessions(db, { project: '/p/blog%' }).map((s) => s.session_id), ['pct']);
 });
+
+test('project filter leaves out sub-dirs that belong to another register project', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, prow('root', '/p/app', '2026-08-21T10:00:00Z'));
+  upsertSession(db, prow('wt', '/p/app/.claude/worktrees/x', '2026-08-21T11:00:00Z'));
+  upsertSession(db, prow('sub', '/p/app/packages/web', '2026-08-21T12:00:00Z'));
+  upsertSession(db, prow('loose', '/p/app/scripts', '2026-08-21T13:00:00Z'));
+  setPlacements(db, [
+    { session_id: 'root', project_key: 'A', workspace: null, base_dir: '/p/app' },
+    { session_id: 'wt', project_key: 'A', workspace: 'claude-worktree:x', base_dir: '/p/app' },
+    { session_id: 'sub', project_key: 'W', workspace: null, base_dir: '/p/app/packages/web' },
+  ]);
+  assert.deepEqual(listSessions(db, { project: '/p/app', projectDirKey: 'A' }).map((s) => s.session_id).sort(), ['loose', 'root', 'wt']);
+  // A dir the register doesn't know: rows at the dir itself plus unkeyed rows below it.
+  assert.deepEqual(listSessions(db, { project: '/p/app', projectDirKey: null }).map((s) => s.session_id).sort(), ['loose', 'root', 'wt']);
+});

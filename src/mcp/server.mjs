@@ -28,6 +28,8 @@ import { buildSessionTree } from '../lib/cc/session-tree.mjs'
 import { effectiveKind } from '../lib/cc/session-link.mjs'
 import { displayTitle, parseSummary } from '../lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '../lib/cc/session-project.mjs'
+import { buildProjectIndex } from '../lib/cc/project-key.mjs'
+import { loadRegistry } from '../lib/registry/registry.mjs'
 import { batchModel, rangeBatch } from '../lib/cc/summary-batch.mjs'
 import { existsSync } from 'fs'
 
@@ -1077,7 +1079,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'list_sessions': {
             const db = openSessionStore()
             try {
-                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, limit: 5000 })
+                // Sub-dirs owned by another register project stay out of a ?project= list.
+                let projectDirKey
+                if (args.project) {
+                    try { projectDirKey = buildProjectIndex({ register: await loadRegistry(STATE) }).lookup(args.project) } catch { /* no register: whole subtree */ }
+                }
+                const rows = listSessions(db, { since: dayIso(args.since), until: dayIso(args.until), project: args.project || undefined, projectDirKey, limit: 5000 })
                 const fams = buildSessionTree(rows, listSubagents(db, rows.map((r) => r.session_id)))
                 const want = args.kind || 'work'
                 const out = fams

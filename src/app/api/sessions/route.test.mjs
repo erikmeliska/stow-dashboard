@@ -70,3 +70,15 @@ test('?project_key= returns every session of the project; rows carry project_nam
   assert.equal(detail.session.project_name, 'Blog');
   assert.equal(detail.session.workspace, 'agent-office:x');
 });
+
+test('?project=<dir> does not pull in a nested register project', () => {
+  const db = openStore(':memory:');
+  upsertSession(db, prow('root', '/p/app', '2026-10-01T10:00:00Z'));
+  upsertSession(db, prow('sub', '/p/app/packages/web', '2026-10-01T11:00:00Z'));
+  setPlacements(db, [
+    { session_id: 'root', project_key: 'A', workspace: null, base_dir: '/p/app' },
+    { session_id: 'sub', project_key: 'W', workspace: null, base_dir: '/p/app/packages/web' },
+  ]);
+  const projectKeyOf = (dir) => ({ '/p/app': 'A', '/p/app/packages/web': 'W' })[dir] ?? null;
+  assert.deepEqual(handle(new URLSearchParams('project=/p/app'), db, { projectKeyOf }).sessions.map((s) => s.session_id), ['root']);
+});

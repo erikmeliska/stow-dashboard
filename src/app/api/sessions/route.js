@@ -1,12 +1,14 @@
 import { openStore, listSessions, listSubagents, getSession } from '../../../lib/cc/store.mjs'
 import { sessionProjectLabel } from '../../../lib/cc/session-project.mjs'
 import { loadRegistry } from '../../../lib/registry/registry.mjs'
+import { buildProjectIndex } from '../../../lib/cc/project-key.mjs'
 
 /**
  * GET /api/sessions            → { sessions: row[], agents: row[] }   (?project=<dir>|?project_key=<id>
  *   &limit=<n>&since=<iso>&until=<iso> — top-level start in [since, until))
  *   `project` matches the main-checkout dir subtree (worktree sessions included),
- *   `project_key` the register project id (#12). Rows carry `project_name`.
+ *   minus sub-dirs owned by another register project; `project_key` the register
+ *   project id (#12). Rows carry `project_name`.
  *   `sessions` holds top-level rows (limit applies to those) plus every linked
  *   child of them (`parent_session_id`); `agents` the nested Agent-tool runs of
  *   all returned sessions. session-tree.mjs turns the pair into families.
@@ -15,7 +17,7 @@ import { loadRegistry } from '../../../lib/registry/registry.mjs'
  * Reads the cc session store (data/cc-sessions.db, written by `npm run cc:ingest`).
  * `handle()` is pure over an open db so it can be unit-tested without Next.
  */
-export function handle(searchParams, db, { projectNames = new Map() } = {}) {
+export function handle(searchParams, db, { projectNames = new Map(), projectKeyOf = null } = {}) {
   const named = (s) => ({ ...s, project_name: (s.project_key && projectNames.get(s.project_key)) || sessionProjectLabel(s) })
   const id = searchParams.get('id')
   if (id) {
@@ -28,7 +30,8 @@ export function handle(searchParams, db, { projectNames = new Map() } = {}) {
   const until = searchParams.get('until') || null
   const ranged = Boolean(since || until)
   const limit = Math.min(Math.max(Number(searchParams.get('limit')) || (ranged ? 5000 : 200), 1), ranged ? 5000 : 1000)
-  const sessions = listSessions(db, { project, projectKey, limit, since, until }).map(named)
+  const projectDirKey = project && projectKeyOf ? projectKeyOf(project) : undefined
+  const sessions = listSessions(db, { project, projectDirKey, projectKey, limit, since, until }).map(named)
   return { sessions, agents: listSubagents(db, sessions.map((s) => s.session_id)) }
 }
 
@@ -38,11 +41,11 @@ export async function GET(request) {
   const db = openStore()
   try {
     const { searchParams } = new URL(request.url)
-    let projectNames = new Map()
-    try {
-      projectNames = new Map(((await loadRegistry())?.projects || []).filter((p) => p.key && p.name).map((p) => [p.key, p.name]))
-    } catch { /* no/malformed register: basename labels */ }
-    return Response.json(handle(searchParams, db, { projectNames }))
+    let register = null
+    try { register = await loadRegistry() } catch { /* no/malformed register: basename labels, whole-subtree ?project= */ }
+    const projectNames = new Map((register?.projects || []).filter((p) => p.key && p.name).map((p) => [p.key, p.name]))
+    const projectKeyOf = register ? buildProjectIndex({ register }).lookup : null
+    return Response.json(handle(searchParams, db, { projectNames, projectKeyOf }))
   } finally {
     db.close()
   }
