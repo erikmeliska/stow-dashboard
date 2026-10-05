@@ -29,6 +29,12 @@ export const POINT_ACTIVE_S = 60;
 export const POINT_SPAN_MS = 5 * 60_000;
 
 export function periodRange(date, span = 'week') {
+  if (span === 'day') {
+    // A day loads from the previous one: a session started late the evening
+    // before may still run into this day (the API filters on started_at).
+    const since = startOfDay(date);
+    return { span: 'day', since, until: addDays(since, 1), days: [since], loadSince: addDays(since, -1) };
+  }
   if (span === 'month') {
     const since = startOfMonth(date);
     const days = eachDayOfInterval({ start: startOfWeek(since, WEEK), end: endOfWeek(endOfMonth(since), WEEK) });
@@ -39,11 +45,13 @@ export function periodRange(date, span = 'week') {
 }
 
 export function shiftPeriod(date, span, dir) {
+  if (span === 'day') return addDays(date, dir);
   return span === 'month' ? addMonths(date, dir) : addWeeks(date, dir);
 }
 
 export function periodLabel(range) {
   if (range.span === 'month') return format(range.since, 'LLLL yyyy');
+  if (range.span === 'day') return format(range.since, 'EEE d MMM yyyy');
   return `${format(range.since, 'd MMM')} – ${format(addDays(range.since, 6), 'd MMM yyyy')}`;
 }
 
