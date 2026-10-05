@@ -1,0 +1,134 @@
+/**
+ * Virtual projects (Client → Project → Locations) for the projects page (#10).
+ * Pure and client-safe. The server stamps each ledger record with `vp` from
+ * the register (#8/#9) via `annotateRecords`; `locationMeta` is the only
+ * reader of those fields — change it, not the callers, if they move.
+ * A location is a checkout root (#9): rows inside one checkout are its
+ * members, so a project row's sub-rows are one record per checkout.
+ */
+
+export const ROLES = ['primary', 'deploy', 'experiment', 'stale']
+export const UNASSIGNED = '__unassigned__'
+
+const rootOf = record => record?.checkout?.root || record?.directory
+
+/**
+ * Copy the register's project/client/location/role onto each ledger record
+ * as `record.vp`. Records the register doesn't know (scanned after it was
+ * built) are returned untouched and fall back in `locationMeta`.
+ */
+export function annotateRecords(records, registry) {
+  if (!registry?.projects) return records
+  const byLocation = new Map()
+  for (const p of registry.projects) {
+    for (const l of p.locations || []) byLocation.set(l.directory, { p, l })
+  }
+  return records.map(r => {
+    const hit = byLocation.get(rootOf(r))
+    if (!hit) return r
+    const { p, l } = hit
+    return {
+      ...r,
+      vp: {
+        project_id: p.key,
+        client: p.client?.name ?? null,
+        client_source: p.client?.source ?? null,
+        location: l.directory,
+        role: l.role ?? null,
+        role_source: l.role_source ?? null,
+        primary: p.primary === l.directory,
+        members: l.members ?? 1,
+      },
+    }
+  })
+}
+
+export function locationMeta(record) {
+  const vp = record?.vp || {}
+  const client = typeof vp.client === 'string' && vp.client.trim() ? vp.client.trim() : null
+  return {
+    projectId: vp.project_id || record?.project_id || `dir:${record?.directory}`,
+    location: vp.location || rootOf(record),
+    client,
+    clientSource: client ? (vp.client_source || null) : null,
+    role: ROLES.includes(vp.role) ? vp.role : null,
+    primary: vp.primary === true,
+  }
+}
+
+function time(r) {
+  const t = Date.parse(r?.last_modified)
+  return Number.isNaN(t) ? -Infinity : t
+}
+
+const byDir = (a, b) => a.directory.localeCompare(b.directory)
+
+export function pickPrimary(locations) {
+  const primaries = locations.filter(l => locationMeta(l).role === 'primary').sort(byDir)
+  const conflict = primaries.length > 1
+  const flagged = locations.find(l => locationMeta(l).primary)
+  if (flagged) return { primary: flagged, conflict }
+  if (primaries.length) return { primary: primaries[0], conflict }
+  const newest = [...locations].sort((a, b) => time(b) - time(a) || byDir(a, b))[0]
+  return { primary: newest, conflict: false }
+}
+
+export function sumUsage(usages) {
+  const present = usages.filter(Boolean)
+  if (!present.length) return undefined
+  const out = { costUsd: 0, sessions: 0, activeMinutes: 0, tokens: {}, unpricedModels: [] }
+  const unpriced = new Set()
+  for (const u of present) {
+    out.costUsd += u.costUsd || 0
+    out.sessions += u.sessions || 0
+    out.activeMinutes += u.activeMinutes || 0
+    for (const [k, v] of Object.entries(u.tokens || {})) {
+      if (typeof v === 'number') out.tokens[k] = (out.tokens[k] || 0) + v
+    }
+    for (const m of u.unpricedModels || []) unpriced.add(m)
+  }
+  out.unpricedModels = [...unpriced]
+  return out
+}
+
+// One record speaks for a checkout: its root's own row, else the shallowest member.
+function representative(members, root) {
+  return members.find(r => r.directory === root) ||
+    [...members].sort((a, b) => a.directory.length - b.directory.length || byDir(a, b))[0]
+}
+
+export function buildVirtualProjects(records) {
+  const groups = new Map()
+  for (const r of records || []) {
+    const id = locationMeta(r).projectId
+    if (!groups.has(id)) groups.set(id, [])
+    groups.get(id).push(r)
+  }
+  const out = []
+  for (const [vpId, rows] of groups) {
+    const byRoot = new Map()
+    for (const r of rows) {
+      const root = locationMeta(r).location
+      if (!byRoot.has(root)) byRoot.set(root, [])
+      byRoot.get(root).push(r)
+    }
+    const reps = [...byRoot].map(([root, members]) => ({ ...representative(members, root), locationMembers: members.length }))
+    const { primary, conflict } = pickPrimary(reps)
+    const meta = locationMeta(primary)
+    const newest = [...rows].sort((a, b) => time(b) - time(a))[0]
+    out.push({
+      ...primary,
+      vpId,
+      client: meta.client,
+      clientSource: meta.clientSource,
+      locations: [primary, ...reps.filter(l => l !== primary).sort(byDir)],
+      copyCount: reps.length,
+      recordCount: rows.length,
+      roles: [...new Set(reps.map(l => locationMeta(l).role).filter(Boolean))].sort(),
+      primaryConflict: conflict,
+      last_modified: newest?.last_modified ?? primary.last_modified,
+      usage: sumUsage(rows.map(l => l.usage)),
+    })
+  }
+  return out
+}
