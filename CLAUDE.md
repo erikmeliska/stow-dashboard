@@ -30,6 +30,7 @@ npm run tauri:dev    # Run desktop app in dev mode
 
 # AI Analysis & Usage
 npm run analyze      # AI project analysis batch (incremental; --force, --retry-errors, --pilot, --data <file>)
+npm run registry     # Read-only summary of the virtual-project register (--multi, --unassigned, --json)
 npm run usage        # Rebuild the AI usage/cost ledger from CLI transcripts (--rebuild re-parses from zero)
 npm run pricing:sync # Refresh src/lib/pricing-data.json (the vendored LiteLLM snapshot) from LiteLLM upstream
 node scripts/calibrate-usage.mjs  # Cross-check usage.json's cost against ccusage (hand-run, not npm test — needs ccusage installed)
@@ -151,6 +152,11 @@ TanStack React Table (sorting, filtering, pagination)
 - `scripts/pricing-sync.mjs` - CLI that refreshes `pricing-data.json` from LiteLLM upstream
 - `src/lib/scan-roots.mjs` - Resolves SCAN_ROOTS / project dirs for scan and usage
 - `src/lib/state-dir.mjs` - Resolves the state dir (`data/`, `.env.local`) shared by web app, desktop app, CLIs and MCP
+- `src/lib/registry/identity.mjs` - Virtual projects: remote URL normalisation → project key (`git:`/`stow:`/`path:`)
+- `src/lib/registry/stow-meta.mjs` - Per-checkout `.stow/project.json` (id, client, role) read/write + git `info/exclude`
+- `src/lib/registry/client.mjs` - Client key folding, `_Bizz/<Client>` detection, client catalog with aliases
+- `src/lib/registry/registry.mjs` - Pure `buildRegistry` (Client → Project → Locations, roles) + `loadRegistry` / `data/registry.json`
+- `scripts/registry.mjs` - Read-only CLI over `loadRegistry` (`npm run registry`)
 - `scripts/scan.mjs` - CLI for running the scanner
 - `scripts/analyze.mjs` - CLI for the AI analysis batch
 - `scripts/usage.mjs` - CLI for rebuilding the usage ledger
@@ -294,6 +300,15 @@ A second, session-centric view of Claude Code usage lives in `data/cc-sessions.d
 - **Batch**: `POST /api/sessions/summarize-batch` (+ `estimate/`, range GET). Model `CC_SUMMARY_BATCH_MODEL` (default `claude-sonnet-5-5`), concurrency 3. Job state lives in SQLite `summary_jobs` (cross-process with the MCP server `summarize_sessions`, 60 s stale heartbeat). The runner never rejects and marks the job `stopped` on fatal errors; sessions whose last write is < 10 min old are skipped (10-min rule), and so are sessions whose transcript (`raw_ref`) is gone from disk. Concurrency is clamped to 1..8; a start with nothing to do inserts no job row and returns the latest job with `started: false`. `cc:eval` drives it with a live heartbeat clock. `openStore` sets `PRAGMA busy_timeout = 5000` for file DBs so the web app, CLI and MCP can share the DB. Estimate: `ceil(count/concurrency) x median(ms of last 50)`, fallback 30 s (Sonnet) / 10 s (haiku) per session.
 - **Calendar** (`/sessions?view=calendar&span=week|month&date=YYYY-MM-DD`): Table|Calendar toggle, local time, Monday first, max span one month, default shows only `work` (chip reveals agent/scheduled/trivial muted; `scheduled` gets a neutral badge). Placement: `end = ended_at` if span <= 5 h else `start + max(active_s, 30 min)`, min height 15 min. Banner scope = visible events (current period, filters, chip) with no summary at all (v0; `--upgrade` is CLI/MCP only), counted only once the loaded data matches the displayed view/period/project (`loadKey`/`bannerIds`). The page ignores stale load responses (latest request wins). One-off PoC import: `npm run cc:import-summaries`.
 - **Color by** (calendar header and above the table — one shared choice via `useColorMode` in `src/app/sessions/color-controls.js`; table rows get an inset colour bar on the first cell; per-viewer in localStorage `stow.calendar.colorBy`, default `outcome`): `COLOR_MODES` / `colorBy` / `colorLegend` in `session-calendar.mjs` — outcome (status colours `--status-*`, always paired with the outcome icon), project (hashed, 6 hues), harness and kind (categorical `--viz-*` in fixed order), cost and quality (one-hue ordinal ramp `--seq-1..4`, defined per theme in `globals.css`). A legend with per-bucket counts under the header says what the colours mean. Palettes were checked with the dataviz validator; outcome's red/green pair relies on the icon for CVD.
+
+### Virtual Projects (register)
+
+A virtual layer over the ledger — **Client → Project → Location** (checkout). Nothing on disk moves. Issue #8 adds the model only; scanner wiring, UI, reorg and sessions are #9–#14 (label `virtual-projects`). Spec: `docs/superpowers/specs/2026-10-05-virtual-projects-register-design.md`.
+
+- **Identity**: the first remote that normalises (`normalizeRemote`: credentials, port, `www.`, `.git` dropped, lowercased, proxy prefixes unwrapped; local paths → none) → `git:<host/path>`; else the `id` in `<dir>/.stow/project.json` → `stow:<id>`; else `path:<directory>` (unstable until #9 writes ids).
+- **`.stow/project.json`**: `{version: 1, id, client?, role?}`, unknown keys kept, a malformed file is never overwritten. `writeStowMeta` adds an unanchored `.stow/` line to the repo's `info/exclude` (via `git rev-parse --git-path`, injectable exec) so it never shows up as an uncommitted change.
+- **Client** chain: manual (`.stow` client) > `ai_analysis.client` > remote top-level owner/group *only if it matches a known client* > `_Bizz/<Client>` path segment. Names fold by `clientKey` (case, punctuation, diacritics, the AI's `new:` prefix). `data/registry.json` (`{clients: [{name, aliases}]}`, via `dataFile`) sets display names and aliases; a malformed file throws.
+- **Roles** `primary | deploy | experiment | stale`: manual wins; otherwise primary = most recently active (tie → shortest path); others `stale` by name token (`old|backup|bak|archive`) or > 180 days idle, `deploy` by token (`prod|production|deploy|live`), else `experiment`.
 
 ### Quick Filters
 
