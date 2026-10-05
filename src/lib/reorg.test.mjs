@@ -145,3 +145,12 @@ test('ordering: kinds in order, client placement by code size desc, unassigned c
   assert.equal(r.summary.unassigned, 1)
   assert.equal(r.summary.abandoned, 1)
 })
+
+test('abandoned: already under an _Archive(s) folder is skipped; an existing _Archives folder is reused', () => {
+  const dead = { ai: { maturity: 'idea' }, derived: { status: 'dead' } }
+  const inArchive = { projects: [project('p1', [loc('/P/_Archives/old/toy')])] }
+  assert.equal(run({ register: inArchive, rows: [row('/P/_Archives/old/toy', dead)] }).suggestions.length, 0)
+  const reg = { projects: [project('p1', [loc('/P/_AI/toy')])] }
+  const r = run({ register: reg, rows: [row('/P/_AI/toy', dead)], exists: (p) => p === '/P/_AI/toy' || p === '/P/_Archives' })
+  assert.deepEqual(r.suggestions[0].move, { from: '/P/_AI/toy', to: '/P/_Archives/toy' })
+})

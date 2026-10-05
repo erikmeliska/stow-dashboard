@@ -33,6 +33,8 @@ const lastActivity = (r) => Math.max(0, ...[r?.git_info?.last_total_commit_date,
   .map(d => Date.parse(d)).filter(Number.isFinite))
 const isoOrNull = (t) => (t ? new Date(t).toISOString() : null)
 const under = (dir, parent) => dir === parent || dir.startsWith(parent + '/')
+// Already physically archived: a path segment `_Archive` / `_Archives`.
+const ARCHIVED_PATH = /\/_Archives?(\/|$)/i
 
 // `_Bizz/<folder>` path of a directory, e.g. /P/_Bizz/Acme/x → /P/_Bizz/Acme.
 function bizzFolderOf(dir) {
@@ -130,8 +132,8 @@ export function buildReorgReport({
     const ai = pRow?.ai_analysis
     const status = pRow?.ai_derived?.status
     const experiment = primary.role === 'experiment' || EXPERIMENT_MATURITY.has(ai?.maturity) || ai?.project_type === 'prototype-poc'
-    if (!isArchived(p) && experiment && ABANDONED_STATUS.has(status) && !locs.some(l => running(l.directory))) {
-      const archive = path.join(baseDir, '_Archive')
+    if (!isArchived(p) && !ARCHIVED_PATH.test(primary.directory) && experiment && ABANDONED_STATUS.has(status) && !locs.some(l => running(l.directory))) {
+      const archive = ['_Archive', '_Archives'].map(n => path.join(baseDir, n)).find(d => exists(d)) ?? path.join(baseDir, '_Archive')
       const to = path.join(archive, path.basename(primary.directory))
       push({ ...base, kind: 'abandoned', location: primary.directory,
         reason: `Experiment, ${status}`,
