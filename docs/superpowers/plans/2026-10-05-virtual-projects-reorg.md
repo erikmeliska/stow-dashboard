@@ -62,14 +62,23 @@
 - [ ] **Step 1:** `git fetch && git rebase origin/main`. Confirm that #8 and #9 are merged (`gh pr list --state merged --label virtual-projects`).
 - [ ] **Step 2:** Read #8's register module and fill in the real names for these:
 
-| Assumed | Actual |
+| Assumed | Actual (pinned after #8 PR #17 / #9 PR #23 merged) |
 |---|---|
-| `loadRegister()` / `saveRegister(reg)` | |
-| `project.client`, `project.client_source` | |
-| `project.locations[].{directory, role, primary}` | |
-| `row.project_id`, `row.checkout.root` | |
-| `setProjectClient`, `setLocationRole` | |
-| `removeProject`, `relocateLocation`, `setProjectArchived` | |
+| `loadRegister()` / `saveRegister(reg)` | `loadRegistry({ base })` (`src/lib/registry/registry.mjs`) — a **computed view** over the ledger + `.stow` metas; there is no saved register |
+| `project.id` | `project.key` (`git:`/`stow:`/`path:`), = `row.project_id` |
+| `project.client`, `project.client_source` | `project.client = { id, name, source }`, `source ∈ manual\|ai\|owner\|path`, `id` = `clientKey` |
+| `project.locations[].{directory, role, primary}` | `project.primary` (dir) + `locations[].{ directory, role, role_source, record_id, stow_id, last_activity, members }`; every location has a role (derived or manual) |
+| `row.project_id`, `row.checkout.root` | same (`row.checkout = { root, subpath, git, main? }`) |
+| `setProjectClient`, `setLocationRole` | `writeStowMeta(dir, { client })` / `writeStowMeta(dir, { role })` (`src/lib/registry/stow-meta.mjs`) |
+| `removeProject`, `relocateLocation`, `setProjectArchived` | not shipped — see the rulings below |
+
+Rulings (no change to #8's module):
+- **archive-project** = a manual `stale` role on every location; a project is "archived" when all its locations are manual-stale.
+- **orphan**: the computed register can't hold `locations: []`. An orphan is a project whose every location is gone from disk (stale ledger rows the quick refresh keeps); **remove-project** drops those ledger rows.
+- **relocate**: no register step. Rewriting the ledger rows (`directory`, `checkout.root`, `checkout.main`) *is* moving the location; `.stow` and remotes travel with the folder.
+- **stale-copy**: non-primary locations always carry a derived role, so only manual roles and derived `deploy` are skipped.
+- **client-placement**: "under `_Bizz/<client>`" = `clientKey(bizzClient(dir))` equals `client.id` (or one of its aliases in `data/registry.json`).
+- **legacy fallback** dropped: the register is always computable from the ledger.
 
 - [ ] **Step 3:** For each writer that #8 doesn't ship (likely `removeProject`, `relocateLocation`, `setProjectArchived`), stop and ask in the PR. Don't add them to #8's module from here. If the owner agrees, they go into #8's module as a separate commit titled `feat(register): …`, with tests in #8's test file.
 - [ ] **Step 4:** Replace every assumed name in this plan's code blocks with the actual ones. Commit: `docs: pin #11 plan to the merged register contract`.

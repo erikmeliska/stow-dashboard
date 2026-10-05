@@ -42,6 +42,7 @@ import { assignPlacements, loadPlacementContext } from './project-key.mjs';
 import { listGeminiDbs, parseGeminiSession } from './gemini-ingest.mjs';
 import { listCodexFiles } from '../usage.mjs';
 import { parseCodexSession } from './codex-ingest.mjs';
+import { loadPathMoves, resolveMovedPath } from '../path-moves.mjs';
 
 export function defaultIngestPaths(env = process.env) {
   return {
@@ -184,8 +185,9 @@ export async function linkChildren(db, { readText = (f) => readFile(f, 'utf8'), 
 /**
  * `codexDir` (optional) is the Codex sessions root. `placement` (optional) is a
  * project-key.mjs context; without one the placement pass is skipped (runIngest
- * always passes the real one, tests inject theirs).
- * @param {{claudeDir: string, codexDir?: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean, placement?: object}} opts
+ * always passes the real one, tests inject theirs). `moves` (optional) are the
+ * #11 path moves (`loadPathMoves()`; runIngest passes the real ones).
+ * @param {{claudeDir: string, codexDir?: string, guardAudit: string, db: import('node:sqlite').DatabaseSync, env?: object, full?: boolean, placement?: object, moves?: Array<{from: string, to: string}>}} opts
  * @returns {Promise<{sessions: number, changed: number, skipped: number, linked: number, placed: {checked: number, updated: number}|null, placement_error?: string, ms: number}>}
  */
 export async function ingestAll({
@@ -199,8 +201,14 @@ export async function ingestAll({
   full = false,
   projectDirs = null,
   placement = null,
+  moves = [],
 }) {
   const t0 = Date.now();
+  // Physical moves (#11): transcripts keep their old cwd forever, so every
+  // re-ingest maps it to the project's current path before the upsert.
+  const relocate = (row) => moves.length
+    ? Object.assign(row, { project_dir: resolveMovedPath(row.project_dir, moves, { at: row.started_at }), cwd: resolveMovedPath(row.cwd, moves, { at: row.started_at }) })
+    : row;
   const ticketPattern = ticketRegex(env);
   const verifyPattern = verifyRegex(env);
   let guardMap = new Map();
@@ -243,7 +251,7 @@ export async function ingestAll({
       row.quality_detail = JSON.stringify(q.detail);
       db.exec('BEGIN');
       try {
-        upsertSession(db, row);
+        upsertSession(db, relocate(row));
         replaceTools(db, row.session_id, row._tools);
         replaceSkills(db, row.session_id, row._skills, row._editedSkills);
         replaceGuardHits(db, row.session_id, hits);
@@ -280,7 +288,7 @@ export async function ingestAll({
 
         db.exec('BEGIN');
         try {
-          upsertSession(db, row);
+          upsertSession(db, relocate(row));
           replaceTools(db, row.session_id, row._tools);
           replaceSkills(db, row.session_id, row._skills, row._editedSkills);
           replaceGuardHits(db, row.session_id, []);
@@ -310,7 +318,7 @@ export async function ingestAll({
       if (!row) continue;
       db.exec('BEGIN');
       try {
-        upsertSession(db, row);
+        upsertSession(db, relocate(row));
         replaceTools(db, row.session_id, row._tools);
         replaceSkills(db, row.session_id, row._skills, row._editedSkills);
         replaceGuardHits(db, row.session_id, []); // cc-guard only sees Claude Code
@@ -343,18 +351,44 @@ export async function ingestAll({
   return { sessions, changed, skipped, linked, placed, ...(placement_error ? { placement_error } : {}), ms: Date.now() - t0 };
 }
 
-let inFlight = null;
+// Module state on globalThis: Next may bundle this module into several route
+// chunks, and the refresh route and a relocation must share one lock.
+const S = globalThis.__stowIngestRun ??= { inFlight: null, exclusive: 0, chain: Promise.resolve() };
 
 /**
  * Run an ingest against the real store with the default paths, serialised:
  * concurrent callers (refresh cycle + page reload) share one run.
  */
 export function runIngest({ full = false } = {}) {
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+  if (S.exclusive) return Promise.resolve({ ...DEFERRED });
+  if (S.inFlight) return S.inFlight;
+  S.inFlight = (async () => {
     const db = openStore();
-    try { return await ingestAll({ ...defaultIngestPaths(), db, full, placement: await loadPlacementContext() }); }
-    finally { db.close(); inFlight = null; }
+    try { return await ingestAll({ ...defaultIngestPaths(), db, full, placement: await loadPlacementContext(), moves: await loadPathMoves() }); }
+    finally { db.close(); S.inFlight = null; }
   })();
-  return inFlight;
+  return S.inFlight;
+}
+
+const DEFERRED = { sessions: 0, changed: 0, skipped: 0, linked: 0, placed: null, deferred: true, ms: 0 };
+
+/**
+ * Run `fn` while no ingest runs in this process (#11 relocation): callers queue
+ * on a promise chain (never two at once), each waits for an in-flight ingest,
+ * and a runIngest() call meanwhile returns a no-op `{deferred: true}` at once
+ * instead of racing the DB rewrite.
+ */
+export async function runExclusive(fn) {
+  S.exclusive++; // counted at once: a queued move already defers new ingests
+  const prev = S.chain;
+  let release;
+  S.chain = new Promise((r) => { release = r; });
+  try {
+    await prev;
+    while (S.inFlight) await S.inFlight.catch(() => {});
+    return await fn();
+  } finally {
+    S.exclusive--;
+    release();
+  }
 }

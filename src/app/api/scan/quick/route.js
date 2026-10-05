@@ -9,6 +9,7 @@ import { updateUsage, defaultUsagePaths } from '@/lib/usage.mjs'
 import { runIngest } from '@/lib/cc/ingest-run.mjs'
 import { refreshProjectGit } from '@/lib/git-status.mjs'
 import { ledgerFile } from '@/lib/state-dir.mjs'
+import { acquireLedgerLock, writeFileAtomic } from '@/lib/ledger-lock.mjs'
 
 // How many `git status` calls the working-tree pass keeps in flight. Each is
 // one short-lived process, so this is about not stampeding the disk, not fds.
@@ -112,12 +113,16 @@ export async function POST() {
             }
 
             const startTime = Date.now()
+            let releaseLedger = () => {}
 
             try {
                 const SCAN_ROOTS = scanRoots()
                 // Resolve once per cycle so the read and the write below can't
                 // straddle two different state dirs.
                 const dataFile = ledgerFile()
+                // Hold the ledger lock from this read to the write below, so a reorg
+                // action or relocation in between isn't overwritten (#11).
+                releaseLedger = await acquireLedgerLock()
                 // Load existing projects
                 const content = await fs.readFile(dataFile, 'utf-8')
                 const projects = content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
@@ -236,7 +241,8 @@ export async function POST() {
                 // Single JSONL write
                 sendEvent({ type: 'status', message: 'Saving...' })
                 const lines = Array.from(projectMap.values()).map(p => JSON.stringify(p))
-                await fs.writeFile(dataFile, lines.join('\n') + '\n')
+                await writeFileAtomic(dataFile, lines.join('\n') + '\n')
+                releaseLedger()
 
                 // Regroup so newly discovered projects claim their processes in the payload
                 const finalProcesses = discovered.length > 0
@@ -273,6 +279,7 @@ export async function POST() {
                 const duration = Math.round((Date.now() - startTime) / 1000)
                 sendEvent({ type: 'error', message: error.message, duration })
             } finally {
+                releaseLedger()
                 controller.close()
             }
         }

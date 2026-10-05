@@ -332,3 +332,53 @@ test('ingestAll without a placement context skips placement', async () => {
   assert.equal(res.placed, null);
   assert.equal(getSession(db, 'sess-1').session.workspace, null);
 });
+
+test('path moves (#11) rewrite project_dir/cwd on ingest, and a full re-ingest keeps them', async () => {
+  const { root } = await fixture();
+  const db = openStore(':memory:');
+  const moves = [{ id: 'm', from: '/p/a', to: '/p/new', at: 'x' }];
+  const opts = { claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope.jsonl'), db, moves, full: true };
+  await ingestAll(opts);
+  let s = getSession(db, 'sess-1').session;
+  assert.equal(s.project_dir, '/p/new');
+  assert.equal(s.cwd, '/p/new');
+  await ingestAll(opts);
+  s = getSession(db, 'sess-1').session;
+  assert.equal(s.project_dir, '/p/new');
+  // no moves → today's behaviour
+  await ingestAll({ ...opts, moves: [] });
+  assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
+});
+
+test('runExclusive holds the ingest slot: runIngest meanwhile is a deferred no-op (#11)', async () => {
+  const { runExclusive, runIngest } = await import('./ingest-run.mjs');
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const held = runExclusive(async () => { await gate; return 'moved'; });
+  const during = await runIngest();
+  assert.equal(during.deferred, true);
+  release();
+  assert.equal(await held, 'moved');
+});
+
+test('path moves are time-scoped on ingest: a session newer than the move keeps its path (#11 review I-1)', async () => {
+  const { root } = await fixture(); // sess-1 started 2026-08-21
+  const db = openStore(':memory:');
+  await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope.jsonl'), db, full: true,
+    moves: [{ id: 'm', from: '/p/a', to: '/p/new', at: '2026-01-01T00:00:00Z' }] });
+  assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
+});
+
+test('runExclusive callers never overlap (#11 review I-5)', async () => {
+  const { runExclusive } = await import('./ingest-run.mjs');
+  const log = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const a = runExclusive(async () => { log.push('a:start'); await gate; log.push('a:end'); });
+  const b = runExclusive(async () => { log.push('b:start'); log.push('b:end'); });
+  const c = runExclusive(async () => { log.push('c'); });
+  await new Promise((r) => setTimeout(r, 10));
+  release();
+  await Promise.all([a, b, c]);
+  assert.deepEqual(log, ['a:start', 'a:end', 'b:start', 'b:end', 'c']);
+});
