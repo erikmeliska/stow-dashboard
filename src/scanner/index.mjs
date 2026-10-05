@@ -7,6 +7,7 @@ import { simpleGit } from 'simple-git'
 import dotenv from 'dotenv'
 import ignore from 'ignore'
 import { isMetaDocPath } from '../lib/distill.mjs'
+import { Semaphore } from '../lib/semaphore.mjs'
 
 export const DEFAULT_IGNORE_PATTERNS = [
     '.git', 'node_modules', 'venv', '.venv',
@@ -50,27 +51,7 @@ const CONCURRENCY = 8
 // descriptor, so they add no FD pressure while waiting.
 export const FS_CONCURRENCY = 48
 
-export class Semaphore {
-    constructor(max) {
-        this.max = max
-        this.active = 0
-        this.queue = []
-    }
-
-    async run(fn) {
-        if (this.active >= this.max) {
-            await new Promise(resolve => this.queue.push(resolve))
-        }
-        this.active++
-        try {
-            return await fn()
-        } finally {
-            this.active--
-            const next = this.queue.shift()
-            if (next) next()
-        }
-    }
-}
+export { Semaphore }
 
 const fsLimiter = new Semaphore(FS_CONCURRENCY)
 const limitedReaddir = (dir, options) => fsLimiter.run(() => fs.readdir(dir, options))
