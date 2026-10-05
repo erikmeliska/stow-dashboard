@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   periodRange, shiftPeriod, calendarSlot, daySegment, layoutDay, projectColor, harnessBadge,
   calendarFamilies, missingSummaryIds, periodStats, formatEta, loadKey, bannerIds, colorBy, colorLegend, COLOR_MODES,
-  layoutPoints, defaultColorMode,
+  layoutPoints, defaultColorMode, periodLabel,
 } from './session-calendar.mjs';
 
 const L = (d, h = 0, m = 0) => new Date(2026, 8, d, h, m); // September 2026, local
@@ -352,4 +352,16 @@ test('absorbPoints: Merge none keeps every dot standalone; untouched items keep 
   assert.equal(out[0].id, 'a');
   assert.equal(out[0], items[0]);
   assert.equal(points.length, 1);
+});
+
+test('periodRange/shiftPeriod/periodLabel: day span loads from the previous day', () => {
+  const d = periodRange(L(9, 15), 'day');
+  assert.equal(d.span, 'day');
+  assert.equal(+d.since, +L(9));
+  assert.equal(+d.until, +L(10));
+  assert.equal(d.days.length, 1);
+  assert.equal(+d.loadSince, +L(8));
+  assert.equal(+shiftPeriod(L(9), 'day', -1), +L(8));
+  assert.equal(+shiftPeriod(L(9), 'day', 1), +L(10));
+  assert.equal(periodLabel(d), 'Wed 9 Sep 2026');
 });

@@ -14,6 +14,7 @@ import { colorBy, COLOR_MODES, defaultColorMode, loadKey, periodRange } from '@/
 import { displayTitle, parseSummary, summaryVersion, OUTCOME_ICON } from '@/lib/cc/summary-view.mjs'
 import { sessionProjectLabel } from '@/lib/cc/session-project.mjs'
 import { facetCounts, UNASSIGNED } from '@/lib/cc/session-projects.mjs'
+import { onDay } from '@/lib/cc/session-timeline.mjs'
 import { CalendarView } from './calendar-view'
 import { WorkspaceBadge } from './workspace-badge'
 import { ColorLegend, ColorSelect, useColorMode } from './color-controls'
@@ -466,7 +467,7 @@ function SessionsView() {
   const [sort, setSort] = useState({ key: 'started_at', dir: 'desc' })
   const [pickedColorMode, setColorMode] = useColorMode()
   const view = searchParams.get('view') === 'calendar' ? 'calendar' : 'table'
-  const span = searchParams.get('span') === 'month' ? 'month' : 'week'
+  const span = ['day', 'month'].includes(searchParams.get('span')) ? searchParams.get('span') : 'week'
   const dateParam = searchParams.get('date') || ''
   const date = useMemo(() => {
     const d = dateParam ? parse(dateParam, 'yyyy-MM-dd', new Date()) : new Date()
@@ -498,7 +499,8 @@ function SessionsView() {
       if (ingest) await fetch('/api/sessions/ingest', { method: 'POST' }).catch(() => {})
       const qs = new URLSearchParams(project ? { project } : {})
       if (projectKey) qs.set('project_key', projectKey)
-      if (view === 'calendar') { qs.set('since', range.since.toISOString()); qs.set('until', range.until.toISOString()) }
+      // A day loads from the evening before (range.loadSince): sessions running into the day.
+      if (view === 'calendar') { qs.set('since', (range.loadSince || range.since).toISOString()); qs.set('until', range.until.toISOString()) }
       else qs.set('limit', '1000')
       const r = await fetch(`/api/sessions?${qs}`)
       const d = await r.json()
@@ -533,7 +535,11 @@ function SessionsView() {
     }
   }
 
-  const families = useMemo(() => buildSessionTree(sessions, agents), [sessions, agents])
+  const families = useMemo(() => {
+    const all = buildSessionTree(sessions, agents)
+    // The day view loaded the evening before too; keep only what reaches the day, so counts match the timeline.
+    return view === 'calendar' && range.span === 'day' ? onDay(all, range.since) : all
+  }, [sessions, agents, view, range])
   // Counted before filtering so the numbers don't collapse as you tick; a selection that left the data stays at (0).
   const facets = useMemo(
     () => facetCounts(families, { keep: { clients: clientFilter, projects: projectFilter, workspace: workspaceFilter } }),
