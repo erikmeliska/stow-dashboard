@@ -207,7 +207,7 @@ export async function ingestAll({
   // Physical moves (#11): transcripts keep their old cwd forever, so every
   // re-ingest maps it to the project's current path before the upsert.
   const relocate = (row) => moves.length
-    ? Object.assign(row, { project_dir: resolveMovedPath(row.project_dir, moves), cwd: resolveMovedPath(row.cwd, moves) })
+    ? Object.assign(row, { project_dir: resolveMovedPath(row.project_dir, moves, { at: row.started_at }), cwd: resolveMovedPath(row.cwd, moves, { at: row.started_at }) })
     : row;
   const ticketPattern = ticketRegex(env);
   const verifyPattern = verifyRegex(env);

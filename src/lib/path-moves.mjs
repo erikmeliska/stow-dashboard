@@ -16,11 +16,19 @@ export const PATH_MOVES_FILE = 'path-moves.json'
 
 export class PathMovesError extends Error {}
 
-/** `p` rewritten by every move whose `from` is `p` or a parent of it, in order (so chains resolve). */
-export function resolveMovedPath(p, moves) {
+/**
+ * `p` rewritten by every move whose `from` is `p` or a parent of it, in order
+ * (so chains resolve). `at` is when the record was made (a session's start, a
+ * transcript's first line): a move only applies to records from before it, so
+ * a new project later created at the old path keeps its own history. Without
+ * a usable `at` every move applies.
+ */
+export function resolveMovedPath(p, moves, { at } = {}) {
   if (typeof p !== 'string' || !moves?.length) return p
+  const t = Date.parse(at ?? '')
   let out = p
-  for (const { from, to } of moves) {
+  for (const { from, to, at: movedAt } of moves) {
+    if (Number.isFinite(t) && Number.isFinite(Date.parse(movedAt)) && t >= Date.parse(movedAt)) continue
     if (out === from) out = to
     else if (out.startsWith(from + '/')) out = to + out.slice(from.length)
   }

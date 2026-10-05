@@ -662,11 +662,12 @@ export function aggregateUsage(cache, projectDirs, moves = []) {
     if (!hasClaude && !hasCodex && !hasGemini) continue
 
     let target = unmatched
-    const cwd = resolveMovedPath(st.cwd, moves)
+    const when = { at: st.firstTs }
+    const cwd = resolveMovedPath(st.cwd, moves, when)
     if (typeof cwd === 'string') {
       let dir = dirs.find(d => cwd === d || cwd.startsWith(d + '/'))
       if (!dir && Array.isArray(st.geminiPaths)) {
-        const gp = moves.length ? st.geminiPaths.map(p => resolveMovedPath(p, moves)) : st.geminiPaths
+        const gp = moves.length ? st.geminiPaths.map(p => resolveMovedPath(p, moves, when)) : st.geminiPaths
         dir = dirs.find(d => gp.some(p => p === d || p.startsWith(d + '/')))
       }
       if (dir) target = projects[dir] ??= newAccumulator()

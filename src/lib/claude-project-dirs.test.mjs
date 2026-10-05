@@ -71,3 +71,27 @@ test('a folder moved earlier is found through path-moves (its transcripts keep t
     assert.equal(g.slug, claudeSlug('/P/new'))
   } finally { await h.done() }
 })
+
+test('alias resolution is time-scoped by the transcript timestamp (#11 review I-1)', async () => {
+  const h = await home()
+  try {
+    // A new project at /P/old after it moved: its transcripts are newer than the move.
+    await h.add(claudeSlug('/P/old'), [{ type: 'user', cwd: '/P/old', timestamp: '2026-11-01T00:00:00Z' }])
+    const moves = [{ id: 'm', from: '/P/old', to: '/P/new', at: '2026-10-05T00:00:00Z' }]
+    assert.deepEqual(await findClaudeProjectDirs(h.root, '/P/new', { moves }), [])
+    assert.equal((await findClaudeProjectDirs(h.root, '/P/old', { moves })).length, 1)
+  } finally { await h.done() }
+})
+
+test('a memory-only folder (transcripts pruned) is matched by its slug (#11 review I-6)', async () => {
+  const h = await home()
+  try {
+    const d = path.join(h.root, claudeSlug('/P/proj')); await mkdir(path.join(d, 'memory'), { recursive: true })
+    const old = path.join(h.root, claudeSlug('/P/was')); await mkdir(path.join(old, 'memory'), { recursive: true })
+    const [g] = await findClaudeProjectDirs(h.root, '/P/proj')
+    assert.equal(g.cwd, '/P/proj'); assert.equal(g.hasMemory, true); assert.deepEqual(g.files, ['memory'])
+    // a memory-only folder left at the slug of a path that was moved here
+    const moved = await findClaudeProjectDirs(h.root, '/P/proj', { moves: [{ id: 'm', from: '/P/was', to: '/P/proj', at: 'z' }] })
+    assert.deepEqual(moved.map(x => x.slug).sort(), [claudeSlug('/P/proj'), claudeSlug('/P/was')].sort())
+  } finally { await h.done() }
+})

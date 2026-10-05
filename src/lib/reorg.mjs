@@ -42,10 +42,19 @@ function bizzFolderOf(dir) {
   return m ? m[1] : null
 }
 
-/** Is a project archived? Every location carries a manual `stale` role (#11 ruling: no project flag in #8). */
-export function isArchived(project) {
-  return !!project.locations?.length && project.locations.every(l => l.role === 'stale' && l.role_source === 'manual')
+/**
+ * Is a project archived? Every location still on disk carries a manual
+ * `stale` role (#11 ruling: no project flag in #8). Vanished locations can't
+ * be written, so they don't count.
+ */
+export function isArchived(project, exists = existsSync) {
+  const live = (project.locations || []).filter(l => exists(l.directory))
+  return live.length > 0 && live.every(l => l.role === 'stale' && l.role_source === 'manual')
 }
+
+// Gone, not merely unreachable: the folder is missing but its parent exists
+// (an unmounted volume or an offline share has no parent either).
+const deleted = (dir, exists) => !exists(dir) && exists(path.dirname(dir))
 
 export function buildReorgReport({
   register, rows, baseDir, runningDirs = [], dismissed = {},
@@ -85,13 +94,14 @@ export function buildReorgReport({
     const dirs = locs.map(l => l.directory)
     const base = { projectId: p.key, projectName: p.name ?? null }
 
-    if (!locs.length || locs.every(l => !exists(l.directory))) {
+    if (!locs.length || locs.every(l => deleted(l.directory, exists))) {
       push({ ...base, kind: 'orphan', location: null,
-        reason: 'No checkout of this project exists on disk any more',
+        reason: 'Every checkout of this project was deleted from disk',
         evidence: { directories: dirs, manualClient: p.client?.source === 'manual', manualRoles: locs.some(l => l.role_source === 'manual') },
         action: { type: 'remove-project', directories: dirs }, move: null }, p.name ?? '')
       continue
     }
+    if (locs.every(l => !exists(l.directory))) continue // unreachable (offline volume): nothing to suggest
 
     const primaryDir = p.primary ?? dirs[0]
     const primary = locs.find(l => l.directory === primaryDir) ?? locs[0]
@@ -132,7 +142,7 @@ export function buildReorgReport({
     const ai = pRow?.ai_analysis
     const status = pRow?.ai_derived?.status
     const experiment = primary.role === 'experiment' || EXPERIMENT_MATURITY.has(ai?.maturity) || ai?.project_type === 'prototype-poc'
-    if (!isArchived(p) && !ARCHIVED_PATH.test(primary.directory) && experiment && ABANDONED_STATUS.has(status) && !locs.some(l => running(l.directory))) {
+    if (!isArchived(p, exists) && !ARCHIVED_PATH.test(primary.directory) && experiment && ABANDONED_STATUS.has(status) && !locs.some(l => running(l.directory))) {
       const archive = ['_Archive', '_Archives'].map(n => path.join(baseDir, n)).find(d => exists(d)) ?? path.join(baseDir, '_Archive')
       const to = path.join(archive, path.basename(primary.directory))
       push({ ...base, kind: 'abandoned', location: primary.directory,

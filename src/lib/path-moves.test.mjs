@@ -52,3 +52,16 @@ test('state-dir default: the file lives in data/ of the resolved state dir', asy
     assert.ok((await readFile(path.join(dir, 'data', 'path-moves.json'), 'utf8')).includes('"m1"'))
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('time-scoped: a move only applies to records from before it (a new project at the old path stays put)', () => {
+  const moves = [
+    { id: 'm1', from: '/P/foo', to: '/P/bar', at: '2026-01-01T00:00:00Z' },
+    { id: 'm2', from: '/P/foo', to: '/P/baz', at: '2026-06-01T00:00:00Z' },
+  ]
+  assert.equal(resolveMovedPath('/P/foo/x', moves, { at: '2025-12-01T00:00:00Z' }), '/P/bar/x')
+  assert.equal(resolveMovedPath('/P/foo/x', moves, { at: '2026-03-01T00:00:00Z' }), '/P/baz/x')
+  assert.equal(resolveMovedPath('/P/foo/x', moves, { at: '2026-07-01T00:00:00Z' }), '/P/foo/x')
+  // chain: bar moved on later still follows for an old record
+  const chain = [moves[0], { id: 'm3', from: '/P/bar', to: '/P/qux', at: '2026-02-01T00:00:00Z' }]
+  assert.equal(resolveMovedPath('/P/foo', chain, { at: '2025-12-01T00:00:00Z' }), '/P/qux')
+})

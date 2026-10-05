@@ -583,3 +583,11 @@ test('runUsageExclusive: updateUsage meanwhile is a deferred no-op that writes n
     assert.equal(await held, 'moved')
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('aggregateUsage: a session started after the move at the old path is not aliased (#11 review I-1)', () => {
+  const late = claudeAt('/P/old'); late.state.firstTs = '2026-11-01T00:00:00Z'
+  const early = claudeAt('/P/old'); early.state.firstTs = '2026-09-01T00:00:00Z'
+  const agg = aggregateUsage({ files: { '/t/a.jsonl': early, '/t/b.jsonl': late } }, ['/P/old', '/P/new'], [{ id: 'm', from: '/P/old', to: '/P/new', at: '2026-10-05T00:00:00Z' }])
+  assert.equal(agg.projects['/P/new'].sessions, 1)
+  assert.equal(agg.projects['/P/old'].sessions, 1)
+})

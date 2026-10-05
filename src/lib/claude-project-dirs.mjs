@@ -17,18 +17,20 @@ export function claudeSlug(dir) {
   return dir.replace(/[^A-Za-z0-9-]/g, '-')
 }
 
+// → { cwds, at }: the cwds in the first 64 KB and the first timestamp (when the transcript began).
 async function headCwds(fs, file) {
   let fh
   try {
     fh = await fs.open(file, 'r')
     const buf = Buffer.alloc(HEAD_BYTES)
     const { bytesRead } = await fh.read(buf, 0, HEAD_BYTES, 0)
-    const out = []
-    for (const m of buf.subarray(0, bytesRead).toString('utf8').matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)) {
-      try { out.push(JSON.parse(`"${m[1]}"`)) } catch { /* torn escape at the cut */ }
+    const text = buf.subarray(0, bytesRead).toString('utf8')
+    const cwds = []
+    for (const m of text.matchAll(/"cwd":"((?:[^"\\]|\\.)*)"/g)) {
+      try { cwds.push(JSON.parse(`"${m[1]}"`)) } catch { /* torn escape at the cut */ }
     }
-    return out
-  } catch { return [] } finally { await fh?.close() }
+    return { cwds, at: text.match(/"timestamp":"([^"]+)"/)?.[1] }
+  } catch { return { cwds: [] } } finally { await fh?.close() }
 }
 
 /**
@@ -38,8 +40,9 @@ async function headCwds(fs, file) {
 async function folderCwd(fs, dir, slug, transcripts, moves) {
   let first = null
   for (const f of transcripts) {
-    for (const raw of await headCwds(fs, path.join(dir, f))) {
-      const cwd = resolveMovedPath(raw, moves)
+    const { cwds, at } = await headCwds(fs, path.join(dir, f))
+    for (const raw of cwds) {
+      const cwd = resolveMovedPath(raw, moves, { at })
       if (claudeSlug(cwd) === slug) return cwd
       first ??= cwd
     }
@@ -54,6 +57,7 @@ async function folderCwd(fs, dir, slug, transcripts, moves) {
 export async function findClaudeProjectDirs(claudeDir, from, { fs = fsp, moves = [] } = {}) {
   let slugs
   try { slugs = await fs.readdir(claudeDir, { withFileTypes: true }) } catch { return [] }
+  const bySlug = new Set([from, ...moves.filter(m => resolveMovedPath(m.from, moves) === from).map(m => m.from)].map(claudeSlug))
   const out = []
   for (const d of slugs) {
     if (!d.isDirectory()) continue
@@ -61,7 +65,9 @@ export async function findClaudeProjectDirs(claudeDir, from, { fs = fsp, moves =
     let entries
     try { entries = await fs.readdir(dir, { withFileTypes: true }) } catch { continue }
     const transcripts = entries.filter(e => e.isFile() && e.name.endsWith('.jsonl')).map(e => e.name).sort()
-    const cwd = await folderCwd(fs, dir, d.name, transcripts, moves)
+    // No transcript cwd (Claude Code prunes old transcripts but keeps memory/):
+    // fall back to the slug of `from`, or of a path that was moved to `from`.
+    const cwd = await folderCwd(fs, dir, d.name, transcripts, moves) ?? (bySlug.has(d.name) ? from : null)
     if (!cwd || !(cwd === from || cwd.startsWith(from + '/'))) continue
     out.push({ dir, slug: d.name, cwd, hasMemory: entries.some(e => e.name === 'memory' && e.isDirectory()), files: entries.map(e => e.name).sort() })
   }

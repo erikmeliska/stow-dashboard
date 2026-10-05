@@ -101,7 +101,7 @@ test('abandoned: experiment + dead, not when running, not production, not when a
 
 test('orphan: every location gone from disk', () => {
   const reg = { projects: [project('p9', [loc('/P/gone'), loc('/P/gone2', 'stale', 'manual')], { client: 'Acme', source: 'manual' })] }
-  const r = run({ register: reg, rows: [row('/P/gone', { pid: 'p9' })], exists: () => false })
+  const r = run({ register: reg, rows: [row('/P/gone', { pid: 'p9' })], exists: (p) => p === '/P' })
   const s = r.suggestions[0]
   assert.equal(r.suggestions.length, 1)
   assert.equal(s.kind, 'orphan')
@@ -153,4 +153,22 @@ test('abandoned: already under an _Archive(s) folder is skipped; an existing _Ar
   const reg = { projects: [project('p1', [loc('/P/_AI/toy')])] }
   const r = run({ register: reg, rows: [row('/P/_AI/toy', dead)], exists: (p) => p === '/P/_AI/toy' || p === '/P/_Archives' })
   assert.deepEqual(r.suggestions[0].move, { from: '/P/_AI/toy', to: '/P/_Archives/toy' })
+})
+
+test('archive: a vanished location does not keep an archived project abandoned (#11 review I-4)', () => {
+  const reg = { projects: [project('p1', [loc('/P/_AI/toy', 'stale', 'manual'), loc('/P/gone', 'experiment')])] }
+  const rows = [row('/P/_AI/toy', { ai: { maturity: 'idea' }, derived: { status: 'dead' } })]
+  assert.equal(run({ register: reg, rows, exists: (p) => p !== '/P/gone' }).suggestions.length, 0)
+})
+
+test('orphan: a location on an unmounted volume (parent missing too) is not an orphan (#11 review M-7)', () => {
+  const reg = { projects: [project('p9', [loc('/Volumes/Ext/proj')])] }
+  assert.equal(run({ register: reg, rows: [], exists: () => false }).suggestions.length, 0)
+  const deleted = { projects: [project('p9', [loc('/P/gone')])] }
+  assert.equal(run({ register: deleted, rows: [], exists: (p) => p === '/P' }).suggestions[0].kind, 'orphan')
+})
+
+test('a project whose checkouts are all unreachable gets no suggestion at all', () => {
+  const reg = { projects: [project('p9', [loc('/Volumes/Ext/blog')], { client: 'Acme', source: 'owner' })] }
+  assert.equal(run({ register: reg, rows: [row('/Volumes/Ext/blog', { pid: 'p9' })], exists: () => false }).suggestions.length, 0)
 })

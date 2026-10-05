@@ -360,3 +360,11 @@ test('runExclusive holds the ingest slot: runIngest meanwhile is a deferred no-o
   release();
   assert.equal(await held, 'moved');
 });
+
+test('path moves are time-scoped on ingest: a session newer than the move keeps its path (#11 review I-1)', async () => {
+  const { root } = await fixture(); // sess-1 started 2026-08-21
+  const db = openStore(':memory:');
+  await ingestAll({ claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope.jsonl'), db, full: true,
+    moves: [{ id: 'm', from: '/p/a', to: '/p/new', at: '2026-01-01T00:00:00Z' }] });
+  assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
+});
