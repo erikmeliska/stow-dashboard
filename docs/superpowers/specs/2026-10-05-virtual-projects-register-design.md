@@ -65,7 +65,7 @@ Project key:
 | No remote, `.stow/project.json` has an `id` | `stow:<id>` | `stow` |
 | Neither | `path:<directory>` (unstable until #9 writes an ID) | `path` |
 
-With several remotes, the **first** one in `git_info.remotes` is used. The
+With several remotes, the **first one that normalises** in `git_info.remotes` is used (a local-path remote is skipped). The
 scanner currently stores only URLs, in `git remote` order (alphabetical by
 remote name), so "first" is not necessarily `origin`. Open question in the PR.
 
