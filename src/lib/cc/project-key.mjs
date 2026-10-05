@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { resolveWorkspacePath } from './workspace.mjs'
 import { loadRegistry } from '../registry/registry.mjs'
+import { listPlacementInputs, setPlacements } from './store.mjs'
 
 const defaultExec = promisify(execFile)
 const probeCache = new Map()
@@ -73,4 +74,19 @@ export async function loadPlacementContext({ base, exec = defaultExec, load = lo
   let register = null
   try { register = await load(base ? { base } : {}) } catch (e) { console.warn('[cc] register unreadable:', e?.message) }
   return { index: buildProjectIndex({ register }), exists: existsSync, exec }
+}
+
+/** Recompute placement for every row; write only what changed. This is also the backfill. */
+export async function assignPlacements(db, ctx) {
+  const t0 = Date.now()
+  const rows = listPlacementInputs(db)
+  const changed = []
+  for (const r of rows) {
+    const p = await placeSession(r, ctx)
+    if (p.project_key !== r.project_key || p.workspace !== r.workspace || p.base_dir !== r.base_dir) {
+      changed.push({ session_id: r.session_id, ...p })
+    }
+  }
+  setPlacements(db, changed)
+  return { checked: rows.length, updated: changed.length, ms: Date.now() - t0 }
 }

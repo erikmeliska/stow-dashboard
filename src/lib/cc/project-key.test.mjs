@@ -99,3 +99,25 @@ test('loadPlacementContext: register load passes base; a throwing load is an emp
     assert.equal(bad.index.lookup('/p/blog'), null)
   } finally { console.warn = warn }
 })
+
+import { openStore, upsertSession, getSession } from './store.mjs'
+import { assignPlacements } from './project-key.mjs'
+
+const srow = (id, dir) => ({ session_id: id, project_dir: dir, cwd: dir, model: 'x', started_at: '2026-10-01T10:00:00Z', ended_at: null, duration_s: 0, active_s: 0, input_tokens: 0, output_tokens: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0, cost_usd: 0, turns: 1, status: 'done', raw_ref: `/t/${id}`, ingested_at: 'now' })
+const ctx = (reg) => ({ index: buildProjectIndex({ register: reg }), exists: () => false, exec: async () => { throw new Error() } })
+
+test('assignPlacements backfills, is idempotent, follows register changes', async () => {
+  const db = openStore(':memory:')
+  upsertSession(db, srow('a', '/p/blog'))
+  upsertSession(db, srow('b', '/p/blog/.agent-office/worktrees/pixel-77d1'))
+  let r = await assignPlacements(db, ctx(register))
+  assert.deepEqual([r.checked, r.updated], [2, 2])
+  assert.equal(getSession(db, 'b').session.project_key, 'P-blog')
+  r = await assignPlacements(db, ctx(register))
+  assert.equal(r.updated, 0)
+  r = await assignPlacements(db, ctx(null)) // register gone
+  assert.equal(r.updated, 2)
+  assert.equal(getSession(db, 'b').session.project_key, null)
+  assert.equal(getSession(db, 'b').session.workspace, 'agent-office:pixel-77d1')
+  assert.equal(getSession(db, 'b').session.base_dir, '/p/blog')
+})
