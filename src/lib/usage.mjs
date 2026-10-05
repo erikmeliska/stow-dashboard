@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { costForClaude, costForCodex, costForGemini } from './usage-pricing.mjs'
 import { claudeInput, codexInput, geminiInput } from './usage-tokens.mjs'
 import { dataDir } from './state-dir.mjs'
+import { loadPathMoves, resolveMovedPath, PATH_MOVES_FILE } from './path-moves.mjs'
 
 const ACTIVE_GAP_S = 300
 
@@ -417,8 +418,11 @@ async function atomicWriteJson(file, value) {
 // Incremental ledger update: stat every store file, skip unchanged, tail-parse
 // grown files (re-parse shrunk/rebuilt ones from zero), keep deleted files as
 // `missing` ghosts, then aggregate and atomically write cache + usage.json.
-export async function updateUsage({ claudeDir, codexDir, geminiDir, geminiCliDir, cacheFile, outFile, projectDirs, rebuild = false }) {
+// `moves` defaults to the path-moves.json next to `cacheFile` (both live in the
+// state dir's data/); a malformed one throws rather than mis-attributing cost.
+export async function updateUsage({ claudeDir, codexDir, geminiDir, geminiCliDir, cacheFile, outFile, projectDirs, rebuild = false, moves }) {
   const start = Date.now()
+  moves ??= await loadPathMoves({ file: path.join(path.dirname(cacheFile), PATH_MOVES_FILE) })
 
   let cache
   try {
@@ -465,7 +469,7 @@ export async function updateUsage({ claudeDir, codexDir, geminiDir, geminiCliDir
     filesMissing += 1
   }
 
-  const agg = aggregateUsage(cache, projectDirs)
+  const agg = aggregateUsage(cache, projectDirs, moves)
   await atomicWriteJson(cacheFile, cache)
   await atomicWriteJson(outFile, agg)
 
@@ -618,7 +622,9 @@ function finalizeAcc(acc) {
 
 // Map each session's cwd to the DEEPEST matching project directory; sessions
 // without a match land in the `unmatched` bucket. Prices are applied here.
-export function aggregateUsage(cache, projectDirs) {
+// `moves` (data/path-moves.json, #11) maps a moved project's old cwd to its
+// current path first, so a rebuild can't put its cost back on the old path.
+export function aggregateUsage(cache, projectDirs, moves = []) {
   const dirs = [...(projectDirs || [])].sort((a, b) => b.length - a.length)
   const projects = {}
   const unmatched = newAccumulator()
@@ -632,10 +638,12 @@ export function aggregateUsage(cache, projectDirs) {
     if (!hasClaude && !hasCodex && !hasGemini) continue
 
     let target = unmatched
-    if (typeof st.cwd === 'string') {
-      let dir = dirs.find(d => st.cwd === d || st.cwd.startsWith(d + '/'))
+    const cwd = resolveMovedPath(st.cwd, moves)
+    if (typeof cwd === 'string') {
+      let dir = dirs.find(d => cwd === d || cwd.startsWith(d + '/'))
       if (!dir && Array.isArray(st.geminiPaths)) {
-        dir = dirs.find(d => st.geminiPaths.some(p => p === d || p.startsWith(d + '/')))
+        const gp = moves.length ? st.geminiPaths.map(p => resolveMovedPath(p, moves)) : st.geminiPaths
+        dir = dirs.find(d => gp.some(p => p === d || p.startsWith(d + '/')))
       }
       if (dir) target = projects[dir] ??= newAccumulator()
     }

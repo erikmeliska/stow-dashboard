@@ -540,3 +540,31 @@ test('aggregateUsage: sessionList tokensIn = uncached + cache read + cache write
   assert.equal(p.tokens.codexInput, 500)
   assert.equal(p.tokens.codexCachedInput, 400)
 })
+
+const claudeAt = (cwd) => ({ tool: 'claude', state: { ...newFileState('claude'), cwd, sessions: 1, models: { 'claude-sonnet-5-5': { input: 10, output: 5, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } } } })
+
+test('aggregateUsage maps a moved cwd to the new project dir (#11 path-moves)', () => {
+  const cache = { files: { '/t/a.jsonl': claudeAt('/P/old/src') } }
+  const agg = aggregateUsage(cache, ['/P/_Bizz/Acme/old'], [{ id: 'm', from: '/P/old', to: '/P/_Bizz/Acme/old', at: 'x' }])
+  assert.ok(agg.projects['/P/_Bizz/Acme/old'])
+  assert.equal(agg.unmatched.sessions, 0)
+})
+
+test('aggregateUsage without moves is unchanged', () => {
+  const cache = { files: { '/t/a.jsonl': claudeAt('/P/x') } }
+  assert.deepEqual(aggregateUsage(cache, ['/P/x']), aggregateUsage(cache, ['/P/x'], []))
+})
+
+test('updateUsage reads path-moves.json next to its cache file', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'usage-moves-'))
+  try {
+    const claudeDir = path.join(dir, 'claude'); const slug = path.join(claudeDir, '-P-old')
+    await mkdir(slug, { recursive: true })
+    await writeFile(path.join(slug, 's.jsonl'), JSON.stringify({ type: 'assistant', cwd: '/P/old', timestamp: '2026-10-01T00:00:00Z', message: { id: 'm1', model: 'claude-sonnet-5-5', usage: { input_tokens: 10, output_tokens: 5 } } }) + '\n')
+    await writeFile(path.join(dir, 'path-moves.json'), JSON.stringify({ version: 1, moves: [{ id: 'm', from: '/P/old', to: '/P/new', at: 'x' }] }))
+    const outFile = path.join(dir, 'usage.json')
+    await updateUsage({ claudeDir, codexDir: path.join(dir, 'none'), cacheFile: path.join(dir, 'usage-cache.json'), outFile, projectDirs: ['/P/new'] })
+    const out = JSON.parse(await readFile(outFile, 'utf8'))
+    assert.ok(out.projects['/P/new'])
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

@@ -332,3 +332,20 @@ test('ingestAll without a placement context skips placement', async () => {
   assert.equal(res.placed, null);
   assert.equal(getSession(db, 'sess-1').session.workspace, null);
 });
+
+test('path moves (#11) rewrite project_dir/cwd on ingest, and a full re-ingest keeps them', async () => {
+  const { root } = await fixture();
+  const db = openStore(':memory:');
+  const moves = [{ id: 'm', from: '/p/a', to: '/p/new', at: 'x' }];
+  const opts = { claudeDir: join(root, 'projects'), guardAudit: join(root, 'nope.jsonl'), db, moves, full: true };
+  await ingestAll(opts);
+  let s = getSession(db, 'sess-1').session;
+  assert.equal(s.project_dir, '/p/new');
+  assert.equal(s.cwd, '/p/new');
+  await ingestAll(opts);
+  s = getSession(db, 'sess-1').session;
+  assert.equal(s.project_dir, '/p/new');
+  // no moves → today's behaviour
+  await ingestAll({ ...opts, moves: [] });
+  assert.equal(getSession(db, 'sess-1').session.project_dir, '/p/a');
+});
